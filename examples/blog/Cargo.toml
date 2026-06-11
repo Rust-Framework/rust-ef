@@ -1,0 +1,10 @@
+[package]
+name = "lref-blog-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lref = { path = "../../crates/lref" }
+lref-provider-postgres = { path = "../../crates/lref-provider-postgres" }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"

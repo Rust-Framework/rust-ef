@@ -1,0 +1,18 @@
+[workspace]
+members = [
+    "crates/lref",
+    "crates/lref-macros",
+    "crates/lref-provider-postgres",
+    "crates/lref-provider-mysql",
+    "crates/lref-provider-sqlite",
+    "crates/lref-cli",
+    "examples/blog",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+repository = "https://gitcode.com/rf2026/lref"
+authors = ["Start"]

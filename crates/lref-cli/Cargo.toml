@@ -1,0 +1,20 @@
+[package]
+name = "lref-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI tool for Rust Entity Framework migrations and scaffolding"
+keywords = ["orm", "efcore", "entity-framework", "cli", "migration"]
+categories = ["command-line-utilities", "database"]
+
+[[bin]]
+name = "lref"
+path = "src/main.rs"
+
+[dependencies]
+lref = { path = "../lref" }
+lref-provider-postgres = { path = "../lref-provider-postgres" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+chrono = "0.4"

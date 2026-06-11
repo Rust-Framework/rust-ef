@@ -1,0 +1,15 @@
+[package]
+name = "lref-provider-sqlite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SQLite provider for Rust Entity Framework"
+keywords = ["orm", "efcore", "entity-framework", "sqlite", "database"]
+categories = ["database"]
+
+[dependencies]
+lref = { path = "../lref" }
+async-trait = "0.1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio = { version = "1", features = ["full"] }

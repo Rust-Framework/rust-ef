@@ -1,0 +1,17 @@
+[package]
+name = "lref-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Procedural macros for Rust Entity Framework"
+keywords = ["orm", "efcore", "entity-framework", "derive", "proc-macro"]
+categories = ["database", "development-tools::procedural-macro-helpers"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
