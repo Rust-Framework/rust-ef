@@ -2,6 +2,9 @@
 //!
 //! Implements `IDatabaseProvider`, `ISqlGenerator`, and `IAsyncConnection`
 //! traits for SQLite via `rusqlite` with a tokio-compatible async wrapper.
+//!
+//! Also provides `DbContextOptionsBuilderExt` for EFCore-style configuration:
+//! `.use_sqlite("data source=my.db3")`
 
 use async_trait::async_trait;
 use lref::error::{LrefError, LrefResult};
@@ -218,7 +221,6 @@ impl IAsyncConnection for SqliteConnection {
             .query_map(refs.as_slice(), |row| {
                 let mut values = Vec::with_capacity(column_count);
                 for i in 0..column_count {
-                    // Try String first, then i64, then f64, then fallback to NULL
                     let val = row
                         .get::<_, String>(i)
                         .or_else(|_| row.get::<_, i64>(i).map(|n| n.to_string()))
@@ -266,4 +268,45 @@ fn to_rusqlite_params(params: &[DbValue]) -> Vec<Box<dyn rusqlite::types::ToSql>
             DbValue::Bytes(b) => Box::new(b.clone()),
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// DbContextOptionsBuilder extension — EFCore-style .UseSqlite()
+// ---------------------------------------------------------------------------
+
+/// Extension trait that adds `.use_sqlite()` to `DbContextOptionsBuilder`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use lrdi::ServiceCollection;
+/// use lref::di::DbContextServiceCollectionExt;
+/// use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
+///
+/// let provider = ServiceCollection::new()
+///     .add_dbcontext::<MyContext>(|options| {
+///         options.use_sqlite("data source=my.db3");
+///     })
+///     .build()
+///     .unwrap();
+/// ```
+pub trait DbContextOptionsBuilderExt {
+    /// Configures the context to use SQLite.
+    ///
+    /// `connection_string` follows SQLite connection string conventions:
+    /// - `"data source=path/to/db.sqlite"`
+    /// - `":memory:"` for in-memory database
+    /// - Just a file path: `"my_database.db"`
+    fn use_sqlite(&mut self, connection_string: &str) -> &mut Self;
+    fn use_sqlite_in_memory(&mut self) -> &mut Self;
+}
+
+impl DbContextOptionsBuilderExt for lref::db_context::DbContextOptionsBuilder {
+    fn use_sqlite(&mut self, connection_string: &str) -> &mut Self {
+        self.set_provider("sqlite", connection_string)
+    }
+
+    fn use_sqlite_in_memory(&mut self) -> &mut Self {
+        self.set_provider("sqlite", ":memory:")
+    }
 }

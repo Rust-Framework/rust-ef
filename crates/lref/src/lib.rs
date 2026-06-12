@@ -27,6 +27,7 @@ pub mod cache;
 pub mod change_executor;
 pub mod db_context;
 pub mod db_set;
+pub mod di;
 pub mod entity;
 pub mod error;
 pub mod metadata;
@@ -39,14 +40,12 @@ pub mod tracking;
 
 /// Re-exports of the most commonly used types.
 pub mod prelude {
-    pub use crate::db_context::IDbContext;
-    pub use crate::db_context::SaveChangesResult;
+    pub use crate::db_context::{
+        DbContextOptions, DbContextOptionsBuilder, IDbContext, SaveChangesResult,
+    };
     pub use crate::db_set::{DbSet, IDbSet};
-    pub use crate::entity::EntityState;
-    pub use crate::entity::IEntitySnapshot;
-    pub use crate::entity::IEntityType;
-    pub use crate::entity::IFromRow;
-    pub use crate::entity::IGetKeyValues;
+    pub use crate::di::{DbContextServiceCollectionExt, DbContextServiceProviderExt};
+    pub use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
     pub use crate::error::LrefError;
     pub use crate::metadata::EntityTypeMeta;
     pub use crate::metadata::NavigationMeta;

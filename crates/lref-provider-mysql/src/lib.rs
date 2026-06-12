@@ -2,6 +2,9 @@
 //!
 //! Implements `IDatabaseProvider`, `ISqlGenerator`, and `IAsyncConnection`
 //! traits for MySQL via `sqlx` with async connection pooling.
+//!
+//! Also provides `DbContextOptionsBuilderExt` for EFCore-style configuration:
+//! `.use_mysql("mysql://user:pass@localhost/db")`
 
 use async_trait::async_trait;
 use lref::error::{LrefError, LrefResult};
@@ -269,4 +272,20 @@ fn build_mysql_query<'q>(
         };
     }
     query
+}
+
+// ---------------------------------------------------------------------------
+// DbContextOptionsBuilder extension -- EFCore-style .UseMySql()
+// ---------------------------------------------------------------------------
+
+/// Extension trait that adds `.use_mysql()` to `DbContextOptionsBuilder`.
+pub trait DbContextOptionsBuilderExt {
+    /// Configures the context to use MySQL.
+    fn use_mysql(&mut self, connection_string: &str) -> &mut Self;
+}
+
+impl DbContextOptionsBuilderExt for lref::db_context::DbContextOptionsBuilder {
+    fn use_mysql(&mut self, connection_string: &str) -> &mut Self {
+        self.set_provider("mysql", connection_string)
+    }
 }

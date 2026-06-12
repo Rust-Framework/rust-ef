@@ -183,3 +183,34 @@ impl std::fmt::Debug for PostgresProvider {
             .finish()
     }
 }
+
+// ---------------------------------------------------------------------------
+// DbContextOptionsBuilder extension — EFCore-style .UsePostgres()
+// ---------------------------------------------------------------------------
+
+/// Extension trait that adds `.use_postgres()` to `DbContextOptionsBuilder`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use lrdi::ServiceCollection;
+/// use lref::di::DbContextServiceCollectionExt;
+/// use lref_provider_postgres::DbContextOptionsBuilderExt as _;
+///
+/// let provider = ServiceCollection::new()
+///     .add_dbcontext::<MyContext>(|options| {
+///         options.use_postgres("host=localhost dbname=myapp");
+///     })
+///     .build()
+///     .unwrap();
+/// ```
+pub trait DbContextOptionsBuilderExt {
+    /// Configures the context to use PostgreSQL.
+    fn use_postgres(&mut self, connection_string: &str) -> &mut Self;
+}
+
+impl DbContextOptionsBuilderExt for lref::db_context::DbContextOptionsBuilder {
+    fn use_postgres(&mut self, connection_string: &str) -> &mut Self {
+        self.set_provider("postgres", connection_string)
+    }
+}

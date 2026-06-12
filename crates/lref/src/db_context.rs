@@ -1,4 +1,4 @@
-//! DbContext trait and ChangeTracker — the session / unit-of-work layer.
+//! DbContext trait, DbContextOptions, and ChangeTracker — the session / unit-of-work layer.
 //!
 //! Provides `save_changes_all!()` macro for batch entity saving and
 //! the standalone `save_one_set()` function for single-type saves.
@@ -10,11 +10,137 @@ use crate::error::LrefResult;
 use crate::metadata::EntityTypeMeta;
 use crate::provider::{IAsyncConnection, IDatabaseProvider};
 use crate::tracking::ChangeTracker;
+use std::sync::Arc;
+
+// ---------------------------------------------------------------------------
+// DbContextOptions / DbContextOptionsBuilder
+// ---------------------------------------------------------------------------
+
+/// Configuration for a DbContext, built via `DbContextOptionsBuilder`.
+///
+/// Provider crates populate this through extension methods like `use_sqlite()`
+/// defined in their respective crates.
+#[derive(Clone)]
+pub struct DbContextOptions {
+    /// Database connection string.
+    pub(crate) connection_string: String,
+    /// Provider identifier tag (e.g. "sqlite", "postgres", "mysql").
+    pub(crate) provider_tag: Option<String>,
+    /// Optional pre-built provider instance (for advanced scenarios).
+    pub(crate) provider_instance: Option<Arc<dyn IDatabaseProvider>>,
+}
+
+impl std::fmt::Debug for DbContextOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DbContextOptions")
+            .field("connection_string", &self.connection_string)
+            .field("provider_tag", &self.provider_tag)
+            .finish()
+    }
+}
+
+impl DbContextOptions {
+    pub fn connection_string(&self) -> &str {
+        &self.connection_string
+    }
+
+    pub fn provider_tag(&self) -> Option<&str> {
+        self.provider_tag.as_deref()
+    }
+
+    pub fn provider_instance(&self) -> Option<&Arc<dyn IDatabaseProvider>> {
+        self.provider_instance.as_ref()
+    }
+}
+
+impl Default for DbContextOptions {
+    fn default() -> Self {
+        Self {
+            connection_string: String::new(),
+            provider_tag: None,
+            provider_instance: None,
+        }
+    }
+}
+
+/// Fluent builder for `DbContextOptions`.
+///
+/// Provider crates extend this with methods like `use_sqlite()` via trait
+/// extensions defined in their respective crates.
+///
+/// # Extension Traits
+///
+/// | Provider | Extension Trait | Method |
+/// |---|---|---|
+/// | `lref-provider-sqlite`    | `DbContextOptionsBuilderExt` | `.use_sqlite(cs)` |
+/// | `lref-provider-postgres`  | `DbContextOptionsBuilderExt` | `.use_postgres(cs)` |
+/// | `lref-provider-mysql`     | `DbContextOptionsBuilderExt` | `.use_mysql(cs)` |
+pub struct DbContextOptionsBuilder {
+    inner: DbContextOptions,
+}
+
+impl DbContextOptionsBuilder {
+    pub fn new() -> Self {
+        Self {
+            inner: DbContextOptions::default(),
+        }
+    }
+
+    /// Sets the connection string (without specifying a provider).
+    pub fn connection_string(&mut self, cs: impl Into<String>) -> &mut Self {
+        self.inner.connection_string = cs.into();
+        self
+    }
+
+    /// Sets the provider tag and connection string.
+    /// Called by provider extension methods.
+    pub fn set_provider(&mut self, tag: &str, connection_string: impl Into<String>) -> &mut Self {
+        self.inner.provider_tag = Some(tag.to_string());
+        self.inner.connection_string = connection_string.into();
+        self
+    }
+
+    /// Attaches a pre-built provider instance (advanced usage).
+    pub fn use_provider_instance(
+        &mut self,
+        tag: &str,
+        provider: Arc<dyn IDatabaseProvider>,
+    ) -> &mut Self {
+        self.inner.provider_tag = Some(tag.to_string());
+        self.inner.provider_instance = Some(provider);
+        self
+    }
+
+    pub fn build(self) -> DbContextOptions {
+        self.inner
+    }
+}
+
+impl Default for DbContextOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IDbContext trait
+// ---------------------------------------------------------------------------
 
 /// The DbContext trait represents a session with the database.
 #[async_trait::async_trait]
 pub trait IDbContext: Send + Sync + Sized {
     type Provider: crate::provider::IDatabaseProvider;
+
+    /// Constructs the context from `DbContextOptions` and a service resolver.
+    ///
+    /// The `services` parameter provides access to the DI container, allowing
+    /// the context to resolve additional services (loggers, interceptors, etc.)
+    /// during construction.
+    fn from_options(
+        options: &DbContextOptions,
+        services: &dyn lrdi::IServiceResolver,
+    ) -> LrefResult<Self>;
+
     fn provider(&self) -> &Self::Provider;
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
     fn change_tracker(&self) -> &ChangeTracker;
@@ -53,7 +179,6 @@ pub trait IDbContext: Send + Sync + Sized {
     #[allow(unused_variables)]
     fn log_sql(&self, sql: &str, params_count: usize) {}
 
-    /// Creates all tables in the database based on registered entity metadata.
     async fn ensure_created(&self) -> LrefResult<()> {
         let conn_str = format!("{}", self.provider().name());
         let _ = conn_str;
@@ -62,7 +187,6 @@ pub trait IDbContext: Send + Sync + Sized {
         ))
     }
 
-    /// Drops all tables in the database.
     async fn ensure_deleted(&self) -> LrefResult<()> {
         Err(crate::error::LrefError::Configuration(
             "ensure_deleted requires entity metadata. Use migration engine instead.".into(),
@@ -71,7 +195,6 @@ pub trait IDbContext: Send + Sync + Sized {
 }
 
 /// Saves changes for one entity type within an active transaction.
-/// Used by `save_changes_all!` macro. Can also be called directly.
 pub async fn save_one_set<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
