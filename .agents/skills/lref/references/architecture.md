@@ -21,11 +21,11 @@ IAsyncConnection                      IEntitySnapshot
 ```
 User Code
     ├── lrdi::ServiceCollection
-    │     └── add_dbcontext::<AppDbContext>(|o| o.use_sqlite(...))
+    │     └── add_dbcontext::<DbContext>(|o| o.use_sqlite(...))
     │           └── stores DbContextOptions with provider_factory
     │
     └── Arc<dyn IDbContext> (from provider.get())
-          └── AppDbContext
+          └── DbContext
                 ├── set::<T>() — type-map, lazy-create DbSet<T>
                 ├── save_changes() — SetOps<T> dispatchers
                 ├── provider() → &dyn IDatabaseProvider
@@ -36,7 +36,7 @@ User Code
 
 1. `options.use_sqlite(cs)` injects a closure:
    `Arc<dyn Fn(&str) -> LrefResult<Arc<dyn IDatabaseProvider>>>`
-2. `AppDbContext::from_options()` calls this closure
+2. `DbContext::from_options()` calls this closure
 3. Core crate never imports any provider type
 
 ## Why No DbSet<Blog> Fields?

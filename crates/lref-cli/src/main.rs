@@ -540,12 +540,12 @@ fn generate_db_context_code(tables: &[TableInfo]) -> String {
 use lref_provider_postgres::PostgresProvider;
 
 {imports}
-pub struct AppDbContext {{
+pub struct DbContext {{
 {fields}    change_tracker: ChangeTracker,
     provider: PostgresProvider,
 }}
 
-impl AppDbContext {{
+impl DbContext {{
     pub async fn new(connection_string: &str) -> Result<Self, LrefError> {{
         let provider = PostgresProvider::new(connection_string, 5)?;
         Ok(Self {{
@@ -557,7 +557,7 @@ impl AppDbContext {{
 }}
 
 #[async_trait::async_trait]
-impl IDbContext for AppDbContext {{
+impl DbContext for DbContext {{
     type Provider = PostgresProvider;
     fn provider(&self) -> &Self::Provider {{ &self.provider }}
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker {{ &mut self.change_tracker }}

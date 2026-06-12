@@ -2,7 +2,7 @@
 name: lref
 description: |
   Implement lref (Rust Entity Framework v0.3+) features: define entities with
-  #[derive(EntityType)], build AppDbContext with type-map set storage, register
+  #[derive(EntityType)], build DbContext with type-map set storage, register
   via lrdi DI with add_dbcontext<T>(|o| o.use_sqlite("...")), write LINQ-style
   queries, configure migrations, or set up provider extensions. Use when the
   user asks about lref ORM, entity framework, DbContext, or Rust database code.
@@ -18,7 +18,7 @@ ORM for Rust. Follow the patterns below exactly.
 | Task | Template |
 |------|----------|
 | Define an entity | `templates/entity-definition.rs` |
-| Create AppDbContext | `templates/app-dbcontext.rs` |
+| Create DbContext | `templates/dbcontext.rs` |
 | DI container setup | `templates/di-setup.rs` |
 | Write queries | `templates/query-patterns.rs` |
 | Architecture reference | `references/architecture.md` |
@@ -55,14 +55,14 @@ attribute and at least one `#[primary_key]`.
 
 ---
 
-## 2. AppDbContext
+## 2. DbContext
 
-The framework provides `AppDbContext` — you do NOT define a custom context
+The framework provides `DbContext` — you do NOT define a custom context
 struct. No `DbSet<Blog>` fields. Use `ctx.set::<Blog>()` instead.
 
 **Construction:**
 ```rust
-let mut ctx = AppDbContext::from_options(&options)?;
+let mut ctx = DbContext::from_options(&options)?;
 ```
 
 **Entity set access:**
@@ -75,7 +75,7 @@ dispatcher. `save_changes()` iterates all entity types automatically.
 
 **Required trait bounds on `set::<T>()`:** `T: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow + Send + Sync + 'static`
 
-Read `templates/app-dbcontext.rs` for the full setup with migration.
+Read `templates/dbcontext.rs` for the full setup with migration.
 
 ---
 
@@ -88,7 +88,7 @@ use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
 let provider = ServiceCollection::new()
-    .add_dbcontext::<AppDbContext>(|options| {
+    .add_dbcontext::<DbContext>(|options| {
         options.use_sqlite("data source=app.db");
     })
     .build()
@@ -103,7 +103,7 @@ let ctx: Arc<dyn IDbContext> = provider.get();
 - `use_mysql(cs)` — tag only (async init)
 
 **How it works:** `use_sqlite()` injects a `provider_factory` closure into
-`DbContextOptions`. `AppDbContext::from_options()` calls this factory to
+`DbContextOptions`. `DbContext::from_options()` calls this factory to
 create the provider. The core crate stays fully decoupled from provider types.
 
 Read `templates/di-setup.rs` for the complete pattern.
@@ -139,8 +139,8 @@ Read `templates/query-patterns.rs` for examples.
 **Do:**
 - All traits are `I`-prefixed (`IDbContext`, `IEntityType`, `IDatabaseProvider`)
 - Place trait bounds at usage sites, not on container types
-- Use `AppDbContext` (no custom context struct needed)
-- Register via `add_dbcontext::<AppDbContext>(|o| o.use_sqlite(...))`
+- Use `DbContext` (no custom context struct needed)
+- Register via `add_dbcontext::<DbContext>(|o| o.use_sqlite(...))`
 - Resolve as `Arc<dyn IDbContext>` from DI
 
 **Don't:**

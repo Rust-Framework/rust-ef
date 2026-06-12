@@ -12,7 +12,7 @@
 //!
 //! `DbContextOptions` stores a `provider_factory` closure injected by the
 //! provider extension methods (`use_sqlite`, `use_postgres`, `use_mysql`).
-//! `AppDbContext::new(options)` calls this factory to create the provider.
+//! `DbContext::from_options()` calls this factory to create the provider.
 
 use crate::change_executor::ChangeExecutor;
 use crate::db_set::{DbSet, IDbSet};
@@ -165,17 +165,17 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// AppDbContext
+// DbContext
 // ---------------------------------------------------------------------------
 
-pub struct AppDbContext {
+pub struct DbContext {
     sets: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     savers: HashMap<TypeId, Box<dyn ErasedSetOps>>,
     change_tracker: ChangeTracker,
     provider: Arc<dyn IDatabaseProvider>,
 }
 
-impl AppDbContext {
+impl DbContext {
     /// Creates the context from options (uses the provider factory stored in options).
     pub fn from_options(options: &DbContextOptions) -> LrefResult<Self> {
         let provider = options.create_provider()?;
@@ -254,11 +254,11 @@ pub trait IDbContextExt: IDbContext {
 impl<T: IDbContext + Send + Sync> IDbContextExt for T {}
 
 // ---------------------------------------------------------------------------
-// AppDbContext implements IDbContext
+// DbContext implements IDbContext
 // ---------------------------------------------------------------------------
 
 #[async_trait::async_trait]
-impl IDbContext for AppDbContext {
+impl IDbContext for DbContext {
     fn provider(&self) -> &dyn IDatabaseProvider {
         &*self.provider
     }

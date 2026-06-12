@@ -5,11 +5,11 @@
 //! ```rust,ignore
 //! use lrdi::ServiceCollection;
 //! use lref::di::*;
-//! use lref::db_context::AppDbContext;
+//! use lref::db_context::DbContext;
 //! use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 //!
 //! let provider = ServiceCollection::new()
-//!     .add_dbcontext::<AppDbContext>(|options| {
+//!     .add_dbcontext::<DbContext>(|options| {
 //!         options.use_sqlite("data source=app.db");
 //!     })
 //!     .build()
@@ -20,7 +20,7 @@
 //! ctx.save_changes().await?;
 //! ```
 
-use crate::db_context::{AppDbContext, DbContextOptions, DbContextOptionsBuilder, IDbContext};
+use crate::db_context::{DbContext, DbContextOptions, DbContextOptionsBuilder, IDbContext};
 use std::sync::Arc;
 
 /// Adds `add_dbcontext<T>` to `lrdi::ServiceCollection`.
@@ -56,9 +56,9 @@ pub trait FromDbContextOptions: IDbContext + Sized {
     fn from_options(options: &DbContextOptions) -> crate::error::LrefResult<Self>;
 }
 
-impl FromDbContextOptions for AppDbContext {
+impl FromDbContextOptions for DbContext {
     fn from_options(options: &DbContextOptions) -> crate::error::LrefResult<Self> {
-        AppDbContext::from_options(options)
+        DbContext::from_options(options)
     }
 }
 

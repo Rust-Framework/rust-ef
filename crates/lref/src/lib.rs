@@ -41,7 +41,7 @@ pub mod tracking;
 /// Re-exports of the most commonly used types.
 pub mod prelude {
     pub use crate::db_context::{
-        AppDbContext, DbContextOptions, DbContextOptionsBuilder, IDbContext, SaveChangesResult,
+        DbContext, DbContextOptions, DbContextOptionsBuilder, IDbContext, SaveChangesResult,
     };
     pub use crate::db_set::{DbSet, IDbSet};
     pub use crate::di::DbContextServiceCollectionExt;

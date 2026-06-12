@@ -47,14 +47,14 @@ pub struct Post {
 ```rust
 use lrdi::ServiceCollection;
 use lref::di::*;
-use lref::db_context::AppDbContext;
+use lref::db_context::DbContext;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Register
     let provider = ServiceCollection::new()
-        .add_dbcontext::<AppDbContext>(|options| {
+        .add_dbcontext::<DbContext>(|options| {
             options.use_sqlite("data source=app.db");
             // or: options.use_sqlite_in_memory();
             // or: options.use_postgres("host=localhost dbname=app");
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Use via concrete methods (call set<T> on the concrete type)
     // Or hold a typed reference:
-    // let mut ctx = AppDbContext::from_options(&options)?;
+    // let mut ctx = DbContext::from_options(&options)?;
     // ctx.set::<Blog>().add(Blog { blog_id: 0, url: "https://example.com".into(), rating: 5, posts: HasMany::new() });
     // ctx.set::<Post>().add(Post { post_id: 0, title: "Hello".into(), content: None, blog_id: 1, blog: BelongsTo::new() });
 
@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 User Application
     ├── lrdi (DI container — resolves Arc<dyn IDbContext>)
     └── lref (ORM)
-          ├── AppDbContext (type-map set storage, no entity-specific fields)
+          DbContext (type-map set storage, no entity-specific fields)
           ├── IDbContext     — object-safe session trait
           ├── IDbSet<T>      — entity collection (mutation)
           ├── IQueryable<T>  — query entry point
@@ -128,7 +128,7 @@ FromDbContextOptions (DI bridge)
 
 | Decision | Rationale |
 |----------|-----------|
-| No `DbSet<Blog>` struct fields | `AppDbContext` uses type-map; sets lazy-created via `set::<T>()` |
+| No `DbSet<Blog>` struct fields | `DbContext` uses type-map; sets lazy-created via `set::<T>()` |
 | `IDbContext` is object-safe | Enables `Arc<dyn IDbContext>` DI resolution |
 | `provider_factory` in options | Provider extensions inject factory closures; core stays decoupled |
 | `SetOps<T>` dispatchers | Type-erased `save_changes()` iterates all entity types |
@@ -143,7 +143,7 @@ FromDbContextOptions (DI bridge)
 | **Entity** | `#[derive(EntityType)]` with 12 attributes, navigation types |
 | **Query** | LINQ-style `QueryBuilder`: filter, join, group_by, aggregation, bulk ops |
 | **Persistence** | `save_changes_all!` macro, parameterized queries, transactions |
-| **DI** | `add_dbcontext<AppDbContext>(|o| o.use_sqlite(...))`, `Arc<dyn IDbContext>` |
+| **DI** | `add_dbcontext<DbContext>(|o| o.use_sqlite(...))`, `Arc<dyn IDbContext>` |
 | **Migrations** | Model diff, Up/Down SQL for PostgreSQL/MySQL/SQLite |
 | **CLI** | `migration add/apply/revert/list/script`, `scaffold-dbcontext` |
 

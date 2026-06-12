@@ -4,7 +4,7 @@
 
 use lref::prelude::*;
 
-async fn query_examples(ctx: &mut AppDbContext) -> Result<(), LrefError> {
+async fn query_examples(ctx: &mut DbContext) -> Result<(), LrefError> {
     // === Basic filtering ===
 
     // Equality / comparison

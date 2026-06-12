@@ -27,7 +27,7 @@ use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
 let provider = ServiceCollection::new()
-    .add_dbcontext::<AppDbContext>(|o| o.use_sqlite("app.db"))
+    .add_dbcontext::<DbContext>(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
 let ctx: Arc<dyn IDbContext> = provider.get();
@@ -42,7 +42,7 @@ lref/src/
 ├── entity.rs       — IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
 ├── metadata.rs     — EntityTypeMeta, PropertyMeta, NavigationMeta
 ├── provider.rs     — IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
-├── db_context.rs   — IDbContext, IDbContextExt, AppDbContext, DbContextOptions
+├── db_context.rs   — IDbContext, IDbContextExt, DbContext, DbContextOptions
 ├── db_set.rs       — IDbSet<T>, DbSet<T>
 ├── query.rs        — IQueryable<T>, QueryBuilder<T>
 ├── change_executor.rs — ChangeExecutor (INSERT/UPDATE/DELETE)
@@ -135,13 +135,13 @@ use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
 let provider = ServiceCollection::new()
-    .add_dbcontext::<AppDbContext>(|o| o.use_sqlite("app.db"))
+    .add_dbcontext::<DbContext>(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
 let ctx: Arc<dyn IDbContext> = provider.get();
 ```
 
-**Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `AppDbContext::from_options()` calls it to create the provider — core stays fully decoupled.
+**Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider — core stays fully decoupled.
 
 ---
 

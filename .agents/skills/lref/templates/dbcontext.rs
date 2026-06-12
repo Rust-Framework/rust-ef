@@ -1,11 +1,11 @@
-// Template: AppDbContext usage — type-map pattern, no entity-specific fields.
+// Template: DbContext usage — type-map pattern, no entity-specific fields.
 //
-// AppDbContext stores entity sets in a HashMap<TypeId, Box<dyn Any>>.
+// DbContext stores entity sets in a HashMap<TypeId, Box<dyn Any>>.
 // Access via ctx.set::<Entity>() — lazy-creates DbSet on first call.
 // save_changes() auto-discovers all entity types via SetOps dispatchers.
 
 use lref::prelude::*;
-use lref::db_context::{AppDbContext, DbContextOptions};
+use lref::db_context::{DbContext, DbContextOptions};
 use lref_provider_sqlite::SqliteProvider; // or postgres / mysql
 use std::sync::Arc;
 
@@ -18,9 +18,9 @@ async fn main() -> Result<(), LrefError> {
     // For DI-based construction, use provider_options instead (see di-setup.rs)
 
     // --- 2. Create context ---
-    let mut ctx = AppDbContext::from_options(&options)?;
+    let mut ctx = DbContext::from_options(&options)?;
     // OR for manual provider setup:
-    // let mut ctx = AppDbContext { ... }; // internal fields are not public
+    // let mut ctx = DbContext { ... }; // internal fields are not public
 
     // --- 3. Run migration (CREATE TABLE) ---
     let engine = lref::migration::MigrationEngine::new(
