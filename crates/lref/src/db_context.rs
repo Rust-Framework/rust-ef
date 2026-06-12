@@ -3,36 +3,36 @@
 //! Provides `save_changes_all!()` macro for batch entity saving and
 //! the standalone `save_one_set()` function for single-type saves.
 
-use crate::entity::{EntitySnapshot, EntityType, FromRow, GetKeyValues};
+use crate::change_executor::ChangeExecutor;
+use crate::db_set::IDbSet;
+use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
 use crate::error::LrefResult;
 use crate::metadata::EntityTypeMeta;
-use crate::provider::{AsyncConnection, DatabaseProvider};
-use crate::change_executor::ChangeExecutor;
-use crate::db_set::DbSet;
+use crate::provider::{IAsyncConnection, IDatabaseProvider};
 use crate::tracking::ChangeTracker;
 
 /// The DbContext trait represents a session with the database.
 #[async_trait::async_trait]
-pub trait DbContext: Send + Sync + Sized {
-    type Provider: crate::provider::DatabaseProvider;
+pub trait IDbContext: Send + Sync + Sized {
+    type Provider: crate::provider::IDatabaseProvider;
     fn provider(&self) -> &Self::Provider;
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
     fn change_tracker(&self) -> &ChangeTracker;
     async fn save_changes(&mut self) -> LrefResult<SaveChangesResult>;
 
-    async fn begin_transaction(&self) -> LrefResult<Box<dyn AsyncConnection>> {
-        let mut conn: Box<dyn AsyncConnection> = self.provider().get_connection().await?;
+    async fn begin_transaction(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
+        let mut conn: Box<dyn IAsyncConnection> = self.provider().get_connection().await?;
         conn.begin_transaction().await?;
         Ok(conn)
     }
 
     async fn use_transaction<F, Fut, R>(&self, f: F) -> LrefResult<R>
     where
-        F: FnOnce(&mut dyn AsyncConnection) -> Fut + Send,
+        F: FnOnce(&mut dyn IAsyncConnection) -> Fut + Send,
         Fut: std::future::Future<Output = LrefResult<R>> + Send,
         R: Send,
     {
-        let mut conn: Box<dyn AsyncConnection> = self.provider().get_connection().await?;
+        let mut conn: Box<dyn IAsyncConnection> = self.provider().get_connection().await?;
         conn.begin_transaction().await?;
         match f(&mut *conn).await {
             Ok(result) => {
@@ -47,7 +47,9 @@ pub trait DbContext: Send + Sync + Sized {
     }
 
     fn set_logging(&mut self, _enabled: bool) {}
-    fn is_logging_enabled(&self) -> bool { false }
+    fn is_logging_enabled(&self) -> bool {
+        false
+    }
     #[allow(unused_variables)]
     fn log_sql(&self, sql: &str, params_count: usize) {}
 
@@ -56,14 +58,14 @@ pub trait DbContext: Send + Sync + Sized {
         let conn_str = format!("{}", self.provider().name());
         let _ = conn_str;
         Err(crate::error::LrefError::Configuration(
-            "ensure_created requires entity metadata. Use migration engine instead.".into()
+            "ensure_created requires entity metadata. Use migration engine instead.".into(),
         ))
     }
 
     /// Drops all tables in the database.
     async fn ensure_deleted(&self) -> LrefResult<()> {
         Err(crate::error::LrefError::Configuration(
-            "ensure_deleted requires entity metadata. Use migration engine instead.".into()
+            "ensure_deleted requires entity metadata. Use migration engine instead.".into(),
         ))
     }
 }
@@ -71,18 +73,30 @@ pub trait DbContext: Send + Sync + Sized {
 /// Saves changes for one entity type within an active transaction.
 /// Used by `save_changes_all!` macro. Can also be called directly.
 pub async fn save_one_set<E>(
-    conn: &mut dyn AsyncConnection,
-    provider: &dyn DatabaseProvider,
-    db_set: &mut DbSet<E>,
+    conn: &mut dyn IAsyncConnection,
+    provider: &dyn IDatabaseProvider,
+    db_set: &mut dyn IDbSet<E>,
 ) -> LrefResult<(usize, usize, usize)>
 where
-    E: EntityType + EntitySnapshot + GetKeyValues + FromRow,
+    E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow,
 {
     let meta = E::entity_meta();
 
-    let added: Vec<(&E, &EntityTypeMeta)> = db_set.added_entities().into_iter().map(|e| (e, &meta)).collect();
-    let modified: Vec<(&E, &EntityTypeMeta)> = db_set.modified_entities().into_iter().map(|e| (e, &meta)).collect();
-    let deleted: Vec<(&E, &EntityTypeMeta)> = db_set.deleted_entities().into_iter().map(|e| (e, &meta)).collect();
+    let added: Vec<(&E, &EntityTypeMeta)> = db_set
+        .added_entities()
+        .into_iter()
+        .map(|e| (e, &meta))
+        .collect();
+    let modified: Vec<(&E, &EntityTypeMeta)> = db_set
+        .modified_entities()
+        .into_iter()
+        .map(|e| (e, &meta))
+        .collect();
+    let deleted: Vec<(&E, &EntityTypeMeta)> = db_set
+        .deleted_entities()
+        .into_iter()
+        .map(|e| (e, &meta))
+        .collect();
 
     let mut added_count = 0usize;
     let mut updated_count = 0usize;

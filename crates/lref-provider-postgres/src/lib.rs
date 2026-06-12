@@ -1,15 +1,15 @@
 //! PostgreSQL provider for Rust Entity Framework.
 
+pub mod introspection;
 pub mod sql_generator;
 pub mod type_mapping;
-pub mod introspection;
 
 use async_trait::async_trait;
-use lref::error::{LrefError, LrefResult};
-use lref::provider::{AsyncConnection, DatabaseProvider, DbValue, SqlGenerator};
 use deadpool_postgres::{Config, Pool, Runtime};
-use tokio_postgres::{types::ToSql, NoTls};
+use lref::error::{LrefError, LrefResult};
+use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 pub use sql_generator::PostgresSqlGenerator;
+use tokio_postgres::{types::ToSql, NoTls};
 pub use type_mapping::PostgresTypeMapping;
 
 pub struct PostgresProvider {
@@ -42,12 +42,12 @@ impl PostgresProvider {
 }
 
 #[async_trait]
-impl DatabaseProvider for PostgresProvider {
-    fn sql_generator(&self) -> Box<dyn SqlGenerator> {
+impl IDatabaseProvider for PostgresProvider {
+    fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
         Box::new(PostgresSqlGenerator::new())
     }
 
-    async fn get_connection(&self) -> LrefResult<Box<dyn AsyncConnection>> {
+    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
         let client = self
             .pool
             .get()
@@ -82,10 +82,13 @@ struct PostgresConnection {
 }
 
 #[async_trait]
-impl AsyncConnection for PostgresConnection {
+impl IAsyncConnection for PostgresConnection {
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64> {
         let pg_params: Vec<Box<dyn ToSql + Sync + Send>> = db_values_to_pg_params(params);
-        let refs: Vec<&(dyn ToSql + Sync)> = pg_params.iter().map(|p| p.as_ref() as &(dyn ToSql + Sync)).collect();
+        let refs: Vec<&(dyn ToSql + Sync)> = pg_params
+            .iter()
+            .map(|p| p.as_ref() as &(dyn ToSql + Sync))
+            .collect();
         self.client
             .execute(sql, &refs)
             .await
@@ -94,7 +97,10 @@ impl AsyncConnection for PostgresConnection {
 
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>> {
         let pg_params: Vec<Box<dyn ToSql + Sync + Send>> = db_values_to_pg_params(params);
-        let refs: Vec<&(dyn ToSql + Sync)> = pg_params.iter().map(|p| p.as_ref() as &(dyn ToSql + Sync)).collect();
+        let refs: Vec<&(dyn ToSql + Sync)> = pg_params
+            .iter()
+            .map(|p| p.as_ref() as &(dyn ToSql + Sync))
+            .collect();
         let rows = self
             .client
             .query(sql, &refs)
@@ -102,7 +108,11 @@ impl AsyncConnection for PostgresConnection {
             .map_err(|e| LrefError::Query(format!("Query error: {}", e)))?;
 
         let columns: Vec<String> = if !rows.is_empty() {
-            rows[0].columns().iter().map(|c| c.name().to_string()).collect()
+            rows[0]
+                .columns()
+                .iter()
+                .map(|c| c.name().to_string())
+                .collect()
         } else {
             Vec::new()
         };

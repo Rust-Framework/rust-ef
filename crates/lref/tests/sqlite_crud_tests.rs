@@ -5,11 +5,11 @@
 
 #[cfg(test)]
 mod sqlite_crud {
-    use lref::entity::{EntitySnapshot, EntityType, FromRow, GetKeyValues};
+    use lref::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
     use lref::error::LrefResult;
     use lref::metadata::{EntityTypeMeta, PropertyMeta};
     use lref::migration::{MigrationDialect, MigrationEngine};
-    use lref::provider::{AsyncConnection, DatabaseProvider, DbValue};
+    use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
     use lref_provider_sqlite::SqliteProvider;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -25,7 +25,7 @@ mod sqlite_crud {
         pub value: f64,
     }
 
-    impl EntityType for TestItem {
+    impl IEntityType for TestItem {
         fn entity_meta() -> EntityTypeMeta {
             EntityTypeMeta {
                 type_id: std::any::TypeId::of::<Self>(),
@@ -84,7 +84,7 @@ mod sqlite_crud {
         }
     }
 
-    impl FromRow for TestItem {
+    impl IFromRow for TestItem {
         fn from_row(values: &[String]) -> LrefResult<Self> {
             Ok(TestItem {
                 id: values.get(0).and_then(|s| s.parse().ok()).unwrap_or(0),
@@ -94,7 +94,7 @@ mod sqlite_crud {
         }
     }
 
-    impl GetKeyValues for TestItem {
+    impl IGetKeyValues for TestItem {
         fn key_values(&self) -> HashMap<String, DbValue> {
             let mut m = HashMap::new();
             m.insert("id".into(), DbValue::I32(self.id));
@@ -102,7 +102,7 @@ mod sqlite_crud {
         }
     }
 
-    impl EntitySnapshot for TestItem {
+    impl IEntitySnapshot for TestItem {
         fn snapshot(&self) -> HashMap<String, DbValue> {
             let mut m = HashMap::new();
             m.insert("id".into(), DbValue::I32(self.id));
@@ -122,11 +122,13 @@ mod sqlite_crud {
         let migration = engine.generate("init", &[meta], &None)?;
 
         // Create migration history table first, then run migration
-        let history_sql = lref::migration::create_migration_history_table_sql(MigrationDialect::Sqlite);
+        let history_sql =
+            lref::migration::create_migration_history_table_sql(MigrationDialect::Sqlite);
         provider.execute_migration_command(&history_sql).await?;
 
         // Strip out the history INSERT (it's a separate statement at the end)
-        let ddl = migration.up_sql
+        let ddl = migration
+            .up_sql
             .lines()
             .filter(|l| !l.starts_with("INSERT INTO"))
             .collect::<Vec<_>>()
@@ -143,21 +145,35 @@ mod sqlite_crud {
         let provider = SqliteProvider::new_in_memory().expect("create sqlite provider");
         let arc_provider = Arc::new(provider);
 
-        create_table(&arc_provider, "test_items").await.expect("create table");
+        create_table(&arc_provider, "test_items")
+            .await
+            .expect("create table");
 
         let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
-            "test_items", arc_provider.clone() as Arc<dyn lref::provider::DatabaseProvider>,
+            "test_items",
+            arc_provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
         );
 
         // Insert
-        db_set.add(TestItem { id: 0, name: "Alpha".into(), value: 1.0 });
-        db_set.add(TestItem { id: 0, name: "Beta".into(), value: 2.0 });
+        db_set.add(TestItem {
+            id: 0,
+            name: "Alpha".into(),
+            value: 1.0,
+        });
+        db_set.add(TestItem {
+            id: 0,
+            name: "Beta".into(),
+            value: 2.0,
+        });
         assert_eq!(db_set.len(), 2);
 
         // Save
-        let mut conn: Box<dyn AsyncConnection> = arc_provider.get_connection().await.expect("get connection");
+        let mut conn: Box<dyn IAsyncConnection> =
+            arc_provider.get_connection().await.expect("get connection");
         conn.begin_transaction().await.expect("begin tx");
-        let (added, _, _) = lref::db_context::save_one_set(&mut *conn, &*arc_provider, &mut db_set).await.expect("save");
+        let (added, _, _) = lref::db_context::save_one_set(&mut *conn, &*arc_provider, &mut db_set)
+            .await
+            .expect("save");
         conn.commit_transaction().await.expect("commit");
         assert_eq!(added, 2);
         db_set.clear_entries();
@@ -177,34 +193,58 @@ mod sqlite_crud {
         create_table(&provider, "test_items").await.unwrap();
 
         let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
-            "test_items", provider.clone() as Arc<dyn lref::provider::DatabaseProvider>,
+            "test_items",
+            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
         );
-        db_set.add(TestItem { id: 0, name: "A".into(), value: 1.0 });
-        db_set.add(TestItem { id: 0, name: "B".into(), value: 2.0 });
-        db_set.add(TestItem { id: 0, name: "C".into(), value: 3.0 });
+        db_set.add(TestItem {
+            id: 0,
+            name: "A".into(),
+            value: 1.0,
+        });
+        db_set.add(TestItem {
+            id: 0,
+            name: "B".into(),
+            value: 2.0,
+        });
+        db_set.add(TestItem {
+            id: 0,
+            name: "C".into(),
+            value: 3.0,
+        });
 
-        let mut conn: Box<dyn AsyncConnection> = provider.get_connection().await.unwrap();
+        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set).await.unwrap();
+        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+            .await
+            .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
         // Query with filter
-        let items = db_set.query()
+        let items = db_set
+            .query()
             .filter_column("value", ">", 1.5)
-            .to_list().await.unwrap();
+            .to_list()
+            .await
+            .unwrap();
         assert_eq!(items.len(), 2);
 
         // Query with IS NULL
-        let items_null = db_set.query()
+        let items_null = db_set
+            .query()
             .filter_is_null("value")
-            .to_list().await.unwrap();
+            .to_list()
+            .await
+            .unwrap();
         assert_eq!(items_null.len(), 0);
 
         // Query with IS NOT NULL
-        let items_not_null = db_set.query()
+        let items_not_null = db_set
+            .query()
             .filter_is_not_null("name")
-            .to_list().await.unwrap();
+            .to_list()
+            .await
+            .unwrap();
         assert_eq!(items_not_null.len(), 3);
     }
 
@@ -214,14 +254,21 @@ mod sqlite_crud {
         create_table(&provider, "test_items").await.unwrap();
 
         let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
-            "test_items", provider.clone() as Arc<dyn lref::provider::DatabaseProvider>,
+            "test_items",
+            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
         );
         for i in 0..10 {
-            db_set.add(TestItem { id: 0, name: format!("Item{}", i), value: i as f64 });
+            db_set.add(TestItem {
+                id: 0,
+                name: format!("Item{}", i),
+                value: i as f64,
+            });
         }
-        let mut conn: Box<dyn AsyncConnection> = provider.get_connection().await.unwrap();
+        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set).await.unwrap();
+        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+            .await
+            .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
@@ -240,24 +287,41 @@ mod sqlite_crud {
         create_table(&provider, "test_items").await.unwrap();
 
         let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
-            "test_items", provider.clone() as Arc<dyn lref::provider::DatabaseProvider>,
+            "test_items",
+            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
         );
         for i in 0..5 {
-            db_set.add(TestItem { id: 0, name: "X".into(), value: i as f64 });
+            db_set.add(TestItem {
+                id: 0,
+                name: "X".into(),
+                value: i as f64,
+            });
         }
-        let mut conn: Box<dyn AsyncConnection> = provider.get_connection().await.unwrap();
+        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set).await.unwrap();
+        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+            .await
+            .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
         let count = db_set.query().count().await.unwrap();
         assert_eq!(count, 5);
 
-        let any = db_set.query().filter_column("value", "=", 3).any().await.unwrap();
+        let any = db_set
+            .query()
+            .filter_column("value", "=", 3)
+            .any()
+            .await
+            .unwrap();
         assert!(any);
 
-        let any_none = db_set.query().filter_column("value", "=", 99).any().await.unwrap();
+        let any_none = db_set
+            .query()
+            .filter_column("value", "=", 99)
+            .any()
+            .await
+            .unwrap();
         assert!(!any_none);
     }
 
@@ -267,20 +331,35 @@ mod sqlite_crud {
         create_table(&provider, "test_items").await.unwrap();
 
         let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
-            "test_items", provider.clone() as Arc<dyn lref::provider::DatabaseProvider>,
+            "test_items",
+            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
         );
-        db_set.add(TestItem { id: 0, name: "ToUpdate".into(), value: 10.0 });
-        db_set.add(TestItem { id: 0, name: "ToDelete".into(), value: 20.0 });
+        db_set.add(TestItem {
+            id: 0,
+            name: "ToUpdate".into(),
+            value: 10.0,
+        });
+        db_set.add(TestItem {
+            id: 0,
+            name: "ToDelete".into(),
+            value: 20.0,
+        });
 
-        let mut conn: Box<dyn AsyncConnection> = provider.get_connection().await.unwrap();
+        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set).await.unwrap();
+        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+            .await
+            .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
         // Load entities from DB, then modify
         let items = db_set.query().to_list().await.unwrap();
-        let mut item_to_update = items.iter().find(|i| i.name == "ToUpdate").cloned().unwrap();
+        let mut item_to_update = items
+            .iter()
+            .find(|i| i.name == "ToUpdate")
+            .cloned()
+            .unwrap();
         item_to_update.value = 99.0;
         db_set.add(item_to_update); // Add as new (in real use, this would be Modified state)
 
@@ -295,14 +374,21 @@ mod sqlite_crud {
         create_table(&provider, "test_items").await.unwrap();
 
         let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
-            "test_items", provider.clone() as Arc<dyn lref::provider::DatabaseProvider>,
+            "test_items",
+            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
         );
         for i in 1..=5 {
-            db_set.add(TestItem { id: 0, name: "Agg".into(), value: i as f64 });
+            db_set.add(TestItem {
+                id: 0,
+                name: "Agg".into(),
+                value: i as f64,
+            });
         }
-        let mut conn: Box<dyn AsyncConnection> = provider.get_connection().await.unwrap();
+        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set).await.unwrap();
+        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+            .await
+            .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
@@ -319,7 +405,8 @@ mod sqlite_crud {
         create_table(&provider, "test_items").await.unwrap();
 
         let db_set = lref::db_set::DbSet::<TestItem>::with_provider(
-            "test_items", provider.clone() as Arc<dyn lref::provider::DatabaseProvider>,
+            "test_items",
+            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
         );
 
         let items = db_set.query().to_list().await.unwrap();

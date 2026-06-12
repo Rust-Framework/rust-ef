@@ -1,4 +1,4 @@
-//! lref CLI — command-line tool for migrations and scaffolding.
+//! lref CLI �?command-line tool for migrations and scaffolding.
 //!
 //! Usage: `cargo lref <command>`
 //!
@@ -12,8 +12,8 @@
 //! | `migration list`         | `dotnet ef migrations list`      |
 //! | `migration script`       | `dotnet ef migrations script`    |
 
-use clap::{Parser, Subcommand};
 use chrono::Utc;
+use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -48,7 +48,9 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum MigrationAction {
-    Add { name: String },
+    Add {
+        name: String,
+    },
     Apply {
         #[arg(short, long)]
         connection: Option<String>,
@@ -115,7 +117,8 @@ fn add_migration(name: &str) -> Result<(), String> {
     let dir_name = format!("{}_{}", timestamp, name);
     let migration_dir = PathBuf::from(MIGRATIONS_DIR).join(&dir_name);
 
-    fs::create_dir_all(&migration_dir).map_err(|e| format!("Failed to create migration directory: {}", e))?;
+    fs::create_dir_all(&migration_dir)
+        .map_err(|e| format!("Failed to create migration directory: {}", e))?;
 
     // Write up.sql
     let up_path = migration_dir.join("up.sql");
@@ -233,13 +236,28 @@ fn generate_script(from: Option<&str>, to: Option<&str>) -> Result<(), String> {
     };
 
     let end_idx = match to {
-        Some(name) => migrations.iter().position(|m| m.name == name).unwrap_or(migrations.len() - 1),
+        Some(name) => migrations
+            .iter()
+            .position(|m| m.name == name)
+            .unwrap_or(migrations.len() - 1),
         None => migrations.len() - 1,
     };
 
     println!("-- Generated SQL script (lref)");
-    println!("-- From: {}", migrations.get(start_idx).map(|m| m.name.as_str()).unwrap_or("first"));
-    println!("-- To: {}", migrations.get(end_idx).map(|m| m.name.as_str()).unwrap_or("last"));
+    println!(
+        "-- From: {}",
+        migrations
+            .get(start_idx)
+            .map(|m| m.name.as_str())
+            .unwrap_or("first")
+    );
+    println!(
+        "-- To: {}",
+        migrations
+            .get(end_idx)
+            .map(|m| m.name.as_str())
+            .unwrap_or("last")
+    );
     println!();
 
     for migration in &migrations[start_idx..=end_idx] {
@@ -266,8 +284,11 @@ fn init_migrations() -> Result<(), String> {
     // Create history tracking file
     let history_path = PathBuf::from(MIGRATIONS_DIR).join(".history");
     if !history_path.exists() {
-        fs::write(&history_path, "# lref migration history\n# One migration name per line\n")
-            .map_err(|e| format!("Failed to create history file: {}", e))?;
+        fs::write(
+            &history_path,
+            "# lref migration history\n# One migration name per line\n",
+        )
+        .map_err(|e| format!("Failed to create history file: {}", e))?;
         println!("Initialized migration history: {}", history_path.display());
     } else {
         println!("History file already exists: {}", history_path.display());
@@ -281,11 +302,7 @@ fn init_migrations() -> Result<(), String> {
 // Scaffold handler
 // ---------------------------------------------------------------------------
 
-async fn handle_scaffold(
-    connection: &str,
-    provider: &str,
-    output: &str,
-) -> Result<(), String> {
+async fn handle_scaffold(connection: &str, provider: &str, output: &str) -> Result<(), String> {
     let output_dir = Path::new(output);
     fs::create_dir_all(output_dir)
         .map_err(|e| format!("Failed to create output directory: {}", e))?;
@@ -382,8 +399,7 @@ fn record_applied_migration(name: &str) -> Result<(), String> {
         .create(true)
         .open(&history_path)
         .map_err(|e| format!("Failed to open history file: {}", e))?;
-    writeln!(file, "{}", name)
-        .map_err(|e| format!("Failed to write history: {}", e))?;
+    writeln!(file, "{}", name).map_err(|e| format!("Failed to write history: {}", e))?;
     Ok(())
 }
 
@@ -403,7 +419,7 @@ fn remove_applied_migration(name: &str) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// Schema reading (stub — real impl requires provider-specific queries)
+// Schema reading (stub �?real impl requires provider-specific queries)
 // ---------------------------------------------------------------------------
 
 struct TableInfo {
@@ -418,10 +434,7 @@ struct ColumnInfo {
     is_primary_key: bool,
 }
 
-async fn read_database_schema(
-    connection: &str,
-    provider: &str,
-) -> Result<Vec<TableInfo>, String> {
+async fn read_database_schema(connection: &str, provider: &str) -> Result<Vec<TableInfo>, String> {
     match provider {
         "postgres" => {
             println!("    Connecting to PostgreSQL and reading information_schema...");
@@ -515,7 +528,10 @@ fn generate_db_context_code(tables: &[TableInfo]) -> String {
     for table in tables {
         let struct_name = to_pascal_case(&table.name);
         let field_name = &table.name;
-        fields.push_str(&format!("    pub {}: DbSet<{}>,\n", field_name, struct_name));
+        fields.push_str(&format!(
+            "    pub {}: DbSet<{}>,\n",
+            field_name, struct_name
+        ));
         imports.push_str(&format!("pub use {};\n", field_name));
     }
 
@@ -541,7 +557,7 @@ impl AppDbContext {{
 }}
 
 #[async_trait::async_trait]
-impl DbContext for AppDbContext {{
+impl IDbContext for AppDbContext {{
     type Provider = PostgresProvider;
     fn provider(&self) -> &Self::Provider {{ &self.provider }}
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker {{ &mut self.change_tracker }}

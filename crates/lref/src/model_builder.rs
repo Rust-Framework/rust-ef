@@ -4,8 +4,13 @@
 //! `EntityTypeMeta` from all registered entity types and entity
 //! configurations, and produces the final metadata model used by
 //! the migration engine and query builder.
+//!
+//! Design note: builder structs (`EntityTypeBuilder`, `PropertyBuilder`, etc.)
+//! are pure-DSL configuration types and do NOT impose `IEntityType` bounds.
+//! Constraints live at the `ModelBuilder` entry points where `entity_meta()`
+//! is actually called.
 
-use crate::entity::EntityType;
+use crate::entity::IEntityType;
 use crate::metadata::{EntityTypeMeta, PropertyMeta, PropertyMetaBuilder};
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -56,7 +61,7 @@ impl ModelBuilder {
     }
 
     /// Begins configuring an entity type and registers it in the model.
-    pub fn entity<T: EntityType>(&mut self) -> EntityTypeBuilder<T> {
+    pub fn entity<T: IEntityType>(&mut self) -> EntityTypeBuilder<T> {
         let meta = T::entity_meta();
         let type_id = meta.type_id;
         if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
@@ -69,8 +74,8 @@ impl ModelBuilder {
     /// Applies a single entity type configuration.
     pub fn apply_configuration<C, T>(&mut self) -> &mut Self
     where
-        C: EntityTypeConfiguration<T> + Default + Send + Sync + 'static,
-        T: EntityType,
+        C: IEntityTypeConfiguration<T> + Default + Send + Sync + 'static,
+        T: IEntityType,
     {
         let meta = T::entity_meta();
         let type_id = meta.type_id;
@@ -133,7 +138,7 @@ impl ModelBuilder {
     }
 
     /// Returns the metadata for a specific entity type.
-    pub fn find_entity<T: EntityType>(&self) -> Option<&EntityTypeMeta> {
+    pub fn find_entity<T: IEntityType>(&self) -> Option<&EntityTypeMeta> {
         let type_id = TypeId::of::<T>();
         self.entity_metas.iter().find(|m| m.type_id == type_id)
     }
@@ -145,7 +150,7 @@ impl ModelBuilder {
     /// ```ignore
     /// model_builder.has_query_filter::<Blog>("is_deleted = false");
     /// ```
-    pub fn has_query_filter<T: EntityType>(&mut self, filter_sql: &str) -> &mut Self {
+    pub fn has_query_filter<T: IEntityType>(&mut self, filter_sql: &str) -> &mut Self {
         let type_id = TypeId::of::<T>();
         let config = self.configs.entry(type_id).or_default();
         config.query_filter = Some(filter_sql.to_string());
@@ -177,12 +182,16 @@ impl Default for ModelBuilder {
 // EntityTypeBuilder<T>
 // ---------------------------------------------------------------------------
 
-pub struct EntityTypeBuilder<T: EntityType> {
+/// Fluent builder for configuring an entity type.
+///
+/// Does NOT impose `IEntityType` on `T` — the constraint is on the
+/// `ModelBuilder` entry points that call `T::entity_meta()`.
+pub struct EntityTypeBuilder<T> {
     table_name: Option<String>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: EntityType> EntityTypeBuilder<T> {
+impl<T> EntityTypeBuilder<T> {
     pub fn new() -> Self {
         Self {
             table_name: None,
@@ -211,7 +220,7 @@ impl<T: EntityType> EntityTypeBuilder<T> {
         self
     }
 
-    pub fn has_many<R: EntityType>(
+    pub fn has_many<R: IEntityType>(
         &mut self,
         _navigation: fn(&T) -> &crate::relations::HasMany<R>,
     ) -> CollectionNavigationBuilder<T, R> {
@@ -221,7 +230,7 @@ impl<T: EntityType> EntityTypeBuilder<T> {
         }
     }
 
-    pub fn has_one<R: EntityType>(
+    pub fn has_one<R: IEntityType>(
         &mut self,
         _navigation: fn(&T) -> &crate::relations::HasOne<R>,
     ) -> ReferenceNavigationBuilder<T, R> {
@@ -244,13 +253,13 @@ impl<T: EntityType> EntityTypeBuilder<T> {
 // PropertyBuilder
 // ---------------------------------------------------------------------------
 
-pub struct PropertyBuilder<T: EntityType, V> {
+pub struct PropertyBuilder<T, V> {
     _entity: PhantomData<T>,
     _value: PhantomData<V>,
     builder: PropertyMetaBuilder,
 }
 
-impl<T: EntityType, V> PropertyBuilder<T, V> {
+impl<T, V> PropertyBuilder<T, V> {
     pub fn is_required(mut self) -> Self {
         self.builder = self.builder.is_required(true);
         self
@@ -285,12 +294,12 @@ impl<T: EntityType, V> PropertyBuilder<T, V> {
 // Navigation builders
 // ---------------------------------------------------------------------------
 
-pub struct CollectionNavigationBuilder<T: EntityType, R: EntityType> {
+pub struct CollectionNavigationBuilder<T, R> {
     _entity: PhantomData<T>,
     _related: PhantomData<R>,
 }
 
-impl<T: EntityType, R: EntityType> CollectionNavigationBuilder<T, R> {
+impl<T, R> CollectionNavigationBuilder<T, R> {
     pub fn with_one(self, _inverse: fn(&R) -> &crate::relations::BelongsTo<T>) -> Self {
         self
     }
@@ -302,12 +311,12 @@ impl<T: EntityType, R: EntityType> CollectionNavigationBuilder<T, R> {
     }
 }
 
-pub struct ReferenceNavigationBuilder<T: EntityType, R: EntityType> {
+pub struct ReferenceNavigationBuilder<T, R> {
     _entity: PhantomData<T>,
     _related: PhantomData<R>,
 }
 
-impl<T: EntityType, R: EntityType> ReferenceNavigationBuilder<T, R> {
+impl<T, R> ReferenceNavigationBuilder<T, R> {
     pub fn with_one<Nav>(self, _inverse: fn(&R) -> &Nav) -> Self {
         self
     }
@@ -317,9 +326,15 @@ impl<T: EntityType, R: EntityType> ReferenceNavigationBuilder<T, R> {
 }
 
 // ---------------------------------------------------------------------------
-// EntityTypeConfiguration<T>
+// IEntityTypeConfiguration<T>
 // ---------------------------------------------------------------------------
 
-pub trait EntityTypeConfiguration<T: EntityType> {
+/// Interface for entity type configuration via the Fluent API.
+///
+/// The `T: IEntityType` bound is on the trait (not the implementor) because
+/// `configure` operates on `EntityTypeBuilder<T>` which carries no trait
+/// constraint itself — the bound signals that this configuration is intended
+/// for entity types.
+pub trait IEntityTypeConfiguration<T: IEntityType> {
     fn configure(&self, entity: &mut EntityTypeBuilder<T>);
 }

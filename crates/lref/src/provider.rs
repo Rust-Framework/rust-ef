@@ -44,31 +44,49 @@ mod hex {
 }
 
 impl From<i32> for DbValue {
-    fn from(v: i32) -> Self { DbValue::I32(v) }
+    fn from(v: i32) -> Self {
+        DbValue::I32(v)
+    }
 }
 impl From<i64> for DbValue {
-    fn from(v: i64) -> Self { DbValue::I64(v) }
+    fn from(v: i64) -> Self {
+        DbValue::I64(v)
+    }
 }
 impl From<String> for DbValue {
-    fn from(v: String) -> Self { DbValue::String(v) }
+    fn from(v: String) -> Self {
+        DbValue::String(v)
+    }
 }
 impl From<&str> for DbValue {
-    fn from(v: &str) -> Self { DbValue::String(v.to_string()) }
+    fn from(v: &str) -> Self {
+        DbValue::String(v.to_string())
+    }
 }
 impl From<bool> for DbValue {
-    fn from(v: bool) -> Self { DbValue::Bool(v) }
+    fn from(v: bool) -> Self {
+        DbValue::Bool(v)
+    }
 }
 impl From<f64> for DbValue {
-    fn from(v: f64) -> Self { DbValue::F64(v) }
+    fn from(v: f64) -> Self {
+        DbValue::F64(v)
+    }
 }
 impl From<f32> for DbValue {
-    fn from(v: f32) -> Self { DbValue::F32(v) }
+    fn from(v: f32) -> Self {
+        DbValue::F32(v)
+    }
 }
 impl From<i16> for DbValue {
-    fn from(v: i16) -> Self { DbValue::I16(v) }
+    fn from(v: i16) -> Self {
+        DbValue::I16(v)
+    }
 }
 impl From<Vec<u8>> for DbValue {
-    fn from(v: Vec<u8>) -> Self { DbValue::Bytes(v) }
+    fn from(v: Vec<u8>) -> Self {
+        DbValue::Bytes(v)
+    }
 }
 impl<T> From<Option<T>> for DbValue
 where
@@ -83,7 +101,7 @@ where
 }
 
 /// Represents a SQL dialect with specific syntax for common operations.
-pub trait SqlGenerator: Send + Sync {
+pub trait ISqlGenerator: Send + Sync {
     /// Generates a SELECT statement.
     fn select(&self, table: &str, columns: &[&str]) -> String;
     /// Generates an INSERT statement.
@@ -108,7 +126,7 @@ pub trait SqlGenerator: Send + Sync {
 
 /// Trait for async database connections.
 #[async_trait]
-pub trait AsyncConnection: Send + Sync {
+pub trait IAsyncConnection: Send + Sync {
     /// Executes a query with parameters and returns the number of affected rows.
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64>;
     /// Executes a query with parameters and returns rows.
@@ -124,12 +142,12 @@ pub trait AsyncConnection: Send + Sync {
 /// The database provider abstraction.
 /// Corresponds to EFCore's provider model.
 #[async_trait]
-pub trait DatabaseProvider: Send + Sync {
+pub trait IDatabaseProvider: Send + Sync {
     /// Returns the SQL dialect generator for this provider.
-    fn sql_generator(&self) -> Box<dyn SqlGenerator>;
+    fn sql_generator(&self) -> Box<dyn ISqlGenerator>;
 
     /// Gets an async database connection from the pool.
-    async fn get_connection(&self) -> LrefResult<Box<dyn AsyncConnection>>;
+    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>>;
 
     /// Executes a migration command (DDL).
     async fn execute_migration_command(&self, sql: &str) -> LrefResult<()>;

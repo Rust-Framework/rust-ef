@@ -1,11 +1,11 @@
 //! MySQL provider for Rust Entity Framework.
 //!
-//! Implements `DatabaseProvider`, `SqlGenerator`, and `AsyncConnection`
+//! Implements `IDatabaseProvider`, `ISqlGenerator`, and `IAsyncConnection`
 //! traits for MySQL via `sqlx` with async connection pooling.
 
 use async_trait::async_trait;
 use lref::error::{LrefError, LrefResult};
-use lref::provider::{AsyncConnection, DatabaseProvider, DbValue, SqlGenerator};
+use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 use sqlx::{Column, Row};
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ impl MySqlSqlGenerator {
     }
 }
 
-impl SqlGenerator for MySqlSqlGenerator {
+impl ISqlGenerator for MySqlSqlGenerator {
     fn select(&self, table: &str, columns: &[&str]) -> String {
         let cols = if columns.is_empty() {
             "*".to_string()
@@ -75,9 +75,7 @@ impl SqlGenerator for MySqlSqlGenerator {
     fn create_table(&self, table: &str, columns: &[(String, String)]) -> String {
         let col_defs: Vec<String> = columns
             .iter()
-            .map(|(name, type_def)| {
-                format!("{} {}", self.quote_identifier(name), type_def)
-            })
+            .map(|(name, type_def)| format!("{} {}", self.quote_identifier(name), type_def))
             .collect();
         format!(
             "CREATE TABLE {} (\n    {}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
@@ -137,12 +135,12 @@ impl MySqlProvider {
 }
 
 #[async_trait]
-impl DatabaseProvider for MySqlProvider {
-    fn sql_generator(&self) -> Box<dyn SqlGenerator> {
+impl IDatabaseProvider for MySqlProvider {
+    fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
         Box::new(MySqlSqlGenerator::new())
     }
 
-    async fn get_connection(&self) -> LrefResult<Box<dyn AsyncConnection>> {
+    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
         let conn = self
             .pool
             .acquire()
@@ -189,11 +187,12 @@ impl MySqlConnection {
 }
 
 #[async_trait]
-impl AsyncConnection for MySqlConnection {
+impl IAsyncConnection for MySqlConnection {
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64> {
-        let conn = self.conn.as_mut().ok_or_else(|| {
-            LrefError::Connection("Connection already closed".to_string())
-        })?;
+        let conn = self
+            .conn
+            .as_mut()
+            .ok_or_else(|| LrefError::Connection("Connection already closed".to_string()))?;
         let result = build_mysql_query(sql, params)
             .execute(&mut **conn)
             .await
@@ -202,9 +201,10 @@ impl AsyncConnection for MySqlConnection {
     }
 
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>> {
-        let conn = self.conn.as_mut().ok_or_else(|| {
-            LrefError::Connection("Connection already closed".to_string())
-        })?;
+        let conn = self
+            .conn
+            .as_mut()
+            .ok_or_else(|| LrefError::Connection("Connection already closed".to_string()))?;
         let rows = build_mysql_query(sql, params)
             .fetch_all(&mut **conn)
             .await

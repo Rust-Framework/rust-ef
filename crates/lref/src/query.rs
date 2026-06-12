@@ -5,9 +5,9 @@
 //! (`to_list`, `first`, `count`, etc.) produce real SQL that can be
 //! executed against a database provider.
 
-use crate::entity::{EntityType, FromRow};
+use crate::entity::{IEntityType, IFromRow};
 use crate::error::LrefResult;
-use crate::provider::{DatabaseProvider, DbValue};
+use crate::provider::{DbValue, IDatabaseProvider};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -27,7 +27,11 @@ pub struct FilterCondition {
 }
 
 impl FilterCondition {
-    pub fn new(column: impl Into<String>, operator: impl Into<String>, value: Option<DbValue>) -> Self {
+    pub fn new(
+        column: impl Into<String>,
+        operator: impl Into<String>,
+        value: Option<DbValue>,
+    ) -> Self {
         Self {
             column: column.into(),
             operator: operator.into(),
@@ -105,7 +109,10 @@ pub struct JoinSpec {
 
 impl JoinSpec {
     pub fn to_sql(&self) -> String {
-        format!("{} JOIN {} ON {}", self.join_type, self.table, self.on_clause)
+        format!(
+            "{} JOIN {} ON {}",
+            self.join_type, self.table, self.on_clause
+        )
     }
 }
 
@@ -276,13 +283,13 @@ impl QueryState {
 /// A chainable query builder for entity type `T`.
 ///
 /// Corresponds to EFCore's `IQueryable<T>`.
-pub struct QueryBuilder<T: EntityType> {
+pub struct QueryBuilder<T: IEntityType> {
     state: QueryState,
-    provider: Option<Arc<dyn DatabaseProvider>>,
+    provider: Option<Arc<dyn IDatabaseProvider>>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: EntityType> QueryBuilder<T> {
+impl<T: IEntityType> QueryBuilder<T> {
     /// Creates a new QueryBuilder for a given table (without provider — SQL-only).
     pub fn new(table_name: impl Into<String>) -> Self {
         Self {
@@ -293,7 +300,10 @@ impl<T: EntityType> QueryBuilder<T> {
     }
 
     /// Creates a new QueryBuilder for a given table with a provider for execution.
-    pub fn with_provider(table_name: impl Into<String>, provider: Arc<dyn DatabaseProvider>) -> Self {
+    pub fn with_provider(
+        table_name: impl Into<String>,
+        provider: Arc<dyn IDatabaseProvider>,
+    ) -> Self {
         Self {
             state: QueryState::new(table_name),
             provider: Some(provider),
@@ -324,7 +334,12 @@ impl<T: EntityType> QueryBuilder<T> {
     }
 
     /// Adds a named filter condition with a specific operator and DbValue.
-    pub fn filter_column(mut self, column: &str, operator: &str, value: impl Into<DbValue>) -> Self {
+    pub fn filter_column(
+        mut self,
+        column: &str,
+        operator: &str,
+        value: impl Into<DbValue>,
+    ) -> Self {
         let db_val = value.into();
         self.state.parameters.push(db_val.clone());
         self.state
@@ -338,11 +353,9 @@ impl<T: EntityType> QueryBuilder<T> {
     pub fn find_by_id(mut self, id: i32) -> Self {
         let val = DbValue::I32(id);
         self.state.parameters.push(val.clone());
-        self.state.filters.push(FilterCondition::new(
-            "id",
-            "=",
-            Some(val),
-        ));
+        self.state
+            .filters
+            .push(FilterCondition::new("id", "=", Some(val)));
         self
     }
 
@@ -350,7 +363,9 @@ impl<T: EntityType> QueryBuilder<T> {
     pub fn find_by_key(mut self, key_values: &std::collections::HashMap<String, DbValue>) -> Self {
         for (col, val) in key_values {
             self.state.parameters.push(val.clone());
-            self.state.filters.push(FilterCondition::new(col.as_str(), "=", Some(val.clone())));
+            self.state
+                .filters
+                .push(FilterCondition::new(col.as_str(), "=", Some(val.clone())));
         }
         self
     }
@@ -361,38 +376,53 @@ impl<T: EntityType> QueryBuilder<T> {
         // Build parameterized placeholder list: the indices are determined
         // by the current parameter count + each new value's position
         let start = self.state.parameters.len() + 1;
-        let placeholders: Vec<String> = (0..db_vals.len()).map(|i| format!("${}", start + i)).collect();
+        let placeholders: Vec<String> = (0..db_vals.len())
+            .map(|i| format!("${}", start + i))
+            .collect();
         for v in db_vals {
             self.state.parameters.push(v);
         }
         // Use None value so to_sql outputs just "column IN (...)" without extra placeholder
         self.state.filters.push(FilterCondition::new(
-            column, &format!("IN ({})", placeholders.join(", ")), None,
+            column,
+            &format!("IN ({})", placeholders.join(", ")),
+            None,
         ));
         self
     }
 
     /// Adds an IS NULL condition.
     pub fn filter_is_null(mut self, column: &str) -> Self {
-        self.state.filters.push(FilterCondition::new(column, "IS NULL", None));
+        self.state
+            .filters
+            .push(FilterCondition::new(column, "IS NULL", None));
         self
     }
 
     /// Adds an IS NOT NULL condition.
     pub fn filter_is_not_null(mut self, column: &str) -> Self {
-        self.state.filters.push(FilterCondition::new(column, "IS NOT NULL", None));
+        self.state
+            .filters
+            .push(FilterCondition::new(column, "IS NOT NULL", None));
         self
     }
 
     /// Adds a BETWEEN low AND high condition.
-    pub fn filter_between(mut self, column: &str, low: impl Into<DbValue>, high: impl Into<DbValue>) -> Self {
+    pub fn filter_between(
+        mut self,
+        column: &str,
+        low: impl Into<DbValue>,
+        high: impl Into<DbValue>,
+    ) -> Self {
         let lo: DbValue = low.into();
         let hi: DbValue = high.into();
         let start = self.state.parameters.len() + 1;
         self.state.parameters.push(lo);
         self.state.parameters.push(hi);
         self.state.filters.push(FilterCondition::new(
-            column, &format!("BETWEEN ${} AND ${}", start, start + 1), None,
+            column,
+            &format!("BETWEEN ${} AND ${}", start, start + 1),
+            None,
         ));
         self
     }
@@ -481,8 +511,10 @@ impl<T: EntityType> QueryBuilder<T> {
             foreign_key_column: Some(foreign_key.to_string()),
             referenced_key_column: Some(referenced_key.to_string()),
         });
-        let on_clause = format!("{}.{} = {}.{}",
-            self.state.from, foreign_key, related_table, referenced_key);
+        let on_clause = format!(
+            "{}.{} = {}.{}",
+            self.state.from, foreign_key, related_table, referenced_key
+        );
         self.state.joins.push(JoinSpec {
             join_type: join_type.to_string(),
             table: related_table.to_string(),
@@ -492,13 +524,11 @@ impl<T: EntityType> QueryBuilder<T> {
     }
 
     /// Adds an INNER JOIN.
-    pub fn inner_join(
-        mut self,
-        table: &str,
-        left_column: &str,
-        right_column: &str,
-    ) -> Self {
-        let on_clause = format!("{}.{} = {}.{}", self.state.from, left_column, table, right_column);
+    pub fn inner_join(mut self, table: &str, left_column: &str, right_column: &str) -> Self {
+        let on_clause = format!(
+            "{}.{} = {}.{}",
+            self.state.from, left_column, table, right_column
+        );
         self.state.joins.push(JoinSpec {
             join_type: "INNER".to_string(),
             table: table.to_string(),
@@ -508,13 +538,11 @@ impl<T: EntityType> QueryBuilder<T> {
     }
 
     /// Adds a LEFT JOIN.
-    pub fn left_join(
-        mut self,
-        table: &str,
-        left_column: &str,
-        right_column: &str,
-    ) -> Self {
-        let on_clause = format!("{}.{} = {}.{}", self.state.from, left_column, table, right_column);
+    pub fn left_join(mut self, table: &str, left_column: &str, right_column: &str) -> Self {
+        let on_clause = format!(
+            "{}.{} = {}.{}",
+            self.state.from, left_column, table, right_column
+        );
         self.state.joins.push(JoinSpec {
             join_type: "LEFT".to_string(),
             table: table.to_string(),
@@ -554,10 +582,11 @@ impl<T: EntityType> QueryBuilder<T> {
         state.aggregate_column = Some(column.to_string());
         let sql = state.to_sql();
         let params = state.params().to_vec();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to QueryBuilder.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to QueryBuilder.".to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
@@ -576,10 +605,11 @@ impl<T: EntityType> QueryBuilder<T> {
         state.aggregate_column = Some(column.to_string());
         let sql = state.to_sql();
         let params = state.params().to_vec();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to QueryBuilder.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to QueryBuilder.".to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
@@ -598,10 +628,11 @@ impl<T: EntityType> QueryBuilder<T> {
         state.aggregate_column = Some(column.to_string());
         let sql = state.to_sql();
         let params = state.params().to_vec();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to QueryBuilder.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to QueryBuilder.".to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         Ok(rows.first().and_then(|r| r.first().cloned()))
@@ -614,10 +645,11 @@ impl<T: EntityType> QueryBuilder<T> {
         state.aggregate_column = Some(column.to_string());
         let sql = state.to_sql();
         let params = state.params().to_vec();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to QueryBuilder.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to QueryBuilder.".to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         Ok(rows.first().and_then(|r| r.first().cloned()))
@@ -664,34 +696,36 @@ impl<T: EntityType> QueryBuilder<T> {
     /// Executes the query and returns all matching entities.
     pub async fn to_list(self) -> LrefResult<Vec<T>>
     where
-        T: FromRow,
+        T: IFromRow,
     {
         let sql = self.to_sql();
         let params = self.state.params().to_vec();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to QueryBuilder. Use DbSet::query() or attach a provider.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to QueryBuilder. Use DbSet::query() or attach a provider."
+                    .to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
-        materialize_entities::<T>(&rows)
+        crate::entity::materialize_entities::<T>(&rows)
     }
 
     /// Executes the query and returns the first matching entity.
     pub async fn first(self) -> LrefResult<T>
     where
-        T: FromRow,
+        T: IFromRow,
     {
         let mut results = self.take(1).to_list().await?;
-        results.pop().ok_or_else(|| {
-            crate::error::LrefError::NotFound("Entity not found".to_string())
-        })
+        results
+            .pop()
+            .ok_or_else(|| crate::error::LrefError::NotFound("Entity not found".to_string()))
     }
 
     /// Executes the query and returns the first matching entity or None.
     pub async fn first_or_default(self) -> LrefResult<Option<T>>
     where
-        T: FromRow,
+        T: IFromRow,
     {
         let mut results = self.take(1).to_list().await?;
         Ok(results.pop())
@@ -703,18 +737,20 @@ impl<T: EntityType> QueryBuilder<T> {
         state.is_count = true;
         let sql = state.to_sql();
         let params = state.params().to_vec();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to QueryBuilder.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to QueryBuilder.".to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first_row) = rows.first() {
             if let Some(first_val) = first_row.first() {
                 return first_val.trim().parse::<i64>().map_err(|e| {
-                    crate::error::LrefError::TypeConversion(
-                        format!("COUNT result '{}' is not i64: {}", first_val, e)
-                    )
+                    crate::error::LrefError::TypeConversion(format!(
+                        "COUNT result '{}' is not i64: {}",
+                        first_val, e
+                    ))
                 });
             }
         }
@@ -728,10 +764,11 @@ impl<T: EntityType> QueryBuilder<T> {
         state.limit = Some(1);
         let sql = state.to_sql();
         let params = state.params().to_vec();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to QueryBuilder.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to QueryBuilder.".to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         Ok(!rows.is_empty())
@@ -753,12 +790,17 @@ impl<T: EntityType> QueryBuilder<T> {
 
     /// Executes a bulk delete operation.
     pub async fn execute_delete(self) -> LrefResult<u64> {
-        let sql = format!("DELETE FROM {} {}", self.state.from, build_where(&self.state.filters));
+        let sql = format!(
+            "DELETE FROM {} {}",
+            self.state.from,
+            build_where(&self.state.filters)
+        );
         let params = self.state.params().to_vec();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to QueryBuilder.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to QueryBuilder.".to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         conn.execute(&sql, &params).await
     }
@@ -769,14 +811,14 @@ impl<T: EntityType> QueryBuilder<T> {
 // ---------------------------------------------------------------------------
 
 /// Builder for bulk update operations.
-pub struct ExecuteUpdateBuilder<T: EntityType> {
+pub struct ExecuteUpdateBuilder<T: IEntityType> {
     state: QueryState,
     updates: Vec<(String, DbValue)>,
-    provider: Option<Arc<dyn DatabaseProvider>>,
+    provider: Option<Arc<dyn IDatabaseProvider>>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: EntityType> ExecuteUpdateBuilder<T> {
+impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     /// Sets a property to a new value.
     pub fn set_property(mut self, _accessor: fn(&T) -> &str, value: impl Into<DbValue>) -> Self {
         self.updates.push(("__column__".to_string(), value.into()));
@@ -821,10 +863,11 @@ impl<T: EntityType> ExecuteUpdateBuilder<T> {
     pub async fn execute(self) -> LrefResult<u64> {
         let sql = self.to_sql();
         let params = self.params();
-        let provider = self.provider.as_ref()
-            .ok_or_else(|| crate::error::LrefError::Configuration(
-                "No provider attached to ExecuteUpdateBuilder.".to_string()
-            ))?;
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::LrefError::Configuration(
+                "No provider attached to ExecuteUpdateBuilder.".to_string(),
+            )
+        })?;
         let mut conn = provider.get_connection().await?;
         conn.execute(&sql, &params).await
     }
@@ -835,13 +878,13 @@ impl<T: EntityType> ExecuteUpdateBuilder<T> {
 // ---------------------------------------------------------------------------
 
 /// A query builder for projected results.
-pub struct SelectQueryBuilder<T: EntityType, R> {
+pub struct SelectQueryBuilder<T: IEntityType, R> {
     state: QueryState,
     _phantom_t: PhantomData<T>,
     _phantom_r: PhantomData<R>,
 }
 
-impl<T: EntityType, R> SelectQueryBuilder<T, R> {
+impl<T: IEntityType, R> SelectQueryBuilder<T, R> {
     /// Returns the generated SQL.
     pub fn to_sql(&self) -> String {
         self.state.to_sql()
@@ -855,20 +898,6 @@ impl<T: EntityType, R> SelectQueryBuilder<T, R> {
 }
 
 // ---------------------------------------------------------------------------
-// Entity materialization
-// ---------------------------------------------------------------------------
-
-/// Materializes entities from raw row data using the `FromRow` trait.
-pub fn materialize_entities<T: EntityType + FromRow>(rows: &[Vec<String>]) -> LrefResult<Vec<T>> {
-    let mut entities = Vec::with_capacity(rows.len());
-    for row in rows {
-        let entity = T::from_row(row)?;
-        entities.push(entity);
-    }
-    Ok(entities)
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -876,7 +905,9 @@ fn build_where(filters: &[FilterCondition]) -> String {
     if filters.is_empty() {
         String::new()
     } else {
-        let clauses: Vec<String> = filters.iter().enumerate()
+        let clauses: Vec<String> = filters
+            .iter()
+            .enumerate()
             .map(|(i, f)| f.to_sql(&format!("${}", i + 1)))
             .collect();
         format!("WHERE {}", clauses.join(" AND "))
@@ -888,6 +919,6 @@ fn build_where(filters: &[FilterCondition]) -> String {
 // ---------------------------------------------------------------------------
 
 /// Trait representing a queryable data source.
-pub trait IQueryable<T: EntityType> {
+pub trait IQueryable<T: IEntityType> {
     fn query(&self) -> QueryBuilder<T>;
 }

@@ -4,10 +4,10 @@
 //! state (Added/Modified/Deleted), generates the appropriate parameterized
 //! DML, and executes it against the database via the provider.
 
-use crate::entity::{EntitySnapshot, EntityType, GetKeyValues};
+use crate::entity::{IEntitySnapshot, IEntityType, IGetKeyValues};
 use crate::error::LrefResult;
 use crate::metadata::EntityTypeMeta;
-use crate::provider::{AsyncConnection, DatabaseProvider, DbValue};
+use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
 use std::collections::HashMap;
 
 /// Executes INSERT/UPDATE/DELETE for tracked entities within a transaction.
@@ -19,13 +19,13 @@ impl ChangeExecutor {
     /// For auto-increment columns, the generated key values are written back
     /// via the `on_key_backfill` callback.
     pub async fn execute_inserts<E, F>(
-        conn: &mut dyn AsyncConnection,
-        provider: &dyn DatabaseProvider,
+        conn: &mut dyn IAsyncConnection,
+        provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta)],
         mut on_key_backfill: F,
     ) -> LrefResult<usize>
     where
-        E: EntityType + EntitySnapshot + GetKeyValues,
+        E: IEntityType + IEntitySnapshot + IGetKeyValues,
         F: FnMut(usize, i64),
     {
         let gen = provider.sql_generator();
@@ -74,12 +74,12 @@ impl ChangeExecutor {
 
     /// Executes UPDATE statements for all modified entities.
     pub async fn execute_updates<E>(
-        conn: &mut dyn AsyncConnection,
-        provider: &dyn DatabaseProvider,
+        conn: &mut dyn IAsyncConnection,
+        provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta)],
     ) -> LrefResult<usize>
     where
-        E: EntityType + EntitySnapshot + GetKeyValues,
+        E: IEntityType + IEntitySnapshot + IGetKeyValues,
     {
         let gen = provider.sql_generator();
         let mut updated = 0;
@@ -123,7 +123,10 @@ impl ChangeExecutor {
                     // Map column_name back to field_name
                     let prop = scalar_props.iter().find(|p| p.column_name.as_ref() == *col);
                     match prop {
-                        Some(p) => snap.get(p.field_name.as_ref()).cloned().unwrap_or(DbValue::Null),
+                        Some(p) => snap
+                            .get(p.field_name.as_ref())
+                            .cloned()
+                            .unwrap_or(DbValue::Null),
                         None => DbValue::Null,
                     }
                 })
@@ -144,12 +147,12 @@ impl ChangeExecutor {
 
     /// Executes DELETE statements for all deleted entities.
     pub async fn execute_deletes<E>(
-        conn: &mut dyn AsyncConnection,
-        provider: &dyn DatabaseProvider,
+        conn: &mut dyn IAsyncConnection,
+        provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta)],
     ) -> LrefResult<usize>
     where
-        E: EntityType + GetKeyValues,
+        E: IEntityType + IGetKeyValues,
     {
         let gen = provider.sql_generator();
         let mut deleted = 0;
@@ -191,13 +194,16 @@ impl ChangeExecutor {
 // ---------------------------------------------------------------------------
 
 pub fn generate_insert_sql(
-    provider: &dyn DatabaseProvider,
+    provider: &dyn IDatabaseProvider,
     meta: &EntityTypeMeta,
     _property_values: &HashMap<String, DbValue>,
 ) -> String {
     let gen = provider.sql_generator();
     let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
-    let columns: Vec<&str> = scalar_props.iter().map(|p| p.column_name.as_ref()).collect();
+    let columns: Vec<&str> = scalar_props
+        .iter()
+        .map(|p| p.column_name.as_ref())
+        .collect();
     if columns.is_empty() {
         return String::new();
     }
@@ -205,7 +211,7 @@ pub fn generate_insert_sql(
 }
 
 pub fn generate_update_sql(
-    provider: &dyn DatabaseProvider,
+    provider: &dyn IDatabaseProvider,
     meta: &EntityTypeMeta,
     property_values: &HashMap<String, DbValue>,
     primary_key_values: &HashMap<String, DbValue>,
@@ -222,13 +228,23 @@ pub fn generate_update_sql(
     let where_parts: Vec<String> = primary_key_values
         .keys()
         .enumerate()
-        .map(|(i, k)| format!("{} = {}", gen.quote_identifier(k), gen.parameter_placeholder(i + 1)))
+        .map(|(i, k)| {
+            format!(
+                "{} = {}",
+                gen.quote_identifier(k),
+                gen.parameter_placeholder(i + 1)
+            )
+        })
         .collect();
-    gen.update(meta.table_name.as_ref(), &set_columns, &where_parts.join(" AND "))
+    gen.update(
+        meta.table_name.as_ref(),
+        &set_columns,
+        &where_parts.join(" AND "),
+    )
 }
 
 pub fn generate_delete_sql(
-    provider: &dyn DatabaseProvider,
+    provider: &dyn IDatabaseProvider,
     meta: &EntityTypeMeta,
     primary_key_values: &HashMap<String, DbValue>,
 ) -> String {
@@ -239,7 +255,13 @@ pub fn generate_delete_sql(
     let where_parts: Vec<String> = primary_key_values
         .keys()
         .enumerate()
-        .map(|(i, k)| format!("{} = {}", gen.quote_identifier(k), gen.parameter_placeholder(i + 1)))
+        .map(|(i, k)| {
+            format!(
+                "{} = {}",
+                gen.quote_identifier(k),
+                gen.parameter_placeholder(i + 1)
+            )
+        })
         .collect();
     gen.delete(meta.table_name.as_ref(), &where_parts.join(" AND "))
 }
@@ -249,7 +271,12 @@ pub fn collect_insert_params(
     property_values: &HashMap<String, DbValue>,
 ) -> Vec<DbValue> {
     meta.mapped_scalar_properties()
-        .map(|p| property_values.get(p.field_name.as_ref()).cloned().unwrap_or(DbValue::Null))
+        .map(|p| {
+            property_values
+                .get(p.field_name.as_ref())
+                .cloned()
+                .unwrap_or(DbValue::Null)
+        })
         .collect()
 }
 

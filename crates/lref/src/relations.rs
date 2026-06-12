@@ -2,8 +2,11 @@
 //!
 //! These types serve as container wrappers for navigation properties,
 //! analogous to how EFCore represents navigation properties in the model.
+//!
+//! They are pure marker/container types and do NOT impose entity trait
+//! bounds — the constraint belongs at the usage site (DbContext, builders),
+//! not on the container itself.
 
-use crate::entity::EntityType;
 use std::marker::PhantomData;
 
 // ---------------------------------------------------------------------------
@@ -14,12 +17,12 @@ use std::marker::PhantomData;
 /// or one-to-one relationship where the foreign key lives on this entity.
 ///
 /// Corresponds to EFCore's reference navigation property.
-pub struct BelongsTo<T: EntityType> {
+pub struct BelongsTo<T> {
     _inner: Option<Box<T>>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: EntityType> BelongsTo<T> {
+impl<T> BelongsTo<T> {
     pub fn new() -> Self {
         Self {
             _inner: None,
@@ -43,13 +46,13 @@ impl<T: EntityType> BelongsTo<T> {
     }
 }
 
-impl<T: EntityType> Default for BelongsTo<T> {
+impl<T> Default for BelongsTo<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: EntityType> Clone for BelongsTo<T> {
+impl<T> Clone for BelongsTo<T> {
     fn clone(&self) -> Self {
         Self {
             _inner: None, // Navigation properties are not deep-cloned
@@ -58,7 +61,7 @@ impl<T: EntityType> Clone for BelongsTo<T> {
     }
 }
 
-impl<T: EntityType> std::fmt::Debug for BelongsTo<T> {
+impl<T> std::fmt::Debug for BelongsTo<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BelongsTo").finish()
     }
@@ -72,12 +75,12 @@ impl<T: EntityType> std::fmt::Debug for BelongsTo<T> {
 ///
 /// Corresponds to EFCore's collection navigation property
 /// (e.g., `ICollection<Post>`).
-pub struct HasMany<T: EntityType, Join = ()> {
+pub struct HasMany<T, Join = ()> {
     items: Vec<T>,
     _phantom: PhantomData<(T, Join)>,
 }
 
-impl<T: EntityType, Join> HasMany<T, Join> {
+impl<T, Join> HasMany<T, Join> {
     pub fn new() -> Self {
         Self {
             items: Vec::new(),
@@ -121,13 +124,13 @@ impl<T: EntityType, Join> HasMany<T, Join> {
     }
 }
 
-impl<T: EntityType, Join> Default for HasMany<T, Join> {
+impl<T, Join> Default for HasMany<T, Join> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: EntityType, Join> Clone for HasMany<T, Join> {
+impl<T, Join> Clone for HasMany<T, Join> {
     fn clone(&self) -> Self {
         Self {
             items: Vec::new(), // Navigation collections are not deep-cloned
@@ -136,7 +139,7 @@ impl<T: EntityType, Join> Clone for HasMany<T, Join> {
     }
 }
 
-impl<T: EntityType, Join> std::fmt::Debug for HasMany<T, Join> {
+impl<T, Join> std::fmt::Debug for HasMany<T, Join> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HasMany").finish()
     }
@@ -151,12 +154,12 @@ pub type Through<Join> = Join;
 
 /// Represents a "has-one" navigation — a single related entity
 /// where the foreign key lives on the other side.
-pub struct HasOne<T: EntityType> {
+pub struct HasOne<T> {
     _inner: Option<Box<T>>,
     _phantom: PhantomData<T>,
 }
 
-impl<T: EntityType> HasOne<T> {
+impl<T> HasOne<T> {
     pub fn new() -> Self {
         Self {
             _inner: None,
@@ -180,13 +183,13 @@ impl<T: EntityType> HasOne<T> {
     }
 }
 
-impl<T: EntityType> Default for HasOne<T> {
+impl<T> Default for HasOne<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: EntityType> Clone for HasOne<T> {
+impl<T> Clone for HasOne<T> {
     fn clone(&self) -> Self {
         Self {
             _inner: None,
@@ -195,7 +198,7 @@ impl<T: EntityType> Clone for HasOne<T> {
     }
 }
 
-impl<T: EntityType> std::fmt::Debug for HasOne<T> {
+impl<T> std::fmt::Debug for HasOne<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HasOne").finish()
     }

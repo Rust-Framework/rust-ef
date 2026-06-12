@@ -1,6 +1,6 @@
 //! PostgreSQL-specific SQL dialect generator.
 
-use lref::provider::SqlGenerator;
+use lref::provider::ISqlGenerator;
 
 /// SQL generator that produces PostgreSQL-compatible SQL.
 #[derive(Debug, Clone)]
@@ -18,7 +18,7 @@ impl Default for PostgresSqlGenerator {
     }
 }
 
-impl SqlGenerator for PostgresSqlGenerator {
+impl ISqlGenerator for PostgresSqlGenerator {
     fn select(&self, table: &str, columns: &[&str]) -> String {
         let cols = if columns.is_empty() {
             "*".to_string()

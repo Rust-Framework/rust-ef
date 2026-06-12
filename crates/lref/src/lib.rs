@@ -23,40 +23,42 @@
 //! }
 //! ```
 
-pub mod entity;
-pub mod metadata;
+pub mod cache;
+pub mod change_executor;
 pub mod db_context;
 pub mod db_set;
-pub mod query;
-pub mod model_builder;
-pub mod tracking;
-pub mod relations;
-pub mod migration;
-pub mod provider;
+pub mod entity;
 pub mod error;
-pub mod change_executor;
-pub mod cache;
+pub mod metadata;
+pub mod migration;
+pub mod model_builder;
+pub mod provider;
+pub mod query;
+pub mod relations;
+pub mod tracking;
 
 /// Re-exports of the most commonly used types.
 pub mod prelude {
-    pub use crate::entity::EntityType;
-    pub use crate::entity::EntityState;
-    pub use crate::entity::FromRow;
-    pub use crate::entity::GetKeyValues;
-    pub use crate::entity::EntitySnapshot;
-    pub use crate::metadata::EntityTypeMeta;
-    pub use crate::metadata::PropertyMeta;
-    pub use crate::metadata::NavigationMeta;
-    pub use crate::db_context::DbContext;
+    pub use crate::db_context::IDbContext;
     pub use crate::db_context::SaveChangesResult;
-    pub use crate::tracking::ChangeTracker;
-    pub use crate::db_set::DbSet;
-    pub use crate::relations::{BelongsTo, HasMany, HasOne, DeleteBehavior};
+    pub use crate::db_set::{DbSet, IDbSet};
+    pub use crate::entity::EntityState;
+    pub use crate::entity::IEntitySnapshot;
+    pub use crate::entity::IEntityType;
+    pub use crate::entity::IFromRow;
+    pub use crate::entity::IGetKeyValues;
     pub use crate::error::LrefError;
-    pub use crate::model_builder::{ModelBuilder, EntityTypeBuilder, EntityTypeConfiguration, PropertyBuilder};
-    pub use crate::provider::DatabaseProvider;
+    pub use crate::metadata::EntityTypeMeta;
+    pub use crate::metadata::NavigationMeta;
+    pub use crate::metadata::PropertyMeta;
+    pub use crate::model_builder::{
+        EntityTypeBuilder, IEntityTypeConfiguration, ModelBuilder, PropertyBuilder,
+    };
     pub use crate::provider::DbValue;
-    pub use lref_macros::EntityType;
-    pub use lref_macros::column;
+    pub use crate::provider::IDatabaseProvider;
+    pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::save_changes_all;
+    pub use crate::tracking::ChangeTracker;
+    pub use lref_macros::column;
+    pub use lref_macros::EntityType;
 }

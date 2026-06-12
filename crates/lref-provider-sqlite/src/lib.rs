@@ -1,11 +1,11 @@
 //! SQLite provider for Rust Entity Framework.
 //!
-//! Implements `DatabaseProvider`, `SqlGenerator`, and `AsyncConnection`
+//! Implements `IDatabaseProvider`, `ISqlGenerator`, and `IAsyncConnection`
 //! traits for SQLite via `rusqlite` with a tokio-compatible async wrapper.
 
 use async_trait::async_trait;
 use lref::error::{LrefError, LrefResult};
-use lref::provider::{AsyncConnection, DatabaseProvider, DbValue, SqlGenerator};
+use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -24,7 +24,7 @@ impl SqliteSqlGenerator {
     }
 }
 
-impl SqlGenerator for SqliteSqlGenerator {
+impl ISqlGenerator for SqliteSqlGenerator {
     fn select(&self, table: &str, columns: &[&str]) -> String {
         let cols = if columns.is_empty() {
             "*".to_string()
@@ -77,9 +77,7 @@ impl SqlGenerator for SqliteSqlGenerator {
     fn create_table(&self, table: &str, columns: &[(String, String)]) -> String {
         let col_defs: Vec<String> = columns
             .iter()
-            .map(|(name, type_def)| {
-                format!("{} {}", self.quote_identifier(name), type_def)
-            })
+            .map(|(name, type_def)| format!("{} {}", self.quote_identifier(name), type_def))
             .collect();
         format!(
             "CREATE TABLE {} (\n    {}\n)",
@@ -144,12 +142,12 @@ impl SqliteProvider {
 }
 
 #[async_trait]
-impl DatabaseProvider for SqliteProvider {
-    fn sql_generator(&self) -> Box<dyn SqlGenerator> {
+impl IDatabaseProvider for SqliteProvider {
+    fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
         Box::new(SqliteSqlGenerator::new())
     }
 
-    async fn get_connection(&self) -> LrefResult<Box<dyn AsyncConnection>> {
+    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
         Ok(Box::new(SqliteConnection::new(self.conn.clone())))
     }
 
@@ -189,7 +187,7 @@ impl SqliteConnection {
 }
 
 #[async_trait]
-impl AsyncConnection for SqliteConnection {
+impl IAsyncConnection for SqliteConnection {
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64> {
         let conn = self.conn.lock().await;
         let rusqlite_params = to_rusqlite_params(params);
@@ -234,9 +232,7 @@ impl AsyncConnection for SqliteConnection {
 
         let mut result = Vec::new();
         for row in rows {
-            result.push(
-                row.map_err(|e| LrefError::Query(format!("Row read error: {}", e)))?,
-            );
+            result.push(row.map_err(|e| LrefError::Query(format!("Row read error: {}", e)))?);
         }
 
         Ok(result)

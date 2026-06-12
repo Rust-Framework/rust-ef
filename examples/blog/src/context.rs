@@ -1,7 +1,7 @@
 //! DbContext definition and Fluent API configuration for the blog example.
 
 use lref::prelude::*;
-use lref::provider::DatabaseProvider;
+use lref::provider::IDatabaseProvider;
 use lref_provider_postgres::PostgresProvider;
 use std::sync::Arc;
 
@@ -16,15 +16,13 @@ pub struct BloggingContext {
 
 impl BloggingContext {
     pub async fn new() -> Result<Self, LrefError> {
-        let pg_provider = PostgresProvider::new(
-            "postgres://postgres:postgres@localhost/blogging",
-            5,
-        )?;
+        let pg_provider =
+            PostgresProvider::new("postgres://postgres:postgres@localhost/blogging", 5)?;
         let provider = Arc::new(pg_provider);
 
         Ok(Self {
-            blogs: DbSet::with_provider("blogs", provider.clone() as Arc<dyn DatabaseProvider>),
-            posts: DbSet::with_provider("posts", provider.clone() as Arc<dyn DatabaseProvider>),
+            blogs: DbSet::with_provider("blogs", provider.clone() as Arc<dyn IDatabaseProvider>),
+            posts: DbSet::with_provider("posts", provider.clone() as Arc<dyn IDatabaseProvider>),
             change_tracker: ChangeTracker::new(),
             provider,
         })
@@ -36,19 +34,27 @@ impl BloggingContext {
 }
 
 #[async_trait::async_trait]
-impl DbContext for BloggingContext {
+impl IDbContext for BloggingContext {
     type Provider = PostgresProvider;
-    fn provider(&self) -> &Self::Provider { &self.provider }
-    fn change_tracker_mut(&mut self) -> &mut ChangeTracker { &mut self.change_tracker }
-    fn change_tracker(&self) -> &ChangeTracker { &self.change_tracker }
+    fn provider(&self) -> &Self::Provider {
+        &self.provider
+    }
+    fn change_tracker_mut(&mut self) -> &mut ChangeTracker {
+        &mut self.change_tracker
+    }
+    fn change_tracker(&self) -> &ChangeTracker {
+        &self.change_tracker
+    }
     async fn save_changes(&mut self) -> Result<SaveChangesResult, LrefError> {
         // Get provider reference via Arc clone to avoid borrow conflicts
         let provider = Arc::clone(&self.provider);
         let mut conn = provider.get_connection().await?;
         conn.begin_transaction().await?;
 
-        let (a1, u1, d1) = lref::db_context::save_one_set(&mut *conn, &*provider, &mut self.blogs).await?;
-        let (a2, u2, d2) = lref::db_context::save_one_set(&mut *conn, &*provider, &mut self.posts).await?;
+        let (a1, u1, d1) =
+            lref::db_context::save_one_set(&mut *conn, &*provider, &mut self.blogs).await?;
+        let (a2, u2, d2) =
+            lref::db_context::save_one_set(&mut *conn, &*provider, &mut self.posts).await?;
 
         conn.commit_transaction().await?;
         self.change_tracker.accept_all_changes();
@@ -70,7 +76,7 @@ impl DbContext for BloggingContext {
 #[derive(Default)]
 pub struct BlogConfiguration;
 
-impl EntityTypeConfiguration<Blog> for BlogConfiguration {
+impl IEntityTypeConfiguration<Blog> for BlogConfiguration {
     fn configure(&self, entity: &mut EntityTypeBuilder<Blog>) {
         entity
             .to_table("blogs")
@@ -90,7 +96,7 @@ impl EntityTypeConfiguration<Blog> for BlogConfiguration {
 #[derive(Default)]
 pub struct PostConfiguration;
 
-impl EntityTypeConfiguration<Post> for PostConfiguration {
+impl IEntityTypeConfiguration<Post> for PostConfiguration {
     fn configure(&self, entity: &mut EntityTypeBuilder<Post>) {
         entity
             .to_table("posts")
@@ -100,9 +106,7 @@ impl EntityTypeConfiguration<Post> for PostConfiguration {
             .has_max_length(200)
             .has_column_name("Title");
 
-        entity
-            .property(|p| &p.content)
-            .has_column_name("Content");
+        entity.property(|p| &p.content).has_column_name("Content");
     }
 }
 
@@ -113,15 +117,11 @@ impl BloggingContext {
             .apply_configuration::<BlogConfiguration, Blog>()
             .apply_configuration::<PostConfiguration, Post>();
 
-        model_builder
-            .entity::<Blog>()
-            .has_data(&[
-                Blog {
-                    blog_id: 1,
-                    url: "https://devblogs.microsoft.com/dotnet".into(),
-                    rating: 5,
-                    posts: HasMany::new(),
-                },
-            ]);
+        model_builder.entity::<Blog>().has_data(&[Blog {
+            blog_id: 1,
+            url: "https://devblogs.microsoft.com/dotnet".into(),
+            rating: 5,
+            posts: HasMany::new(),
+        }]);
     }
 }

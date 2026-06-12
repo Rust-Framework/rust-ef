@@ -170,7 +170,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
     }
 
     let expanded = quote! {
-        impl lref::entity::EntityType for #struct_name {
+        impl lref::entity::IEntityType for #struct_name {
             fn entity_meta() -> lref::metadata::EntityTypeMeta {
                 lref::metadata::EntityTypeMeta {
                     type_id: std::any::TypeId::of::<Self>(),
@@ -193,7 +193,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             #(#column_consts)*
         }
 
-        impl lref::entity::GetKeyValues for #struct_name {
+        impl lref::entity::IGetKeyValues for #struct_name {
             fn key_values(&self) -> std::collections::HashMap<String, lref::provider::DbValue> {
                 let mut map = std::collections::HashMap::new();
                 #(
@@ -206,7 +206,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl lref::entity::EntitySnapshot for #struct_name {
+        impl lref::entity::IEntitySnapshot for #struct_name {
             fn snapshot(&self) -> std::collections::HashMap<String, lref::provider::DbValue> {
                 let mut map = std::collections::HashMap::new();
                 #(#snapshot_entries)*
@@ -214,7 +214,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl lref::entity::FromRow for #struct_name {
+        impl lref::entity::IFromRow for #struct_name {
             fn from_row(values: &[String]) -> lref::error::LrefResult<Self> {
                 if values.len() < #field_count {
                     return Err(lref::error::LrefError::TypeConversion(

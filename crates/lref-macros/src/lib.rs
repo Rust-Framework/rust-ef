@@ -1,21 +1,21 @@
 //! Procedural macros for Rust Entity Framework (lref).
 //!
 //! Provides:
-//! - `#[derive(EntityType)]` — generates `EntityType` trait implementation
+//! - `#[derive(EntityType)]` — generates `IEntityType` trait implementation
 //! - `column!()` — resolves entity fields to database column names at compile time
 
-mod entity;
 mod attributes;
 mod column_macro;
+mod entity;
 
 use proc_macro::TokenStream;
 
-/// Derive macro to implement `EntityType` for a struct.
+/// Derive macro to implement `IEntityType` for a struct.
 ///
 /// Generates:
 /// - `EntityTypeMeta` for the entity (table name, columns, keys, navigations)
-/// - `EntityType` trait implementation
-/// - `FromRow` trait implementation for materialization
+/// - `IEntityType` trait implementation
+/// - `IFromRow` trait implementation for materialization
 /// - `COLUMN_*` associated constants for type-safe column references
 ///
 /// # Attributes
@@ -33,7 +33,23 @@ use proc_macro::TokenStream;
 /// | `#[not_mapped]`    | `[NotMapped]`     | Excludes from mapping              |
 /// | `#[index]`         | `[Index]`         | Creates a database index           |
 /// | `#[unique]`        | (unique index)    | Creates a unique database index    |
-#[proc_macro_derive(EntityType, attributes(table, primary_key, auto_increment, required, max_length, column, foreign_key, navigation, not_mapped, index, unique, concurrency_check))]
+#[proc_macro_derive(
+    EntityType,
+    attributes(
+        table,
+        primary_key,
+        auto_increment,
+        required,
+        max_length,
+        column,
+        foreign_key,
+        navigation,
+        not_mapped,
+        index,
+        unique,
+        concurrency_check
+    )
+)]
 pub fn derive_entity_type(input: TokenStream) -> TokenStream {
     entity::expand_entity_type(input)
 }

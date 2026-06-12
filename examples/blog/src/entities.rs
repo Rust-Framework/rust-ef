@@ -1,14 +1,14 @@
-//! Entity type definitions — Blog and Post.
+//! Entity type definitions -- Blog and Post.
 //!
 //! These demonstrate the core entity definition pattern with
 //! `#[derive(EntityType)]` and attribute-based configuration.
 
 use lref::prelude::*;
 
-/// Represents a Blog — analogous to EFCore's Blog entity.
+/// Represents a Blog -- analogous to EFCore's Blog entity.
 ///
 /// # Attributes
-/// - `#[derive(EntityType)]`: Auto-implements `EntityType` trait
+/// - `#[derive(EntityType)]`: Auto-implements IEntityType trait
 /// - `#[table("blogs")]`: Maps to the `blogs` table
 /// - `#[primary_key]`: Primary key (EFCore: `[Key]`)
 /// - `#[auto_increment]`: Auto-increment / identity column
@@ -38,7 +38,7 @@ pub struct Blog {
     pub posts: HasMany<Post>,
 }
 
-/// Represents a Post — analogous to EFCore's Post entity.
+/// Represents a Post -- analogous to EFCore's Post entity.
 ///
 /// Demonstrates:
 /// - Foreign key relationship (`#[foreign_key(Blog)]`)
@@ -57,7 +57,7 @@ pub struct Post {
     #[max_length(200)]
     pub title: String,
 
-    /// Post content (optional — Option<T> naturally maps to nullable)
+    /// Post content (optional -- Option<T> naturally maps to nullable)
     pub content: Option<String>,
 
     /// Foreign key to Blog (EFCore: `public int BlogId { get; set; }`)
