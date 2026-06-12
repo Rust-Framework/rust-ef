@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "database", "postgresql"]
 categories = ["database"]
 
 [dependencies]
-lref-macros = { path = "../lref-macros" }
+lref-macros = { version = "0.2.0", path = "../lref-macros" }
 async-trait = "0.1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
