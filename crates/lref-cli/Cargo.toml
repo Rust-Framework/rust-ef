@@ -13,8 +13,8 @@ name = "lref"
 path = "src/main.rs"
 
 [dependencies]
-lref = { version = "0.3.0", path = "../lref" }
-lref-provider-postgres = { version = "0.3.0", path = "../lref-provider-postgres" }
+lref = { version = "0.3.1", path = "../lref" }
+lref-provider-postgres = { version = "0.3.1", path = "../lref-provider-postgres" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"

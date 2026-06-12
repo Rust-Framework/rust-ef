@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "mysql", "database"]
 categories = ["database"]
 
 [dependencies]
-lref = { version = "0.3.0", path = "../lref" }
+lref = { version = "0.3.1", path = "../lref" }
 async-trait = "0.1"
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }
 tokio = { version = "1", features = ["full"] }

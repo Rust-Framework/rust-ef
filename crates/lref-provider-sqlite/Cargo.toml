@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "sqlite", "database"]
 categories = ["database"]
 
 [dependencies]
-lref = { version = "0.3.0", path = "../lref" }
+lref = { version = "0.3.1", path = "../lref" }
 async-trait = "0.1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
