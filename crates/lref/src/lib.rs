@@ -30,6 +30,7 @@ pub mod db_set;
 pub mod di;
 pub mod entity;
 pub mod error;
+pub mod interceptor;
 pub mod metadata;
 pub mod migration;
 pub mod model_builder;
@@ -47,6 +48,9 @@ pub mod prelude {
     pub use crate::di::DbContextServiceCollectionExt;
     pub use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
     pub use crate::error::LrefError;
+    pub use crate::interceptor::{
+        ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext,
+    };
     pub use crate::metadata::EntityTypeMeta;
     pub use crate::metadata::NavigationMeta;
     pub use crate::metadata::PropertyMeta;

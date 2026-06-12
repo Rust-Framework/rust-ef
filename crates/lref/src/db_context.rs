@@ -18,6 +18,7 @@ use crate::change_executor::ChangeExecutor;
 use crate::db_set::{DbSet, IDbSet};
 use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
 use crate::error::LrefResult;
+use crate::interceptor::{InterceptorPipeline, SaveChangesContext, SaveChangesResultContext};
 use crate::metadata::EntityTypeMeta;
 use crate::provider::{IAsyncConnection, IDatabaseProvider};
 use crate::tracking::ChangeTracker;
@@ -36,6 +37,7 @@ pub struct DbContextOptions {
     pub(crate) provider_tag: Option<String>,
     pub(crate) provider_factory:
         Option<Arc<dyn Fn(&str) -> LrefResult<Arc<dyn IDatabaseProvider>> + Send + Sync>>,
+    pub(crate) interceptors: Vec<Arc<dyn crate::interceptor::ISaveChangesInterceptor>>,
 }
 
 impl std::fmt::Debug for DbContextOptions {
@@ -70,6 +72,7 @@ impl Default for DbContextOptions {
             connection_string: String::new(),
             provider_tag: None,
             provider_factory: None,
+            interceptors: Vec::new(),
         }
     }
 }
@@ -104,6 +107,27 @@ impl DbContextOptionsBuilder {
         self.inner.provider_factory = Some(factory);
         self
     }
+    /// Registers a `SaveChanges` interceptor.
+    ///
+    /// Interceptors are called in registration order during
+    /// `save_changes()`. Use this for auditing, soft-delete,
+    /// validation, and other cross-cutting concerns.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// options
+    ///     .use_sqlite("app.db")
+    ///     .add_interceptor(AuditInterceptor::new());
+    /// ```
+    pub fn add_interceptor(
+        &mut self,
+        interceptor: impl crate::interceptor::ISaveChangesInterceptor + 'static,
+    ) -> &mut Self {
+        self.inner.interceptors.push(Arc::new(interceptor));
+        self
+    }
+
     pub fn build(self) -> DbContextOptions {
         self.inner
     }
@@ -173,6 +197,7 @@ pub struct DbContext {
     savers: HashMap<TypeId, Box<dyn ErasedSetOps>>,
     change_tracker: ChangeTracker,
     provider: Arc<dyn IDatabaseProvider>,
+    interceptor_pipeline: InterceptorPipeline,
 }
 
 impl DbContext {
@@ -184,6 +209,7 @@ impl DbContext {
             savers: HashMap::new(),
             change_tracker: ChangeTracker::new(),
             provider,
+            interceptor_pipeline: InterceptorPipeline::new(options.interceptors.clone()),
         })
     }
 
@@ -271,6 +297,11 @@ impl IDbContext for DbContext {
 
     async fn save_changes(&mut self) -> LrefResult<SaveChangesResult> {
         self.change_tracker.detect_changes();
+
+        // --- Interceptor: on_saving (pre-commit) ---
+        let save_ctx = SaveChangesContext::from_tracker(&self.change_tracker);
+        self.interceptor_pipeline.on_saving(&save_ctx).await?;
+
         let mut conn = self.provider.get_connection().await?;
         conn.begin_transaction().await?;
 
@@ -281,20 +312,43 @@ impl IDbContext for DbContext {
         for type_id in &type_ids {
             let saver = self.savers.get(type_id).expect("saver not registered");
             let set = self.sets.get_mut(type_id).unwrap();
-            let (a, u, d) = saver
-                .save(&mut *conn, &*self.provider, set.as_mut())
-                .await?;
+            let (a, u, d) = match saver.save(&mut *conn, &*self.provider, set.as_mut()).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = conn.rollback_transaction().await;
+                    self.interceptor_pipeline
+                        .on_save_failed(&save_ctx, &e)
+                        .await;
+                    return Err(e);
+                }
+            };
             total_added += a;
             total_updated += u;
             total_deleted += d;
         }
-        conn.commit_transaction().await?;
+        if let Err(e) = conn.commit_transaction().await {
+            self.interceptor_pipeline
+                .on_save_failed(&save_ctx, &e)
+                .await;
+            return Err(e);
+        }
         self.change_tracker.accept_all_changes();
         for type_id in &type_ids {
             let saver = self.savers.get(type_id).unwrap();
             let set = self.sets.get_mut(type_id).unwrap();
             saver.clear(set.as_mut());
         }
+
+        // --- Interceptor: on_saved (post-commit) ---
+        let result_ctx = SaveChangesResultContext {
+            added: total_added,
+            updated: total_updated,
+            deleted: total_deleted,
+        };
+        self.interceptor_pipeline
+            .on_saved(&save_ctx, &result_ctx)
+            .await?;
+
         Ok(SaveChangesResult {
             added: total_added,
             updated: total_updated,

@@ -81,7 +81,7 @@ Read `templates/dbcontext.rs` for the full setup with migration.
 
 ## 3. DI Integration (lrdi)
 
-Register with `add_dbcontext`:
+Register with `add_dbcontext` (single DB, recommended):
 ```rust
 use lrdi::ServiceCollection;
 use lref::di::*;
@@ -97,6 +97,32 @@ let provider = ServiceCollection::new()
 let ctx: Arc<dyn IDbContext> = provider.get();
 ```
 
+**Multiple databases (keyed):**
+```rust
+let provider = ServiceCollection::new()
+    .add_dbcontext_keyed::<DbContext>("primary", |options| {
+        options.use_postgres("host=primary/db");
+    })
+    .add_dbcontext_keyed::<DbContext>("logs", |options| {
+        options.use_sqlite("logs.db");
+    })
+    .build()
+    .unwrap();
+
+let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
+let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+```
+
+**From pre-built options:**
+```rust
+let options = DbContextOptionsBuilder::new()
+    .connection_string("data source=app.db")
+    // ... set_provider_factory(...) etc.
+    .build();
+
+.add_dbcontext_from_options::<DbContext>(options)
+```
+
 **Provider methods:**
 - `use_sqlite(cs)` / `use_sqlite_in_memory()` — injects factory
 - `use_postgres(cs)` — injects factory
@@ -105,6 +131,29 @@ let ctx: Arc<dyn IDbContext> = provider.get();
 **How it works:** `use_sqlite()` injects a `provider_factory` closure into
 `DbContextOptions`. `DbContext::from_options()` calls this factory to
 create the provider. The core crate stays fully decoupled from provider types.
+
+**SaveChanges Interceptors:**
+```rust
+use lref::interceptor::*;
+
+struct AuditInterceptor;
+#[async_trait::async_trait]
+impl ISaveChangesInterceptor for AuditInterceptor {
+    async fn on_saving(&self, ctx: &SaveChangesContext) -> LrefResult<()> {
+        println!("Saving +{} ~{} -{}", ctx.added_count(), ctx.modified_count(), ctx.deleted_count());
+        Ok(())
+    }
+}
+
+let provider = ServiceCollection::new()
+    .add_dbcontext::<DbContext>(|options| {
+        options
+            .use_sqlite("app.db")
+            .add_interceptor(AuditInterceptor);
+    })
+    .build()
+    .unwrap();
+```
 
 Read `templates/di-setup.rs` for the complete pattern.
 
@@ -141,6 +190,8 @@ Read `templates/query-patterns.rs` for examples.
 - Place trait bounds at usage sites, not on container types
 - Use `DbContext` (no custom context struct needed)
 - Register via `add_dbcontext::<DbContext>(|o| o.use_sqlite(...))`
+- Use `add_dbcontext_keyed::<DbContext>("key", |o| ...)` for multi-DB
+- Regster interceptors via `options.add_interceptor(...)`
 - Resolve as `Arc<dyn IDbContext>` from DI
 
 **Don't:**

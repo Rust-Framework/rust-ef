@@ -9,7 +9,7 @@ IDbContext                            IEntityType
 IDatabaseProvider                     IFromRow
 ISqlGenerator                         IGetKeyValues
 IAsyncConnection                      IEntitySnapshot
-                                      IDbSet<T>
+ISaveChangesInterceptor               IDbSet<T>
                                       IQueryable<T>
                                       IDbContextExt
                                       IEntityTypeConfiguration<T>
@@ -21,13 +21,15 @@ IAsyncConnection                      IEntitySnapshot
 ```
 User Code
     ├── lrdi::ServiceCollection
-    │     └── add_dbcontext::<DbContext>(|o| o.use_sqlite(...))
-    │           └── stores DbContextOptions with provider_factory
+    │     ├── add_dbcontext::<DbContext>(|o| o.use_sqlite(...))
+    │     │     └── stores DbContextOptions with provider_factory
+    │     └── add_dbcontext_keyed::<DbContext>("key", |o| ...)
+    │           └── keyed registration for multi-DB
     │
-    └── Arc<dyn IDbContext> (from provider.get())
+    └── Arc<dyn IDbContext> (from provider.get() or provider.get_keyed("key"))
           └── DbContext
                 ├── set::<T>() — type-map, lazy-create DbSet<T>
-                ├── save_changes() — SetOps<T> dispatchers
+                ├── save_changes() — SetOps<T> dispatchers + interceptor pipeline
                 ├── provider() → &dyn IDatabaseProvider
                 └── change_tracker() → &ChangeTracker
 ```
@@ -38,6 +40,35 @@ User Code
    `Arc<dyn Fn(&str) -> LrefResult<Arc<dyn IDatabaseProvider>>>`
 2. `DbContext::from_options()` calls this closure
 3. Core crate never imports any provider type
+
+## SaveChanges Interceptor Pipeline
+
+```
+save_changes() called
+    ├── detect_changes()
+    ├── InterceptorPipeline::on_saving(ctx)  // pre-commit; Err aborts save
+    ├── [execute SQL in transaction]
+    ├── on success → InterceptorPipeline::on_saved(ctx, result)
+    └── on failure → InterceptorPipeline::on_save_failed(ctx, error)
+```
+
+Interceptors are registered via `options.add_interceptor(impl ISaveChangesInterceptor)`.
+Multiple interceptors run in registration order; the first error aborts the chain (fail-fast).
+
+## Multi-DB Context (Keyed Registration)
+
+Uses lrdi's `keyed_transient` mechanism:
+
+```rust
+.add_dbcontext_keyed::<DbContext>("primary", |o| o.use_postgres(...))
+.add_dbcontext_keyed::<DbContext>("logs", |o| o.use_sqlite(...))
+```
+
+Resolution:
+```rust
+let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
+let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+```
 
 ## Why No DbSet<Blog> Fields?
 

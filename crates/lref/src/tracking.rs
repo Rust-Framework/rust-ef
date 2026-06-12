@@ -20,6 +20,7 @@ pub struct ChangeTracker {
 }
 
 /// A public read-only view of a tracked entry.
+#[derive(Debug, Clone)]
 pub struct EntityEntry {
     pub entry_id: u64,
     pub type_id: std::any::TypeId,

@@ -42,7 +42,7 @@ pub struct Post {
 }
 ```
 
-### DI Registration + Usage
+### DI Registration + Usage (Single DB)
 
 ```rust
 use lrdi::ServiceCollection;
@@ -56,9 +56,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = ServiceCollection::new()
         .add_dbcontext::<DbContext>(|options| {
             options.use_sqlite("data source=app.db");
-            // or: options.use_sqlite_in_memory();
-            // or: options.use_postgres("host=localhost dbname=app");
-            // or: options.use_mysql("mysql://user:pass@localhost/db");
         })
         .build()
         .unwrap();
@@ -66,16 +63,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Resolve as interface
     let ctx: Arc<dyn IDbContext> = provider.get();
 
-    // 3. Use via concrete methods (call set<T> on the concrete type)
-    // Or hold a typed reference:
-    // let mut ctx = DbContext::from_options(&options)?;
-    // ctx.set::<Blog>().add(Blog { blog_id: 0, url: "https://example.com".into(), rating: 5, posts: HasMany::new() });
-    // ctx.set::<Post>().add(Post { post_id: 0, title: "Hello".into(), content: None, blog_id: 1, blog: BelongsTo::new() });
-
     ctx.save_changes().await?;
-
     Ok(())
 }
+```
+
+### Multi-DB (Keyed Registration)
+
+```rust
+let provider = ServiceCollection::new()
+    .add_dbcontext_keyed::<DbContext>("primary", |options| {
+        options.use_postgres("host=primary/db");
+    })
+    .add_dbcontext_keyed::<DbContext>("logs", |options| {
+        options.use_sqlite("logs.db");
+    })
+    .build()
+    .unwrap();
+
+let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
+let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+```
+
+### SaveChanges Interceptors
+
+```rust
+use lref::interceptor::{ISaveChangesInterceptor, SaveChangesContext};
+
+struct AuditInterceptor;
+#[async_trait::async_trait]
+impl ISaveChangesInterceptor for AuditInterceptor {
+    async fn on_saving(&self, ctx: &SaveChangesContext) -> LrefResult<()> {
+        tracing::info!("Saving +{} ~{} -{}", ctx.added_count(), ctx.modified_count(), ctx.deleted_count());
+        Ok(())
+    }
+}
+
+// Register
+.add_dbcontext::<DbContext>(|options| {
+    options
+        .use_sqlite("app.db")
+        .add_interceptor(AuditInterceptor);
+})
 ```
 
 ---
@@ -85,11 +114,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 User Application
     ├── lrdi (DI container — resolves Arc<dyn IDbContext>)
+    │     ├── provider.get()           — default registration
+    │     └── provider.get_keyed("k")  — keyed registration
     └── lref (ORM)
           DbContext (type-map set storage, no entity-specific fields)
           ├── IDbContext     — object-safe session trait
           ├── IDbSet<T>      — entity collection (mutation)
           ├── IQueryable<T>  — query entry point
+          ├── ISaveChangesInterceptor — before/after save hooks
           └── IDatabaseProvider — backend abstraction
                 ├── lref-provider-sqlite    (use_sqlite: injects factory)
                 ├── lref-provider-postgres  (use_postgres: injects factory)
@@ -118,6 +150,11 @@ IDatabaseProvider
     ├── get_connection() → IAsyncConnection
     └── execute_migration_command(sql)
 
+ISaveChangesInterceptor
+    ├── on_saving(ctx)           // pre-commit; Err aborts save
+    ├── on_saved(ctx, result)    // post-commit
+    └── on_save_failed(ctx, err) // on error (after rollback)
+
 FromDbContextOptions (DI bridge)
     └── from_options(&DbContextOptions) → Self
 ```
@@ -133,6 +170,8 @@ FromDbContextOptions (DI bridge)
 | `provider_factory` in options | Provider extensions inject factory closures; core stays decoupled |
 | `SetOps<T>` dispatchers | Type-erased `save_changes()` iterates all entity types |
 | Generic methods on `IDbContextExt` | Keeps core trait object-safe |
+| Keyed registration for multi-DB | `add_dbcontext_keyed` + `provider.get_keyed()` |
+| Interceptor pipeline | `options.add_interceptor(...)` for cross-cutting concerns |
 
 ---
 
@@ -143,7 +182,8 @@ FromDbContextOptions (DI bridge)
 | **Entity** | `#[derive(EntityType)]` with 12 attributes, navigation types |
 | **Query** | LINQ-style `QueryBuilder`: filter, join, group_by, aggregation, bulk ops |
 | **Persistence** | `save_changes_all!` macro, parameterized queries, transactions |
-| **DI** | `add_dbcontext<DbContext>(|o| o.use_sqlite(...))`, `Arc<dyn IDbContext>` |
+| **DI** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`, `Arc<dyn IDbContext>` |
+| **Interception** | `ISaveChangesInterceptor` — on_saving/on_saved/on_save_failed hooks |
 | **Migrations** | Model diff, Up/Down SQL for PostgreSQL/MySQL/SQLite |
 | **CLI** | `migration add/apply/revert/list/script`, `scaffold-dbcontext` |
 

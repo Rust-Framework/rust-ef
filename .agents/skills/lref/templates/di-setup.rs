@@ -3,6 +3,8 @@
 // Registers DbContext as Arc<dyn IDbContext> for interface-oriented resolution.
 // Provider extensions (use_sqlite/use_postgres/use_mysql) inject factory closures
 // into DbContextOptions, so the core crate stays fully decoupled.
+//
+// Multi-DB: use add_dbcontext_keyed::<DbContext>("key", |o| ...).
 
 use lrdi::ServiceCollection;
 use lref::di::*;                                  // DbContextServiceCollectionExt
@@ -17,13 +19,26 @@ fn build_provider() -> lrdi::ServiceProvider {
         // .singleton(|_| Arc::new(Logger::new()))
         // .transient(|p| Arc::new(UserService::new(p.get())))
 
-        // --- Register DbContext as dyn IDbContext ---
+        // --- Single database (recommended) ---
         .add_dbcontext::<DbContext>(|options| {
             options.use_sqlite("data source=app.db");
             // options.use_sqlite_in_memory();
             // options.use_postgres("host=localhost dbname=app user=postgres");
             // options.use_mysql("mysql://user:pass@localhost/db");
+
+            // --- Register SaveChanges interceptors (optional) ---
+            // options.add_interceptor(AuditInterceptor);
+            // options.add_interceptor(SoftDeleteInterceptor);
         })
+
+        // --- Multiple databases (keyed) ---
+        // .add_dbcontext_keyed::<DbContext>("primary", |options| {
+        //     options.use_postgres("host=primary/db");
+        // })
+        // .add_dbcontext_keyed::<DbContext>("logs", |options| {
+        //     options.use_sqlite("logs.db");
+        // })
+
         .build()
         .unwrap()
 }
@@ -32,8 +47,12 @@ fn build_provider() -> lrdi::ServiceProvider {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = build_provider();
 
-    // --- Interface-oriented resolution ---
+    // --- Default resolution (single DB) ---
     let ctx: Arc<dyn IDbContext> = provider.get();
+
+    // --- Keyed resolution (multi-DB) ---
+    // let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
+    // let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
 
     // --- Or resolve as concrete type (for set::<T>() access) ---
     // let mut app_ctx = DbContext::from_options(&options)?;
