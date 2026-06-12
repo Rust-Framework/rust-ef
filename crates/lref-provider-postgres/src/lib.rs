@@ -9,6 +9,7 @@ use deadpool_postgres::{Config, Pool, Runtime};
 use lref::error::{LrefError, LrefResult};
 use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 pub use sql_generator::PostgresSqlGenerator;
+use std::sync::Arc;
 use tokio_postgres::{types::ToSql, NoTls};
 pub use type_mapping::PostgresTypeMapping;
 
@@ -21,7 +22,6 @@ impl PostgresProvider {
         let config: tokio_postgres::Config = connection_string
             .parse()
             .map_err(|e| LrefError::Connection(format!("Invalid connection string: {}", e)))?;
-
         let mut cfg = Config::new();
         if let Some(host) = config.get_hosts().first() {
             cfg.host = Some(format!("{:?}", host));
@@ -32,11 +32,9 @@ impl PostgresProvider {
         cfg.password = config
             .get_password()
             .map(|p| String::from_utf8_lossy(p).to_string());
-
         let pool = cfg
             .create_pool(Some(Runtime::Tokio1), NoTls)
             .map_err(|e| LrefError::Connection(format!("Failed to create pool: {}", e)))?;
-
         Ok(Self { pool })
     }
 }
@@ -46,32 +44,26 @@ impl IDatabaseProvider for PostgresProvider {
     fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
         Box::new(PostgresSqlGenerator::new())
     }
-
     async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
         let client = self
             .pool
             .get()
             .await
             .map_err(|e| LrefError::Connection(format!("Pool error: {}", e)))?;
-
         Ok(Box::new(PostgresConnection { client }))
     }
-
     async fn execute_migration_command(&self, sql: &str) -> LrefResult<()> {
         let client = self
             .pool
             .get()
             .await
             .map_err(|e| LrefError::Connection(format!("Pool error: {}", e)))?;
-
         client
             .batch_execute(sql)
             .await
             .map_err(|e| LrefError::Migration(format!("Migration execution failed: {}", e)))?;
-
         Ok(())
     }
-
     fn name(&self) -> &str {
         "PostgreSQL"
     }
@@ -84,8 +76,8 @@ struct PostgresConnection {
 #[async_trait]
 impl IAsyncConnection for PostgresConnection {
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64> {
-        let pg_params: Vec<Box<dyn ToSql + Sync + Send>> = db_values_to_pg_params(params);
-        let refs: Vec<&(dyn ToSql + Sync)> = pg_params
+        let pgp: Vec<Box<dyn ToSql + Sync + Send>> = db_values_to_pg_params(params);
+        let refs: Vec<&(dyn ToSql + Sync)> = pgp
             .iter()
             .map(|p| p.as_ref() as &(dyn ToSql + Sync))
             .collect();
@@ -94,10 +86,9 @@ impl IAsyncConnection for PostgresConnection {
             .await
             .map_err(|e| LrefError::Query(format!("Execution error: {}", e)))
     }
-
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>> {
-        let pg_params: Vec<Box<dyn ToSql + Sync + Send>> = db_values_to_pg_params(params);
-        let refs: Vec<&(dyn ToSql + Sync)> = pg_params
+        let pgp: Vec<Box<dyn ToSql + Sync + Send>> = db_values_to_pg_params(params);
+        let refs: Vec<&(dyn ToSql + Sync)> = pgp
             .iter()
             .map(|p| p.as_ref() as &(dyn ToSql + Sync))
             .collect();
@@ -106,7 +97,6 @@ impl IAsyncConnection for PostgresConnection {
             .query(sql, &refs)
             .await
             .map_err(|e| LrefError::Query(format!("Query error: {}", e)))?;
-
         let columns: Vec<String> = if !rows.is_empty() {
             rows[0]
                 .columns()
@@ -116,7 +106,6 @@ impl IAsyncConnection for PostgresConnection {
         } else {
             Vec::new()
         };
-
         let result = rows
             .iter()
             .map(|row| {
@@ -130,10 +119,8 @@ impl IAsyncConnection for PostgresConnection {
                     .collect()
             })
             .collect();
-
         Ok(result)
     }
-
     async fn begin_transaction(&mut self) -> LrefResult<()> {
         self.client
             .simple_query("BEGIN")
@@ -141,7 +128,6 @@ impl IAsyncConnection for PostgresConnection {
             .map_err(|e| LrefError::Transaction(format!("BEGIN failed: {}", e)))?;
         Ok(())
     }
-
     async fn commit_transaction(&mut self) -> LrefResult<()> {
         self.client
             .simple_query("COMMIT")
@@ -149,7 +135,6 @@ impl IAsyncConnection for PostgresConnection {
             .map_err(|e| LrefError::Transaction(format!("COMMIT failed: {}", e)))?;
         Ok(())
     }
-
     async fn rollback_transaction(&mut self) -> LrefResult<()> {
         self.client
             .simple_query("ROLLBACK")
@@ -185,32 +170,22 @@ impl std::fmt::Debug for PostgresProvider {
 }
 
 // ---------------------------------------------------------------------------
-// DbContextOptionsBuilder extension — EFCore-style .UsePostgres()
+// DbContextOptionsBuilder extension — .use_postgres()
 // ---------------------------------------------------------------------------
 
-/// Extension trait that adds `.use_postgres()` to `DbContextOptionsBuilder`.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use lrdi::ServiceCollection;
-/// use lref::di::DbContextServiceCollectionExt;
-/// use lref_provider_postgres::DbContextOptionsBuilderExt as _;
-///
-/// let provider = ServiceCollection::new()
-///     .add_dbcontext::<MyContext>(|options| {
-///         options.use_postgres("host=localhost dbname=myapp");
-///     })
-///     .build()
-///     .unwrap();
-/// ```
 pub trait DbContextOptionsBuilderExt {
-    /// Configures the context to use PostgreSQL.
     fn use_postgres(&mut self, connection_string: &str) -> &mut Self;
 }
 
 impl DbContextOptionsBuilderExt for lref::db_context::DbContextOptionsBuilder {
     fn use_postgres(&mut self, connection_string: &str) -> &mut Self {
-        self.set_provider("postgres", connection_string)
+        let cs = connection_string.to_string();
+        self.set_provider_factory(
+            "postgres",
+            &cs,
+            Arc::new(move |cs: &str| {
+                Ok(Arc::new(PostgresProvider::new(cs, 5)?) as Arc<dyn IDatabaseProvider>)
+            }),
+        )
     }
 }

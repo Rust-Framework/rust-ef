@@ -1,114 +1,65 @@
-//! DI integration — EFCore-style `AddDbContext<T>` on top of `lrdi`.
-//!
-//! Provides extension traits that add `add_dbcontext` / `resolve_dbcontext`
-//! to `lrdi::ServiceCollection` / `lrdi::ServiceProvider`.
+//! DI integration — `AddDbContext<T>` on `lrdi`, interface-oriented.
 //!
 //! # Example
 //!
 //! ```rust,ignore
 //! use lrdi::ServiceCollection;
 //! use lref::di::*;
+//! use lref::db_context::AppDbContext;
 //! use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 //!
 //! let provider = ServiceCollection::new()
-//!     .add_dbcontext::<BloggingContext>(|options| {
-//!         options.use_sqlite("data source=my.db3");
+//!     .add_dbcontext::<AppDbContext>(|options| {
+//!         options.use_sqlite("data source=app.db");
 //!     })
 //!     .build()
 //!     .unwrap();
 //!
-//! // Resolve with explicit resolver (rebuilds context fresh each time)
-//! let resolver = provider.as_resolver();
-//! let mut ctx = provider.resolve_dbcontext::<BloggingContext>(&resolver).unwrap();
+//! // Interface-oriented resolution
+//! let ctx: Arc<dyn IDbContext> = provider.get();
 //! ctx.save_changes().await?;
 //! ```
 
-use crate::db_context::{DbContextOptions, DbContextOptionsBuilder, IDbContext};
-use crate::error::LrefResult;
+use crate::db_context::{AppDbContext, DbContextOptions, DbContextOptionsBuilder, IDbContext};
 use std::sync::Arc;
 
-// ---------------------------------------------------------------------------
-// Extension trait on lrdi::ServiceCollection
-// ---------------------------------------------------------------------------
-
-/// Extension trait that adds `add_dbcontext<T>` to `lrdi::ServiceCollection`.
+/// Adds `add_dbcontext<T>` to `lrdi::ServiceCollection`.
 ///
-/// Implements the EFCore `AddDbContext<T>` pattern: stores `DbContextOptions`
-/// as a singleton so they can be retrieved later when resolving the context.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use lrdi::ServiceCollection;
-/// use lref::di::DbContextServiceCollectionExt;
-/// use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
-///
-/// let provider = ServiceCollection::new()
-///     .add_dbcontext::<BloggingContext>(|options| {
-///         options.use_sqlite("data source=my.db3");
-///     })
-///     .build()
-///     .unwrap();
-/// ```
+/// The closure receives a `DbContextOptionsBuilder` for provider configuration.
+/// Resolves as `dyn IDbContext` — business code depends on the interface.
 pub trait DbContextServiceCollectionExt {
-    /// Registers a DbContext type with provider-specific configuration.
-    ///
-    /// The closure receives a `DbContextOptionsBuilder` that can be extended
-    /// with provider-specific methods (e.g. `use_sqlite()`).
     fn add_dbcontext<T, F>(self, configure: F) -> Self
     where
-        T: IDbContext + 'static,
+        T: IDbContext + FromDbContextOptions + 'static,
         F: FnOnce(&mut DbContextOptionsBuilder) + Send + Sync + 'static;
 }
 
 impl DbContextServiceCollectionExt for ::lrdi::ServiceCollection {
     fn add_dbcontext<T, F>(self, configure: F) -> Self
     where
-        T: IDbContext + 'static,
+        T: IDbContext + FromDbContextOptions + 'static,
         F: FnOnce(&mut DbContextOptionsBuilder) + Send + Sync + 'static,
     {
         let mut builder = DbContextOptionsBuilder::new();
         configure(&mut builder);
-        let options = builder.build();
+        let options = Arc::new(builder.build());
 
-        // Store options as a singleton — resolve_dbcontext reads them back
-        // and calls T::from_options(&options, &resolver) to create the context.
-        let opts = Arc::new(options);
-        self.singleton(move |_| Arc::clone(&opts))
+        self.transient(move |_| {
+            let ctx = T::from_options(&options).expect("Failed to create DbContext");
+            Arc::new(ctx) as Arc<dyn IDbContext>
+        })
     }
 }
 
-// ---------------------------------------------------------------------------
-// Extension trait on lrdi::ServiceProvider
-// ---------------------------------------------------------------------------
-
-/// Extension trait that adds `resolve_dbcontext<T>` to `lrdi::ServiceProvider`.
-///
-/// Creates a fresh context instance each call (transient semantics) using
-/// the stored `DbContextOptions` and the provided `IServiceResolver`.
-pub trait DbContextServiceProviderExt {
-    /// Resolves and constructs a DbContext.
-    ///
-    /// `resolver` is obtained via `provider.as_resolver()` or from a
-    /// lrdi factory closure's `|resolver|` parameter.
-    fn resolve_dbcontext<T: IDbContext + 'static>(
-        &self,
-        resolver: &dyn lrdi::IServiceResolver,
-    ) -> Option<LrefResult<T>>;
+/// Trait for types that can be constructed from `DbContextOptions`.
+pub trait FromDbContextOptions: IDbContext + Sized {
+    fn from_options(options: &DbContextOptions) -> crate::error::LrefResult<Self>;
 }
 
-impl DbContextServiceProviderExt for ::lrdi::ServiceProvider {
-    fn resolve_dbcontext<T: IDbContext + 'static>(
-        &self,
-        resolver: &dyn lrdi::IServiceResolver,
-    ) -> Option<LrefResult<T>> {
-        let options: Arc<DbContextOptions> = self.get();
-        Some(T::from_options(&options, resolver))
+impl FromDbContextOptions for AppDbContext {
+    fn from_options(options: &DbContextOptions) -> crate::error::LrefResult<Self> {
+        AppDbContext::from_options(options)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Re-export lrdi types for convenience
-// ---------------------------------------------------------------------------
 
 pub use lrdi::{ServiceCollection, ServiceProvider};

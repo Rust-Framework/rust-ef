@@ -1,11 +1,9 @@
-# lref
+# lref — Core ORM Crate
 
 [![Crates.io](https://img.shields.io/crates/v/lref)](https://crates.io/crates/lref)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
 
-Core crate for [Rust Entity Framework](https://crates.io/crates/lref) — an EFCore-inspired ORM for Rust.
-
-Provides the core ORM abstractions: `EntityType`, `DbContext`, `DbSet`, `QueryBuilder`, `ChangeTracker`, `ModelBuilder`, migration engine, and database provider abstraction layer.
+Interface-oriented ORM core: traits, query builder, change tracking, migration engine, DI integration.
 
 ---
 
@@ -14,92 +12,114 @@ Provides the core ORM abstractions: `EntityType`, `DbContext`, `DbSet`, `QueryBu
 ```rust
 use lref::prelude::*;
 
-// Define entities
 #[derive(Debug, Clone, EntityType)]
 #[table("blogs")]
 pub struct Blog {
-    #[primary_key] #[auto_increment]
-    pub blog_id: i32,
-    #[required] #[max_length(200)]
-    pub url: String,
+    #[primary_key] #[auto_increment] pub blog_id: i32,
+    #[required] #[max_length(200)] pub url: String,
     pub rating: i32,
     #[navigation] pub posts: HasMany<Post>,
 }
 
-// Build queries
-let blogs = db_set.query()
-    .filter_column("rating", ">", 3)
-    .order_by_column("url")
-    .skip(0).take(10)
-    .to_list().await?;
+// DI registration
+use lrdi::ServiceCollection;
+use lref::di::*;
+use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
-// Aggregate
-let avg = db_set.query().avg("rating").await?;
-let count = db_set.query().count().await?;
+let provider = ServiceCollection::new()
+    .add_dbcontext::<AppDbContext>(|o| o.use_sqlite("app.db"))
+    .build().unwrap();
 
-// Bulk operations
-db_set.query().filter_column("rating", "<", 1)
-    .execute_delete().await?;
+let ctx: Arc<dyn IDbContext> = provider.get();
 ```
 
 ---
 
-## Modules
+## Module Map
 
-| Module | Description | EFCore Equivalent |
-|--------|-------------|-------------------|
-| `entity` | `EntityType` trait, `EntityState`, `FromRow`, `GetKeyValues`, `EntitySnapshot` | Entity classes |
-| `db_context` | `DbContext` trait, `SaveChangesResult`, `save_one_set()` | `DbContext` |
-| `db_set` | `DbSet<T>` — tracked entity collection | `DbSet<TEntity>` |
-| `query` | `QueryBuilder<T>` — LINQ-style fluent queries | `IQueryable<T>` |
-| `tracking` | `ChangeTracker` — property-level snapshots & state | `ChangeTracker` |
-| `relations` | `BelongsTo<T>`, `HasMany<T>`, `HasOne<T>`, `DeleteBehavior` | Navigation properties |
-| `model_builder` | `ModelBuilder`, `EntityTypeBuilder`, `PropertyBuilder` | Fluent API |
-| `migration` | `MigrationEngine`, model diff, Up/Down SQL generation | Migration system |
-| `provider` | `DatabaseProvider`, `SqlGenerator`, `AsyncConnection`, `DbValue` | Provider abstraction |
-| `error` | `LrefError` enum with 12 error variants | Exception hierarchy |
-| `cache` | `DbCache` — Identity Map entity cache | — |
+```
+lref/src/
+├── entity.rs       — IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
+├── metadata.rs     — EntityTypeMeta, PropertyMeta, NavigationMeta
+├── provider.rs     — IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
+├── db_context.rs   — IDbContext, IDbContextExt, AppDbContext, DbContextOptions
+├── db_set.rs       — IDbSet<T>, DbSet<T>
+├── query.rs        — IQueryable<T>, QueryBuilder<T>
+├── change_executor.rs — ChangeExecutor (INSERT/UPDATE/DELETE)
+├── model_builder.rs   — ModelBuilder, IEntityTypeConfiguration<T>
+├── tracking.rs     — ChangeTracker (property-level snapshots)
+├── relations.rs    — BelongsTo, HasMany, HasOne (no trait bounds)
+├── migration.rs    — MigrationEngine
+├── di.rs           — lrdi integration (add_dbcontext / FromDbContextOptions)
+├── cache.rs        — DbCache (Identity Map)
+└── error.rs        — LrefError, LrefResult
+```
 
 ---
 
-## Traits
+## Core Traits
 
-### Core Entity Traits
+### Entity
 
 ```rust
-pub trait EntityType: Send + Sync + 'static {
-    fn entity_meta() -> EntityTypeMeta;
-}
-
-pub trait FromRow: EntityType + Sized {
-    fn from_row(values: &[String]) -> LrefResult<Self>;
-}
-
-pub trait GetKeyValues: EntityType {
-    fn key_values(&self) -> HashMap<String, DbValue>;
-}
-
-pub trait EntitySnapshot: EntityType {
-    fn snapshot(&self) -> HashMap<String, DbValue>;
-}
+pub trait IEntityType: Send + Sync + 'static { fn entity_meta() -> EntityTypeMeta; }
+pub trait IFromRow: IEntityType + Sized { fn from_row(v: &[String]) -> LrefResult<Self>; }
+pub trait IGetKeyValues: IEntityType { fn key_values(&self) -> HashMap<String, DbValue>; }
+pub trait IEntitySnapshot: IEntityType { fn snapshot(&self) -> HashMap<String, DbValue>; }
 ```
 
-### Session / Provider
+### Session (object-safe)
 
 ```rust
 #[async_trait]
-pub trait DbContext: Send + Sync + Sized {
-    type Provider: DatabaseProvider;
-    fn provider(&self) -> &Self::Provider;
+pub trait IDbContext: Send + Sync {
+    fn provider(&self) -> &dyn IDatabaseProvider;
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
     fn change_tracker(&self) -> &ChangeTracker;
     async fn save_changes(&mut self) -> LrefResult<SaveChangesResult>;
 }
 
 #[async_trait]
-pub trait DatabaseProvider: Send + Sync {
-    fn sql_generator(&self) -> Box<dyn SqlGenerator>;
-    async fn get_connection(&self) -> LrefResult<Box<dyn AsyncConnection>>;
+pub trait IDbContextExt: IDbContext {
+    async fn use_transaction<F, Fut, R>(&self, f: F) -> LrefResult<R>;
+}
+```
+
+### Collection
+
+```rust
+pub trait IQueryable<T: IEntityType> { fn query(&self) -> QueryBuilder<T>; }
+
+pub trait IDbSet<T: IEntityType>: IQueryable<T> + Send + Sync {
+    fn add(&mut self, entity: T);
+    fn remove_all(&mut self);
+    fn added_entities(&self) -> Vec<&T>;
+    fn modified_entities(&self) -> Vec<&T>;
+    fn deleted_entities(&self) -> Vec<&T>;
+    fn clear_entries(&mut self);
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+}
+```
+
+### Provider
+
+```rust
+pub trait ISqlGenerator: Send + Sync { /* select, insert, update, delete, ... */ }
+
+#[async_trait]
+pub trait IAsyncConnection: Send + Sync {
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64>;
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>>;
+    async fn begin_transaction(&mut self) -> LrefResult<()>;
+    async fn commit_transaction(&mut self) -> LrefResult<()>;
+    async fn rollback_transaction(&mut self) -> LrefResult<()>;
+}
+
+#[async_trait]
+pub trait IDatabaseProvider: Send + Sync {
+    fn sql_generator(&self) -> Box<dyn ISqlGenerator>;
+    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>>;
     async fn execute_migration_command(&self, sql: &str) -> LrefResult<()>;
     fn name(&self) -> &str;
 }
@@ -107,76 +127,53 @@ pub trait DatabaseProvider: Send + Sync {
 
 ---
 
+## DI Integration
+
+```rust
+use lrdi::ServiceCollection;
+use lref::di::*;
+use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
+
+let provider = ServiceCollection::new()
+    .add_dbcontext::<AppDbContext>(|o| o.use_sqlite("app.db"))
+    .build().unwrap();
+
+let ctx: Arc<dyn IDbContext> = provider.get();
+```
+
+**Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `AppDbContext::from_options()` calls it to create the provider — core stays fully decoupled.
+
+---
+
 ## QueryBuilder API
 
 ```rust
 // Filtering
-query.filter_column("col", "=", value)
-     .filter_in("col", vec![1, 2, 3])
-     .filter_is_null("col")
-     .filter_is_not_null("col")
-     .filter_between("col", low, high)
+query.filter_column("col", "=", value).filter_in("col", vec![1,2,3])
+     .filter_is_null("col").filter_is_not_null("col").filter_between("col", low, high)
 
-// Ordering & pagination
-     .order_by_column("col")
-     .order_by_desc_column("col")
-     .skip(10).take(20)
+// Ordering, pagination, JOIN, grouping
+     .order_by_column("col").order_by_desc_column("col").skip(10).take(20)
+     .inner_join("t2", "a", "b").left_join("t2", "a", "b")
+     .group_by(&["col"]).having("COUNT(*) > 1")
 
-// JOIN & grouping
-     .inner_join("t2", "col_a", "col_b")
-     .left_join("t2", "col_a", "col_b")
-     .group_by(&["col"])
-     .having("COUNT(*) > 1")
-
-// Include navigation
+// Eager loading
      .include_named("posts")
-     .include_with_join("posts", "posts", "blog_id", "blog_id", "LEFT")
 
-// Terminal (execute)
-     .to_list().await?       // Vec<T>
-     .first().await?         // T
+// Terminal
+     .to_list().await?        // Vec<T>
+     .first().await?          // T
      .first_or_default().await?  // Option<T>
-     .count().await?         // i64
-     .any().await?           // bool
-     .sum("col").await?      // f64
-     .avg("col").await?      // f64
-     .min("col").await?      // Option<String>
-     .max("col").await?      // Option<String>
+     .count().await?          // i64
+     .any().await?            // bool
+     .sum("col").await?       // f64
+     .avg("col").await?       // f64
 
-// Bulk operations
-     .execute_update().set_column("col", value).execute().await?  // u64
-     .execute_delete().await?  // u64
-```
-
----
-
-## Database Provider Abstraction
-
-The core crate defines traits. Provider crates implement them:
-
-```rust
-// SqlGenerator — dialect-specific SQL
-trait SqlGenerator {
-    fn select(&self, table: &str, columns: &[&str]) -> String;
-    fn insert(&self, table: &str, columns: &[&str], returning: bool) -> String;
-    fn update(&self, table: &str, set_columns: &[&str], where_clause: &str) -> String;
-    fn delete(&self, table: &str, where_clause: &str) -> String;
-    fn parameter_placeholder(&self, index: usize) -> String;
-    fn quote_identifier(&self, identifier: &str) -> String;
-    // ...
-}
-
-// AsyncConnection — typed parameter execution
-#[async_trait]
-trait AsyncConnection {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64>;
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>>;
-    async fn begin_transaction(&mut self) -> LrefResult<()>;
-    async fn commit_transaction(&mut self) -> LrefResult<()>;
-    async fn rollback_transaction(&mut self) -> LrefResult<()>;
-}
+// Bulk
+     .execute_update().set_column("col", value).execute().await?
+     .execute_delete().await?
 ```
 
 ## License
 
-MIT — see [LICENSE](../../LICENSE)
+MIT

@@ -1,10 +1,4 @@
 //! SQLite provider for Rust Entity Framework.
-//!
-//! Implements `IDatabaseProvider`, `ISqlGenerator`, and `IAsyncConnection`
-//! traits for SQLite via `rusqlite` with a tokio-compatible async wrapper.
-//!
-//! Also provides `DbContextOptionsBuilderExt` for EFCore-style configuration:
-//! `.use_sqlite("data source=my.db3")`
 
 use async_trait::async_trait;
 use lref::error::{LrefError, LrefResult};
@@ -17,13 +11,18 @@ use tokio::sync::Mutex;
 // SQLite SQL Generator
 // ---------------------------------------------------------------------------
 
-/// SQLite-specific SQL dialect generator.
 #[derive(Debug, Clone)]
 pub struct SqliteSqlGenerator;
 
 impl SqliteSqlGenerator {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for SqliteSqlGenerator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -40,7 +39,6 @@ impl ISqlGenerator for SqliteSqlGenerator {
         };
         format!("SELECT {} FROM {}", cols, self.quote_identifier(table))
     }
-
     fn insert(&self, table: &str, columns: &[&str], _returning: bool) -> String {
         let cols = columns
             .iter()
@@ -55,7 +53,6 @@ impl ISqlGenerator for SqliteSqlGenerator {
             placeholders
         )
     }
-
     fn update(&self, table: &str, set_columns: &[&str], where_clause: &str) -> String {
         let sets: Vec<String> = set_columns
             .iter()
@@ -68,7 +65,6 @@ impl ISqlGenerator for SqliteSqlGenerator {
             where_clause
         )
     }
-
     fn delete(&self, table: &str, where_clause: &str) -> String {
         format!(
             "DELETE FROM {} {}",
@@ -76,7 +72,6 @@ impl ISqlGenerator for SqliteSqlGenerator {
             where_clause
         )
     }
-
     fn create_table(&self, table: &str, columns: &[(String, String)]) -> String {
         let col_defs: Vec<String> = columns
             .iter()
@@ -88,11 +83,9 @@ impl ISqlGenerator for SqliteSqlGenerator {
             col_defs.join(",\n    ")
         )
     }
-
     fn drop_table(&self, table: &str) -> String {
         format!("DROP TABLE IF EXISTS {}", self.quote_identifier(table))
     }
-
     fn pagination(&self, skip: Option<usize>, take: Option<usize>) -> String {
         match (skip, take) {
             (Some(s), Some(t)) => format!("LIMIT {} OFFSET {}", t, s),
@@ -100,15 +93,12 @@ impl ISqlGenerator for SqliteSqlGenerator {
             _ => String::new(),
         }
     }
-
     fn parameter_placeholder(&self, _index: usize) -> String {
         "?".to_string()
     }
-
     fn quote_identifier(&self, identifier: &str) -> String {
         format!("\"{}\"", identifier)
     }
-
     fn auto_increment_syntax(&self) -> &'static str {
         "AUTOINCREMENT"
     }
@@ -118,27 +108,20 @@ impl ISqlGenerator for SqliteSqlGenerator {
 // SQLite Provider
 // ---------------------------------------------------------------------------
 
-/// SQLite database provider with an async-compatible connection wrapper.
 pub struct SqliteProvider {
     conn: Arc<Mutex<rusqlite::Connection>>,
 }
 
 impl SqliteProvider {
-    /// Creates a new SQLite provider connected to a file.
     pub fn new(path: impl AsRef<Path>) -> LrefResult<Self> {
         let conn = rusqlite::Connection::open(path)
             .map_err(|e| LrefError::Connection(format!("SQLite open failed: {}", e)))?;
-
-        // Enable WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode=WAL;")
             .map_err(|e| LrefError::Connection(format!("SQLite WAL setup failed: {}", e)))?;
-
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
     }
-
-    /// Creates an in-memory SQLite provider.
     pub fn new_in_memory() -> LrefResult<Self> {
         Self::new(":memory:")
     }
@@ -149,18 +132,15 @@ impl IDatabaseProvider for SqliteProvider {
     fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
         Box::new(SqliteSqlGenerator::new())
     }
-
     async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
         Ok(Box::new(SqliteConnection::new(self.conn.clone())))
     }
-
     async fn execute_migration_command(&self, sql: &str) -> LrefResult<()> {
         let conn = self.conn.lock().await;
         conn.execute_batch(sql)
             .map_err(|e| LrefError::Migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
-
     fn name(&self) -> &str {
         "SQLite"
     }
@@ -178,11 +158,9 @@ impl std::fmt::Debug for SqliteProvider {
 // SQLite Connection
 // ---------------------------------------------------------------------------
 
-/// Async-compatible connection wrapper for SQLite.
 pub struct SqliteConnection {
     conn: Arc<Mutex<rusqlite::Connection>>,
 }
-
 impl SqliteConnection {
     pub(crate) fn new(conn: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self { conn }
@@ -193,61 +171,52 @@ impl SqliteConnection {
 impl IAsyncConnection for SqliteConnection {
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64> {
         let conn = self.conn.lock().await;
-        let rusqlite_params = to_rusqlite_params(params);
-        let refs: Vec<&dyn rusqlite::types::ToSql> = rusqlite_params
+        let rp = to_rusqlite_params(params);
+        let refs: Vec<&dyn rusqlite::types::ToSql> = rp
             .iter()
             .map(|v| v as &dyn rusqlite::types::ToSql)
             .collect();
-        let changes = conn
-            .execute(sql, refs.as_slice())
-            .map_err(|e| LrefError::Query(format!("Execution error: {}", e)))?;
-        Ok(changes as u64)
+        conn.execute(sql, refs.as_slice())
+            .map(|c| c as u64)
+            .map_err(|e| LrefError::Query(format!("Execution error: {}", e)))
     }
-
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>> {
         let conn = self.conn.lock().await;
-        let rusqlite_params = to_rusqlite_params(params);
-        let refs: Vec<&dyn rusqlite::types::ToSql> = rusqlite_params
+        let rp = to_rusqlite_params(params);
+        let refs: Vec<&dyn rusqlite::types::ToSql> = rp
             .iter()
             .map(|v| v as &dyn rusqlite::types::ToSql)
             .collect();
         let mut stmt = conn
             .prepare(sql)
             .map_err(|e| LrefError::Query(format!("Prepare error: {}", e)))?;
-
-        let column_count = stmt.column_count();
-
+        let cc = stmt.column_count();
         let rows = stmt
             .query_map(refs.as_slice(), |row| {
-                let mut values = Vec::with_capacity(column_count);
-                for i in 0..column_count {
-                    let val = row
-                        .get::<_, String>(i)
-                        .or_else(|_| row.get::<_, i64>(i).map(|n| n.to_string()))
-                        .or_else(|_| row.get::<_, f64>(i).map(|n| n.to_string()))
-                        .unwrap_or_else(|_| "NULL".to_string());
-                    values.push(val);
+                let mut vals = Vec::with_capacity(cc);
+                for i in 0..cc {
+                    vals.push(
+                        row.get::<_, String>(i)
+                            .or_else(|_| row.get::<_, i64>(i).map(|n| n.to_string()))
+                            .or_else(|_| row.get::<_, f64>(i).map(|n| n.to_string()))
+                            .unwrap_or_else(|_| "NULL".to_string()),
+                    );
                 }
-                Ok(values)
+                Ok(vals)
             })
             .map_err(|e| LrefError::Query(format!("Query error: {}", e)))?;
-
         let mut result = Vec::new();
         for row in rows {
             result.push(row.map_err(|e| LrefError::Query(format!("Row read error: {}", e)))?);
         }
-
         Ok(result)
     }
-
     async fn begin_transaction(&mut self) -> LrefResult<()> {
         self.execute("BEGIN TRANSACTION", &[]).await.map(|_| ())
     }
-
     async fn commit_transaction(&mut self) -> LrefResult<()> {
         self.execute("COMMIT", &[]).await.map(|_| ())
     }
-
     async fn rollback_transaction(&mut self) -> LrefResult<()> {
         self.execute("ROLLBACK", &[]).await.map(|_| ())
     }
@@ -271,42 +240,32 @@ fn to_rusqlite_params(params: &[DbValue]) -> Vec<Box<dyn rusqlite::types::ToSql>
 }
 
 // ---------------------------------------------------------------------------
-// DbContextOptionsBuilder extension — EFCore-style .UseSqlite()
+// DbContextOptionsBuilder extension — .use_sqlite()
 // ---------------------------------------------------------------------------
 
-/// Extension trait that adds `.use_sqlite()` to `DbContextOptionsBuilder`.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use lrdi::ServiceCollection;
-/// use lref::di::DbContextServiceCollectionExt;
-/// use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
-///
-/// let provider = ServiceCollection::new()
-///     .add_dbcontext::<MyContext>(|options| {
-///         options.use_sqlite("data source=my.db3");
-///     })
-///     .build()
-///     .unwrap();
-/// ```
 pub trait DbContextOptionsBuilderExt {
-    /// Configures the context to use SQLite.
-    ///
-    /// `connection_string` follows SQLite connection string conventions:
-    /// - `"data source=path/to/db.sqlite"`
-    /// - `":memory:"` for in-memory database
-    /// - Just a file path: `"my_database.db"`
     fn use_sqlite(&mut self, connection_string: &str) -> &mut Self;
     fn use_sqlite_in_memory(&mut self) -> &mut Self;
 }
 
 impl DbContextOptionsBuilderExt for lref::db_context::DbContextOptionsBuilder {
     fn use_sqlite(&mut self, connection_string: &str) -> &mut Self {
-        self.set_provider("sqlite", connection_string)
+        let cs = connection_string.to_string();
+        self.set_provider_factory(
+            "sqlite",
+            &cs,
+            Arc::new(move |cs: &str| {
+                Ok(Arc::new(SqliteProvider::new(cs)?) as Arc<dyn IDatabaseProvider>)
+            }),
+        )
     }
-
     fn use_sqlite_in_memory(&mut self) -> &mut Self {
-        self.set_provider("sqlite", ":memory:")
+        self.set_provider_factory(
+            "sqlite",
+            ":memory:",
+            Arc::new(|_cs: &str| {
+                Ok(Arc::new(SqliteProvider::new_in_memory()?) as Arc<dyn IDatabaseProvider>)
+            }),
+        )
     }
 }

@@ -3,22 +3,21 @@
 [![Crates.io](https://img.shields.io/crates/v/lref)](https://crates.io/crates/lref)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-An EFCore-inspired ORM for Rust, bringing the familiar `DbContext` / `DbSet` / `EntityType` patterns to the Rust ecosystem.
+Interface-oriented, EFCore-inspired ORM for Rust — `IDbContext` / `IDbSet<T>` / `IEntityType` with lrdi DI integration.
 
 ---
 
 ## Quick Start
 
-Add to `Cargo.toml`:
-
 ```toml
 [dependencies]
-lref = "0.1"
-lref-provider-sqlite = "0.1"  # or postgres / mysql
+lref = "0.3"
+lref-provider-sqlite = "0.3"
+lrdi = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
-Define entities with `#[derive(EntityType)]`:
+### Define Entities
 
 ```rust
 use lref::prelude::*;
@@ -26,100 +25,54 @@ use lref::prelude::*;
 #[derive(Debug, Clone, EntityType)]
 #[table("blogs")]
 pub struct Blog {
-    #[primary_key]
-    #[auto_increment]
-    pub blog_id: i32,
-
-    #[required]
-    #[max_length(200)]
-    pub url: String,
-
+    #[primary_key] #[auto_increment] pub blog_id: i32,
+    #[required] #[max_length(200)] pub url: String,
     pub rating: i32,
-
-    #[navigation]
-    pub posts: HasMany<Post>,
+    #[navigation] pub posts: HasMany<Post>,
 }
 
 #[derive(Debug, Clone, EntityType)]
 #[table("posts")]
 pub struct Post {
-    #[primary_key]
-    #[auto_increment]
-    pub post_id: i32,
-
-    #[required]
-    #[max_length(200)]
-    pub title: String,
-
+    #[primary_key] #[auto_increment] pub post_id: i32,
+    #[required] #[max_length(200)] pub title: String,
     pub content: Option<String>,
-
-    #[foreign_key(Blog)]
-    pub blog_id: i32,
-
-    #[navigation]
-    pub blog: BelongsTo<Blog>,
+    #[foreign_key(Blog)] pub blog_id: i32,
+    #[navigation] pub blog: BelongsTo<Blog>,
 }
 ```
 
-Define `DbContext` and use `save_changes_all!` for auto-persistence:
+### DI Registration + Usage
 
 ```rust
-use lref::prelude::*;
-use lref::save_changes_all;
-use lref_provider_sqlite::SqliteProvider;
-use std::sync::Arc;
+use lrdi::ServiceCollection;
+use lref::di::*;
+use lref::db_context::AppDbContext;
+use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
-pub struct BloggingContext {
-    pub blogs: DbSet<Blog>,
-    pub posts: DbSet<Post>,
-    change_tracker: ChangeTracker,
-    provider: Arc<SqliteProvider>,
-}
-
-#[async_trait::async_trait]
-impl DbContext for BloggingContext {
-    type Provider = SqliteProvider;
-    fn provider(&self) -> &Self::Provider { &self.provider }
-    fn change_tracker_mut(&mut self) -> &mut ChangeTracker { &mut self.change_tracker }
-    fn change_tracker(&self) -> &ChangeTracker { &self.change_tracker }
-    async fn save_changes(&mut self) -> Result<SaveChangesResult, LrefError> {
-        save_changes_all!(self, blogs, posts)
-    }
-}
-```
-
-Full CRUD:
-
-```rust
 #[tokio::main]
-async fn main() -> Result<(), LrefError> {
-    let provider = Arc::new(SqliteProvider::new_in_memory()?);
-    let mut ctx = BloggingContext {
-        blogs: DbSet::with_provider("blogs", provider.clone()),
-        posts: DbSet::with_provider("posts", provider.clone()),
-        change_tracker: ChangeTracker::new(),
-        provider,
-    };
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Register
+    let provider = ServiceCollection::new()
+        .add_dbcontext::<AppDbContext>(|options| {
+            options.use_sqlite("data source=app.db");
+            // or: options.use_sqlite_in_memory();
+            // or: options.use_postgres("host=localhost dbname=app");
+            // or: options.use_mysql("mysql://user:pass@localhost/db");
+        })
+        .build()
+        .unwrap();
 
-    // Create table (via migration engine)
-    let engine = lref::migration::MigrationEngine::new(lref::migration::MigrationDialect::Sqlite);
-    let migration = engine.generate("init", &[Blog::entity_meta(), Post::entity_meta()], &None)?;
-    ctx.provider().execute_migration_command(&migration.up_sql).await?;
+    // 2. Resolve as interface
+    let ctx: Arc<dyn IDbContext> = provider.get();
 
-    // Add & save
-    ctx.blogs.add(Blog { blog_id: 0, url: "https://example.com".into(), rating: 5, posts: HasMany::new() });
+    // 3. Use via concrete methods (call set<T> on the concrete type)
+    // Or hold a typed reference:
+    // let mut ctx = AppDbContext::from_options(&options)?;
+    // ctx.set::<Blog>().add(Blog { blog_id: 0, url: "https://example.com".into(), rating: 5, posts: HasMany::new() });
+    // ctx.set::<Post>().add(Post { post_id: 0, title: "Hello".into(), content: None, blog_id: 1, blog: BelongsTo::new() });
+
     ctx.save_changes().await?;
-
-    // Query
-    let blogs = ctx.blogs.query()
-        .filter_column("rating", ">", 3)
-        .order_by_column("url")
-        .to_list().await?;
-    println!("Found {} blogs", blogs.len());
-
-    // Count / aggregate
-    let count = ctx.posts.query().count().await?;
-    let avg_rating = ctx.blogs.query().avg("rating").await?;
 
     Ok(())
 }
@@ -127,97 +80,93 @@ async fn main() -> Result<(), LrefError> {
 
 ---
 
-## Features
-
-| Category | Feature | Status |
-|----------|---------|--------|
-| **Entity Modeling** | `#[derive(EntityType)]` with 12 field attributes | ✅ |
-| | Primary key, auto-increment, required, max_length | ✅ |
-| | Column name override, foreign key, index, unique | ✅ |
-| | Navigation properties: `BelongsTo<T>`, `HasMany<T>`, `HasOne<T>` | ✅ |
-| | Composite primary key | ✅ |
-| | Optimistic concurrency (`#[concurrency_check]`) | ✅ |
-| **Query** | LINQ-style fluent `QueryBuilder<T>` | ✅ |
-| | `filter_column`, `filter_in`, `filter_is_null`, `filter_between` | ✅ |
-| | `order_by`, `skip`, `take`, `include` | ✅ |
-| | `inner_join`, `left_join`, `group_by`, `having` | ✅ |
-| | Aggregation: `sum`, `avg`, `min`, `max`, `count` | ✅ |
-| | `execute_update`, `execute_delete` (bulk) | ✅ |
-| | Global query filters (`ModelBuilder::has_query_filter`) | ✅ |
-| **Persistence** | Generic `save_changes_all!` — auto INSERT/UPDATE/DELETE | ✅ |
-| | Parameterized queries (no SQL injection) | ✅ |
-| | Transaction support | ✅ |
-| | Change tracker with property-level snapshots | ✅ |
-| **Migrations** | Model diff (add/drop tables & columns, alter, FK) | ✅ |
-| | Up/Down SQL generation for PostgreSQL, MySQL, SQLite | ✅ |
-| | `__ef_migrations_history` tracking table | ✅ |
-| **Database Providers** | PostgreSQL (`deadpool-postgres`) | ✅ |
-| | MySQL (`sqlx`) | ✅ |
-| | SQLite (`rusqlite`) | ✅ |
-| **Tooling** | CLI: `lref migration add/apply/revert/list/script` | ✅ |
-| | CLI: `lref scaffold-dbcontext` (reverse engineer DB) | ✅ |
-| | `column!()` macro for compile-time column name resolution | ✅ |
-
----
-
 ## Architecture
 
 ```
-examples/blog/          User application
-    ↓
-crates/lref/            Core ORM (EntityType, DbContext, QueryBuilder, MigrationEngine)
-    ↓
-crates/lref-macros/     #[derive(EntityType)]  +  column!()  proc macros
-    ↓
-crates/lref-provider-*  Database drivers (PostgreSQL / MySQL / SQLite)
-    ↓
-crates/lref-cli/        CLI tool (migrations + scaffold)
+User Application
+    ├── lrdi (DI container — resolves Arc<dyn IDbContext>)
+    └── lref (ORM)
+          ├── AppDbContext (type-map set storage, no entity-specific fields)
+          ├── IDbContext     — object-safe session trait
+          ├── IDbSet<T>      — entity collection (mutation)
+          ├── IQueryable<T>  — query entry point
+          └── IDatabaseProvider — backend abstraction
+                ├── lref-provider-sqlite    (use_sqlite: injects factory)
+                ├── lref-provider-postgres  (use_postgres: injects factory)
+                └── lref-provider-mysql     (use_mysql: tag only)
+```
+
+### Interface Hierarchy
+
+```
+IEntityType ─── IFromRow
+             ├── IGetKeyValues
+             └── IEntitySnapshot
+
+IQueryable<T> ─── IDbSet<T>
+
+IDbContext (object-safe — dyn compatible)
+    ├── provider() → &dyn IDatabaseProvider
+    ├── save_changes() → SaveChangesResult
+    └── change_tracker() → &ChangeTracker
+
+IDbContextExt (non-object-safe — generic helpers)
+    └── use_transaction(f)
+
+IDatabaseProvider
+    ├── sql_generator() → ISqlGenerator
+    ├── get_connection() → IAsyncConnection
+    └── execute_migration_command(sql)
+
+FromDbContextOptions (DI bridge)
+    └── from_options(&DbContextOptions) → Self
 ```
 
 ---
 
-## Database Providers
+## Key Design Decisions
 
-| Crate | Database | Connection Pool |
-|-------|----------|----------------|
-| [`lref-provider-postgres`](https://crates.io/crates/lref-provider-postgres) | PostgreSQL | `deadpool-postgres` |
-| [`lref-provider-mysql`](https://crates.io/crates/lref-provider-mysql) | MySQL | `sqlx` |
-| [`lref-provider-sqlite`](https://crates.io/crates/lref-provider-sqlite) | SQLite | `Arc<Mutex<Connection>>` |
-
----
-
-## Derive Macro Attributes
-
-| Attribute | EFCore Equivalent | Description |
-|-----------|-------------------|-------------|
-| `#[table("name")]` | `[Table("name")]` | Database table name (struct-level) |
-| `#[primary_key]` | `[Key]` | Primary key column |
-| `#[auto_increment]` | (convention) | Auto-increment / identity |
-| `#[required]` | `[Required]` | NOT NULL constraint |
-| `#[max_length(N)]` | `[MaxLength(N)]` | Max string length |
-| `#[column("name")]` | `[Column("name")]` | Different column name |
-| `#[foreign_key(T)]` | `[ForeignKey]` | Foreign key reference |
-| `#[navigation]` | (implicit) | Navigation property |
-| `#[not_mapped]` | `[NotMapped]` | Exclude from mapping |
-| `#[index]` | `[Index]` | Create database index |
-| `#[unique]` | (unique index) | Create unique index |
-| `#[concurrency_check]` | `[ConcurrencyCheck]` | Optimistic concurrency token |
+| Decision | Rationale |
+|----------|-----------|
+| No `DbSet<Blog>` struct fields | `AppDbContext` uses type-map; sets lazy-created via `set::<T>()` |
+| `IDbContext` is object-safe | Enables `Arc<dyn IDbContext>` DI resolution |
+| `provider_factory` in options | Provider extensions inject factory closures; core stays decoupled |
+| `SetOps<T>` dispatchers | Type-erased `save_changes()` iterates all entity types |
+| Generic methods on `IDbContextExt` | Keeps core trait object-safe |
 
 ---
 
-## Development Status
+## Features
 
-Current: **Alpha 2 → Beta 1** (core CRUD + query capabilities complete, see [spec](docs/PRODUCTION_READINESS_SPEC.md))
+| Category | Feature |
+|----------|---------|
+| **Entity** | `#[derive(EntityType)]` with 12 attributes, navigation types |
+| **Query** | LINQ-style `QueryBuilder`: filter, join, group_by, aggregation, bulk ops |
+| **Persistence** | `save_changes_all!` macro, parameterized queries, transactions |
+| **DI** | `add_dbcontext<AppDbContext>(|o| o.use_sqlite(...))`, `Arc<dyn IDbContext>` |
+| **Migrations** | Model diff, Up/Down SQL for PostgreSQL/MySQL/SQLite |
+| **CLI** | `migration add/apply/revert/list/script`, `scaffold-dbcontext` |
 
-Upcoming:
-- Eager-loading navigation property materialization
-- `OR` condition support in query expressions
-- Subquery / correlated subquery support
-- CLI migration `apply` with live database connection
-- User guide (mdBook)
+---
+
+## Derive Attributes
+
+| Attribute | EFCore Equivalent |
+|-----------|-------------------|
+| `#[table]` | `[Table]` |
+| `#[primary_key]` | `[Key]` |
+| `#[auto_increment]` | convention |
+| `#[required]` | `[Required]` |
+| `#[max_length]` | `[MaxLength]` |
+| `#[column]` | `[Column]` |
+| `#[foreign_key]` | `[ForeignKey]` |
+| `#[navigation]` | implicit |
+| `#[not_mapped]` | `[NotMapped]` |
+| `#[index]` / `#[unique]` | `[Index]` |
+| `#[concurrency_check]` | `[ConcurrencyCheck]` |
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT
