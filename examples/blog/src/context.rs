@@ -1,8 +1,8 @@
 //! DbContext definition and Fluent API configuration for the blog example.
 
-use lref::prelude::*;
-use lref::provider::IDatabaseProvider;
-use lref_provider_postgres::PostgresProvider;
+use rust_ef::prelude::*;
+use rust_ef::provider::IDatabaseProvider;
+use rust_ef_provider_postgres::PostgresProvider;
 use std::sync::Arc;
 
 use super::entities::{Blog, Post};
@@ -35,9 +35,8 @@ impl BloggingContext {
 
 #[async_trait::async_trait]
 impl IDbContext for BloggingContext {
-    type Provider = PostgresProvider;
-    fn provider(&self) -> &Self::Provider {
-        &self.provider
+    fn provider(&self) -> &dyn IDatabaseProvider {
+        &*self.provider
     }
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker {
         &mut self.change_tracker
@@ -52,9 +51,9 @@ impl IDbContext for BloggingContext {
         conn.begin_transaction().await?;
 
         let (a1, u1, d1) =
-            lref::db_context::save_one_set(&mut *conn, &*provider, &mut self.blogs).await?;
+            rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut self.blogs).await?;
         let (a2, u2, d2) =
-            lref::db_context::save_one_set(&mut *conn, &*provider, &mut self.posts).await?;
+            rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut self.posts).await?;
 
         conn.commit_transaction().await?;
         self.change_tracker.accept_all_changes();

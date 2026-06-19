@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod advanced_tests {
-    use lref::entity::EntityState;
-    use lref::metadata::{EntityTypeMeta, PropertyMeta};
-    use lref::migration::{MigrationDialect, MigrationEngine};
+    use rust_ef::entity::EntityState;
+    use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
+    use rust_ef::migration::{MigrationDialect, MigrationEngine};
 
     fn make_pk_col(name: &'static str, fk: bool) -> PropertyMeta {
         PropertyMeta {
@@ -155,7 +155,7 @@ mod advanced_tests {
 
     #[test]
     fn test_change_tracker_states() {
-        let mut tracker = lref::tracking::ChangeTracker::new();
+        let mut tracker = rust_ef::tracking::ChangeTracker::new();
         let type_id = std::any::TypeId::of::<i32>();
         tracker.track_entity(type_id, "UserRole", EntityState::Added);
         assert!(tracker.has_changes());
@@ -166,7 +166,7 @@ mod advanced_tests {
 
     #[test]
     fn test_cache_operations() {
-        use lref::cache::DbCache;
+        use rust_ef::cache::DbCache;
         let mut cache = DbCache::new();
         assert!(cache.is_empty());
         let type_id = std::any::TypeId::of::<String>();

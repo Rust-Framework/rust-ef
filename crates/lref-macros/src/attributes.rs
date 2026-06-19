@@ -1,4 +1,4 @@
-//! Attribute parsing helpers for lref-macros.
+//! Attribute parsing helpers for rust-ef-macros.
 //!
 //! Parses the custom attributes used in `#[derive(EntityType)]`.
 

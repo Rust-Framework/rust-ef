@@ -1,5 +1,5 @@
 [package]
-name = "lref-provider-postgres"
+name = "rust-ef-provider-postgres"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "postgres", "database"]
 categories = ["database"]
 
 [dependencies]
-lref = { version = "0.3.2", path = "../lref" }
+rust-ef = { version = "0.3.2", path = "../lref" }
 async-trait = "0.1"
 tokio-postgres = "0.7"
 deadpool-postgres = "0.14"

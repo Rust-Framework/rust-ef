@@ -6,8 +6,8 @@ pub mod type_mapping;
 
 use async_trait::async_trait;
 use deadpool_postgres::{Config, Pool, Runtime};
-use lref::error::{LrefError, LrefResult};
-use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
+use rust_ef::error::{LrefError, LrefResult};
+use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 pub use sql_generator::PostgresSqlGenerator;
 use std::sync::Arc;
 use tokio_postgres::{types::ToSql, NoTls};
@@ -177,7 +177,7 @@ pub trait DbContextOptionsBuilderExt {
     fn use_postgres(&mut self, connection_string: &str) -> &mut Self;
 }
 
-impl DbContextOptionsBuilderExt for lref::db_context::DbContextOptionsBuilder {
+impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder {
     fn use_postgres(&mut self, connection_string: &str) -> &mut Self {
         let cs = connection_string.to_string();
         self.set_provider_factory(

@@ -1,8 +1,8 @@
 //! SQLite provider for Rust Entity Framework.
 
 use async_trait::async_trait;
-use lref::error::{LrefError, LrefResult};
-use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
+use rust_ef::error::{LrefError, LrefResult};
+use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -248,7 +248,7 @@ pub trait DbContextOptionsBuilderExt {
     fn use_sqlite_in_memory(&mut self) -> &mut Self;
 }
 
-impl DbContextOptionsBuilderExt for lref::db_context::DbContextOptionsBuilder {
+impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder {
     fn use_sqlite(&mut self, connection_string: &str) -> &mut Self {
         let cs = connection_string.to_string();
         self.set_provider_factory(

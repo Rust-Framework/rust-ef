@@ -3,7 +3,7 @@
 //! These demonstrate the core entity definition pattern with
 //! `#[derive(EntityType)]` and attribute-based configuration.
 
-use lref::prelude::*;
+use rust_ef::prelude::*;
 
 /// Represents a Blog -- analogous to EFCore's Blog entity.
 ///

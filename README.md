@@ -1,6 +1,6 @@
-# Rust Entity Framework (lref)
+# Rust Entity Framework (rust-ef)
 
-[![Crates.io](https://img.shields.io/crates/v/lref)](https://crates.io/crates/lref)
+[![Crates.io](https://img.shields.io/crates/v/rust-ef)](https://crates.io/crates/rust-ef)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Interface-oriented, EFCore-inspired ORM for Rust — `IDbContext` / `IDbSet<T>` / `IEntityType` with lrdi DI integration.
@@ -11,8 +11,8 @@ Interface-oriented, EFCore-inspired ORM for Rust — `IDbContext` / `IDbSet<T>` 
 
 ```toml
 [dependencies]
-lref = "0.3"
-lref-provider-sqlite = "0.3"
+rust-ef = "0.3"
+rust-ef-provider-sqlite = "0.3"
 lrdi = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -20,7 +20,7 @@ tokio = { version = "1", features = ["full"] }
 ### Define Entities
 
 ```rust
-use lref::prelude::*;
+use rust_ef::prelude::*;
 
 #[derive(Debug, Clone, EntityType)]
 #[table("blogs")]
@@ -46,9 +46,9 @@ pub struct Post {
 
 ```rust
 use lrdi::ServiceCollection;
-use lref::di::*;
-use lref::db_context::DbContext;
-use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
+use rust_ef::di::*;
+use rust_ef::db_context::DbContext;
+use rust_ef_provider_sqlite::DbContextOptionsBuilderExt as _;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -88,7 +88,7 @@ let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
 ### SaveChanges Interceptors
 
 ```rust
-use lref::interceptor::{ISaveChangesInterceptor, SaveChangesContext};
+use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext};
 
 struct AuditInterceptor;
 #[async_trait::async_trait]
@@ -116,16 +116,16 @@ User Application
     ├── lrdi (DI container — resolves Arc<dyn IDbContext>)
     │     ├── provider.get()           — default registration
     │     └── provider.get_keyed("k")  — keyed registration
-    └── lref (ORM)
+    └── rust-ef (ORM)
           DbContext (type-map set storage, no entity-specific fields)
           ├── IDbContext     — object-safe session trait
           ├── IDbSet<T>      — entity collection (mutation)
           ├── IQueryable<T>  — query entry point
           ├── ISaveChangesInterceptor — before/after save hooks
           └── IDatabaseProvider — backend abstraction
-                ├── lref-provider-sqlite    (use_sqlite: injects factory)
-                ├── lref-provider-postgres  (use_postgres: injects factory)
-                └── lref-provider-mysql     (use_mysql: tag only)
+                ├── rust-ef-provider-sqlite    (use_sqlite: injects factory)
+                ├── rust-ef-provider-postgres  (use_postgres: injects factory)
+                └── rust-ef-provider-mysql     (use_mysql: tag only)
 ```
 
 ### Interface Hierarchy

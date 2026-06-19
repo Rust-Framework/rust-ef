@@ -1,5 +1,5 @@
 [package]
-name = "lref-cli"
+name = "rust-ef-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,12 +9,12 @@ keywords = ["orm", "efcore", "entity-framework", "cli", "migration"]
 categories = ["command-line-utilities", "database"]
 
 [[bin]]
-name = "lref"
+name = "rust-ef"
 path = "src/main.rs"
 
 [dependencies]
-lref = { version = "0.3.2", path = "../lref" }
-lref-provider-postgres = { version = "0.3.2", path = "../lref-provider-postgres" }
+rust-ef = { version = "0.3.2", path = "../lref" }
+rust-ef-provider-postgres = { version = "0.3.2", path = "../lref-provider-postgres" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"

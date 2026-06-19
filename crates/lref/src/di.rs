@@ -6,8 +6,8 @@
 //!
 //! ```rust,ignore
 //! use lrdi::ServiceCollection;
-//! use lref::di::*;
-//! use lref::db_context::DbContext;
+//! use rust_ef::di::*;
+//! use rust_ef::db_context::DbContext;
 //! use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 //!
 //! let provider = ServiceCollection::new()

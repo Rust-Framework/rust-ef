@@ -14,5 +14,5 @@ resolver = "2"
 version = "0.3.2"
 edition = "2021"
 license = "MIT"
-repository = "https://gitcode.com/rf2026/lref"
+repository = "https://gitcode.com/rf2026/rust-ef"
 authors = ["Start"]

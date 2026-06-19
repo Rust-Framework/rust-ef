@@ -59,7 +59,7 @@ pub fn derive_entity_type(input: TokenStream) -> TokenStream {
 /// # Usage
 ///
 /// ```ignore
-/// use lref::column;
+/// use rust_ef::column;
 ///
 /// let col = column!(Blog::url); // "url" (or custom column name)
 /// ```

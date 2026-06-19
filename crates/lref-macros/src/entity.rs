@@ -66,19 +66,19 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             let (nav_kind, inner_type) = detect_navigation_kind_and_inner(field_type);
             let nav_kind_token = match nav_kind {
                 NavigationDiscriminant::BelongsTo => {
-                    quote! { lref::metadata::NavigationKind::BelongsTo }
+                    quote! { rust_ef::metadata::NavigationKind::BelongsTo }
                 }
                 NavigationDiscriminant::HasOne => {
-                    quote! { lref::metadata::NavigationKind::HasOne }
+                    quote! { rust_ef::metadata::NavigationKind::HasOne }
                 }
                 NavigationDiscriminant::HasMany => {
-                    quote! { lref::metadata::NavigationKind::HasMany }
+                    quote! { rust_ef::metadata::NavigationKind::HasMany }
                 }
             };
             let fk_field = extract_foreign_key_field_name(&field.attrs);
 
             navigation_builders.push(quote! {
-                lref::metadata::NavigationMeta {
+                rust_ef::metadata::NavigationMeta {
                     field_name: std::borrow::Cow::Borrowed(#field_name_str),
                     kind: #nav_kind_token,
                     related_type_id: std::any::TypeId::of::<#inner_type>(),
@@ -91,7 +91,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             nav_field_names.push(field_name);
         } else if !is_not_mapped {
             property_builders.push(quote! {
-                lref::metadata::PropertyMeta {
+                rust_ef::metadata::PropertyMeta {
                     field_name: std::borrow::Cow::Borrowed(#field_name_str),
                     column_name: std::borrow::Cow::Borrowed(#column_name),
                     type_id: std::any::TypeId::of::<#field_type>(),
@@ -164,15 +164,15 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         snapshot_entries.push(quote! {
             map.insert(
                 #field_name_str.to_string(),
-                lref::provider::DbValue::from(self.#field_name.clone()),
+                rust_ef::provider::DbValue::from(self.#field_name.clone()),
             );
         });
     }
 
     let expanded = quote! {
-        impl lref::entity::IEntityType for #struct_name {
-            fn entity_meta() -> lref::metadata::EntityTypeMeta {
-                lref::metadata::EntityTypeMeta {
+        impl rust_ef::entity::IEntityType for #struct_name {
+            fn entity_meta() -> rust_ef::metadata::EntityTypeMeta {
+                rust_ef::metadata::EntityTypeMeta {
                     type_id: std::any::TypeId::of::<Self>(),
                     type_name: std::borrow::Cow::Borrowed(#type_name_str),
                     table_name: std::borrow::Cow::Borrowed(#table_name),
@@ -193,31 +193,31 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             #(#column_consts)*
         }
 
-        impl lref::entity::IGetKeyValues for #struct_name {
-            fn key_values(&self) -> std::collections::HashMap<String, lref::provider::DbValue> {
+        impl rust_ef::entity::IGetKeyValues for #struct_name {
+            fn key_values(&self) -> std::collections::HashMap<String, rust_ef::provider::DbValue> {
                 let mut map = std::collections::HashMap::new();
                 #(
                     map.insert(
                         stringify!(#pk_field_idents).to_string(),
-                        lref::provider::DbValue::from(self.#pk_field_idents.clone()),
+                        rust_ef::provider::DbValue::from(self.#pk_field_idents.clone()),
                     );
                 )*
                 map
             }
         }
 
-        impl lref::entity::IEntitySnapshot for #struct_name {
-            fn snapshot(&self) -> std::collections::HashMap<String, lref::provider::DbValue> {
+        impl rust_ef::entity::IEntitySnapshot for #struct_name {
+            fn snapshot(&self) -> std::collections::HashMap<String, rust_ef::provider::DbValue> {
                 let mut map = std::collections::HashMap::new();
                 #(#snapshot_entries)*
                 map
             }
         }
 
-        impl lref::entity::IFromRow for #struct_name {
-            fn from_row(values: &[String]) -> lref::error::LrefResult<Self> {
+        impl rust_ef::entity::IFromRow for #struct_name {
+            fn from_row(values: &[String]) -> rust_ef::error::LrefResult<Self> {
                 if values.len() < #field_count {
-                    return Err(lref::error::LrefError::TypeConversion(
+                    return Err(rust_ef::error::LrefError::TypeConversion(
                         format!("Expected {} columns, got {}", #field_count, values.len())
                     ));
                 }

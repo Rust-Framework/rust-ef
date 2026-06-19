@@ -8,11 +8,11 @@ mod context;
 
 use entities::{Blog, Post};
 use context::BloggingContext;
-use lref::prelude::*;
+use rust_ef::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), LrefError> {
-    println!("=== Rust Entity Framework (lref) Blog Example ===\n");
+    println!("=== Rust Entity Framework (rust-ef) Blog Example ===\n");
 
     let mut ctx = BloggingContext::new().await?;
 
@@ -114,7 +114,7 @@ async fn main() -> Result<(), LrefError> {
 
     // 11. Migration engine demo
     println!("\n[12] Migration engine demo...");
-    let engine = lref::migration::MigrationEngine::new(lref::migration::MigrationDialect::Postgres);
+    let engine = rust_ef::migration::MigrationEngine::new(rust_ef::migration::MigrationDialect::Postgres);
     let snapshot = engine.create_snapshot("initial", &[Blog::entity_meta(), Post::entity_meta()]);
     let migration = engine.generate("InitialCreate", &[Blog::entity_meta(), Post::entity_meta()], &None)?;
     println!("    Generated migration: {}", migration.id);

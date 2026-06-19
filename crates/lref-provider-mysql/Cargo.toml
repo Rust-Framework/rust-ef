@@ -1,5 +1,5 @@
 [package]
-name = "lref-provider-mysql"
+name = "rust-ef-provider-mysql"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "mysql", "database"]
 categories = ["database"]
 
 [dependencies]
-lref = { version = "0.3.2", path = "../lref" }
+rust-ef = { version = "0.3.2", path = "../lref" }
 async-trait = "0.1"
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }
 tokio = { version = "1", features = ["full"] }

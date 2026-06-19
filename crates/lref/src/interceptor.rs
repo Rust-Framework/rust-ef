@@ -7,7 +7,7 @@
 //! # Example (user code)
 //!
 //! ```rust,ignore
-//! use lref::interceptor::{ISaveChangesInterceptor, SaveChangesContext};
+//! use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext};
 //!
 //! struct AuditInterceptor;
 //!

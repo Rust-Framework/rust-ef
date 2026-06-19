@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use lref::entity::EntityState;
-    use lref::metadata::{EntityTypeMeta, PropertyMeta};
-    use lref::migration::{MigrationDialect, SnapshotColumn};
-    use lref::provider::DbValue;
-    use lref::query::{FilterCondition, OrderBy, OrderDirection, QueryState};
+    use rust_ef::entity::EntityState;
+    use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
+    use rust_ef::migration::{MigrationDialect, SnapshotColumn};
+    use rust_ef::provider::DbValue;
+    use rust_ef::query::{FilterCondition, OrderBy, OrderDirection, QueryState};
 
     #[test]
     fn test_entity_state_enum() {
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn test_save_changes_result() {
-        let result = lref::db_context::SaveChangesResult {
+        let result = rust_ef::db_context::SaveChangesResult {
             added: 3,
             updated: 2,
             deleted: 1,
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_change_tracker() {
-        let mut tracker = lref::tracking::ChangeTracker::new();
+        let mut tracker = rust_ef::tracking::ChangeTracker::new();
         assert!(!tracker.has_changes());
 
         let type_id = std::any::TypeId::of::<i32>();

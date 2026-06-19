@@ -1,14 +1,14 @@
 #!/usr/bin/env sh
 # =============================================================================
-# lref crates.io publishing script
+# rust-ef crates.io publishing script
 #
 # Publishes 6 crates in dependency order:
-#   1. lref-macros                (leaf — no workspace deps)
-#   2. lref                       (depends on lref-macros)
-#   3. lref-provider-postgres     (depends on lref)
-#   4. lref-provider-mysql        (depends on lref)
-#   5. lref-provider-sqlite       (depends on lref)
-#   6. lref-cli                   (depends on lref + provider-postgres)
+#   1. rust-ef-macros                (leaf — no workspace deps)
+#   2. rust-ef                       (depends on rust-ef-macros)
+#   3. rust-ef-provider-postgres     (depends on rust-ef)
+#   4. rust-ef-provider-mysql        (depends on rust-ef)
+#   5. rust-ef-provider-sqlite       (depends on rust-ef)
+#   6. rust-ef-cli                   (depends on rust-ef + provider-postgres)
 #
 # Usage:
 #   sh scripts/publish.sh                 # Dry-run: check + test + package
@@ -73,21 +73,21 @@ fi
 # ── Step 1: Verify ──────────────────────────────────────────────────────────
 
 echo "${GREEN}[verify]${NC} Checking workspace compiles..."
-cargo check -p lref -p lref-macros -p lref-provider-postgres -p lref-provider-mysql -p lref-provider-sqlite 2>/dev/null
+cargo check -p rust-ef -p rust-ef-macros -p rust-ef-provider-postgres -p rust-ef-provider-mysql -p rust-ef-provider-sqlite 2>/dev/null
 echo "  OK"
 
 echo "${GREEN}[verify]${NC} Running tests..."
-cargo test -p lref --quiet 2>/dev/null
+cargo test -p rust-ef --quiet 2>/dev/null
 echo "  OK"
 echo ""
 
 # ── Step 2: Publish leaf crate ──────────────────────────────────────────────
 
-echo "${GREEN}[1/6]${NC} ${YELLOW}lref-macros${NC} (leaf — no workspace deps)"
+echo "${GREEN}[1/6]${NC} ${YELLOW}rust-ef-macros${NC} (leaf — no workspace deps)"
 if $DRY_RUN; then
-    cargo publish --dry-run $ALLOW_DIRTY -p lref-macros
+    cargo publish --dry-run $ALLOW_DIRTY -p rust-ef-macros
 else
-    cargo publish $ALLOW_DIRTY -p lref-macros
+    cargo publish $ALLOW_DIRTY -p rust-ef-macros
     echo "  Waiting for crates.io index (15s)..."
     sleep 15
 fi
@@ -95,11 +95,11 @@ echo ""
 
 # ── Step 3: Publish lref ───────────────────────────────────────────────────
 
-echo "${GREEN}[2/6]${NC} ${YELLOW}lref${NC} (needs lref-macros on crates.io)"
+echo "${GREEN}[2/6]${NC} ${YELLOW}rust-ef${NC} (needs rust-ef-macros on crates.io)"
 if $DRY_RUN; then
-    echo "  (skipped — requires lref-macros published first)"
+    echo "  (skipped — requires rust-ef-macros published first)"
 else
-    cargo publish $ALLOW_DIRTY -p lref
+    cargo publish $ALLOW_DIRTY -p rust-ef
     echo "  Waiting for crates.io index (15s)..."
     sleep 15
 fi
@@ -107,12 +107,12 @@ echo ""
 
 # ── Step 4: Publish providers ───────────────────────────────────────────────
 
-for crate in lref-provider-postgres lref-provider-mysql lref-provider-sqlite; do
-    NUM=$(echo "lref-provider-postgres lref-provider-mysql lref-provider-sqlite" | tr ' ' '\n' | grep -n "$crate" | cut -d: -f1)
+for crate in rust-ef-provider-postgres rust-ef-provider-mysql rust-ef-provider-sqlite; do
+    NUM=$(echo "rust-ef-provider-postgres rust-ef-provider-mysql rust-ef-provider-sqlite" | tr ' ' '\n' | grep -n "$crate" | cut -d: -f1)
     STEP=$((2 + NUM))
-    echo "${GREEN}[${STEP}/6]${NC} ${YELLOW}${crate}${NC} (needs lref on crates.io)"
+    echo "${GREEN}[${STEP}/6]${NC} ${YELLOW}${crate}${NC} (needs rust-ef on crates.io)"
     if $DRY_RUN; then
-        echo "  (skipped — requires lref published first)"
+        echo "  (skipped — requires rust-ef published first)"
     else
         cargo publish $ALLOW_DIRTY -p "$crate"
     fi
@@ -121,11 +121,11 @@ done
 
 # ── Step 5: Publish cli ─────────────────────────────────────────────────────
 
-echo "${GREEN}[6/6]${NC} ${YELLOW}lref-cli${NC} (needs lref + provider-postgres on crates.io)"
+echo "${GREEN}[6/6]${NC} ${YELLOW}rust-ef-cli${NC} (needs rust-ef + provider-postgres on crates.io)"
 if $DRY_RUN; then
-    echo "  (skipped — requires lref published first)"
+    echo "  (skipped — requires rust-ef published first)"
 else
-    cargo publish $ALLOW_DIRTY -p lref-cli
+    cargo publish $ALLOW_DIRTY -p rust-ef-cli
 fi
 
 # ── Done ────────────────────────────────────────────────────────────────────

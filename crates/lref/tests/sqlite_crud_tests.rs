@@ -5,12 +5,12 @@
 
 #[cfg(test)]
 mod sqlite_crud {
-    use lref::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
-    use lref::error::LrefResult;
-    use lref::metadata::{EntityTypeMeta, PropertyMeta};
-    use lref::migration::{MigrationDialect, MigrationEngine};
-    use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
-    use lref_provider_sqlite::SqliteProvider;
+    use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
+    use rust_ef::error::LrefResult;
+    use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
+    use rust_ef::migration::{MigrationDialect, MigrationEngine};
+    use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
+    use rust_ef_provider_sqlite::SqliteProvider;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -123,7 +123,7 @@ mod sqlite_crud {
 
         // Create migration history table first, then run migration
         let history_sql =
-            lref::migration::create_migration_history_table_sql(MigrationDialect::Sqlite);
+            rust_ef::migration::create_migration_history_table_sql(MigrationDialect::Sqlite);
         provider.execute_migration_command(&history_sql).await?;
 
         // Strip out the history INSERT (it's a separate statement at the end)
@@ -149,9 +149,9 @@ mod sqlite_crud {
             .await
             .expect("create table");
 
-        let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
+        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
             "test_items",
-            arc_provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
+            arc_provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         );
 
         // Insert
@@ -171,7 +171,7 @@ mod sqlite_crud {
         let mut conn: Box<dyn IAsyncConnection> =
             arc_provider.get_connection().await.expect("get connection");
         conn.begin_transaction().await.expect("begin tx");
-        let (added, _, _) = lref::db_context::save_one_set(&mut *conn, &*arc_provider, &mut db_set)
+        let (added, _, _) = rust_ef::db_context::save_one_set(&mut *conn, &*arc_provider, &mut db_set)
             .await
             .expect("save");
         conn.commit_transaction().await.expect("commit");
@@ -192,9 +192,9 @@ mod sqlite_crud {
         let provider = Arc::new(SqliteProvider::new_in_memory().expect("create db"));
         create_table(&provider, "test_items").await.unwrap();
 
-        let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
+        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
             "test_items",
-            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
+            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         );
         db_set.add(TestItem {
             id: 0,
@@ -214,7 +214,7 @@ mod sqlite_crud {
 
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
             .await
             .unwrap();
         conn.commit_transaction().await.unwrap();
@@ -253,9 +253,9 @@ mod sqlite_crud {
         let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
         create_table(&provider, "test_items").await.unwrap();
 
-        let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
+        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
             "test_items",
-            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
+            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         );
         for i in 0..10 {
             db_set.add(TestItem {
@@ -266,7 +266,7 @@ mod sqlite_crud {
         }
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
             .await
             .unwrap();
         conn.commit_transaction().await.unwrap();
@@ -286,9 +286,9 @@ mod sqlite_crud {
         let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
         create_table(&provider, "test_items").await.unwrap();
 
-        let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
+        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
             "test_items",
-            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
+            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         );
         for i in 0..5 {
             db_set.add(TestItem {
@@ -299,7 +299,7 @@ mod sqlite_crud {
         }
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
             .await
             .unwrap();
         conn.commit_transaction().await.unwrap();
@@ -330,9 +330,9 @@ mod sqlite_crud {
         let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
         create_table(&provider, "test_items").await.unwrap();
 
-        let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
+        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
             "test_items",
-            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
+            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         );
         db_set.add(TestItem {
             id: 0,
@@ -347,7 +347,7 @@ mod sqlite_crud {
 
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
             .await
             .unwrap();
         conn.commit_transaction().await.unwrap();
@@ -373,9 +373,9 @@ mod sqlite_crud {
         let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
         create_table(&provider, "test_items").await.unwrap();
 
-        let mut db_set = lref::db_set::DbSet::<TestItem>::with_provider(
+        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
             "test_items",
-            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
+            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         );
         for i in 1..=5 {
             db_set.add(TestItem {
@@ -386,7 +386,7 @@ mod sqlite_crud {
         }
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        lref::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
+        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
             .await
             .unwrap();
         conn.commit_transaction().await.unwrap();
@@ -404,9 +404,9 @@ mod sqlite_crud {
         let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
         create_table(&provider, "test_items").await.unwrap();
 
-        let db_set = lref::db_set::DbSet::<TestItem>::with_provider(
+        let db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
             "test_items",
-            provider.clone() as Arc<dyn lref::provider::IDatabaseProvider>,
+            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         );
 
         let items = db_set.query().to_list().await.unwrap();

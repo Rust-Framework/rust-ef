@@ -1,4 +1,4 @@
-//! Error types for Rust Entity Framework.
+//! Error types for Rust Entity Framework (rust-ef).
 
 use thiserror::Error;
 

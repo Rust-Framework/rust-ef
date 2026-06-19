@@ -22,7 +22,7 @@ use std::process;
 const MIGRATIONS_DIR: &str = "migrations";
 
 #[derive(Parser)]
-#[command(name = "lref")]
+#[command(name = "rust-ef")]
 #[command(about = "Rust Entity Framework CLI", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -243,7 +243,7 @@ fn generate_script(from: Option<&str>, to: Option<&str>) -> Result<(), String> {
         None => migrations.len() - 1,
     };
 
-    println!("-- Generated SQL script (lref)");
+    println!("-- Generated SQL script (rust-ef)");
     println!(
         "-- From: {}",
         migrations
@@ -438,7 +438,7 @@ async fn read_database_schema(connection: &str, provider: &str) -> Result<Vec<Ta
     match provider {
         "postgres" => {
             println!("    Connecting to PostgreSQL and reading information_schema...");
-            let db_tables = lref_provider_postgres::introspection::introspect_postgres(connection)
+            let db_tables = rust_ef_provider_postgres::introspection::introspect_postgres(connection)
                 .await
                 .map_err(|e| format!("Introspection failed: {}", e))?;
 
@@ -511,7 +511,7 @@ fn generate_entity_code(table: &TableInfo) -> String {
     }
 
     format!(
-        r#"use lref::prelude::*;
+        r#"use rust_ef::prelude::*;
 
 #[derive(Debug, Clone, EntityType)]
 #[table("{table_name}")]
@@ -536,8 +536,9 @@ fn generate_db_context_code(tables: &[TableInfo]) -> String {
     }
 
     format!(
-        r#"use lref::prelude::*;
-use lref_provider_postgres::PostgresProvider;
+        r#"use rust_ef::prelude::*;
+
+use rust_ef_provider_postgres::PostgresProvider;
 
 {imports}
 pub struct DbContext {{

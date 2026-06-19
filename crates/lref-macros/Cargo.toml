@@ -1,5 +1,5 @@
 [package]
-name = "lref-macros"
+name = "rust-ef-macros"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 //! PostgreSQL-specific SQL dialect generator.
 
-use lref::provider::ISqlGenerator;
+use rust_ef::provider::ISqlGenerator;
 
 /// SQL generator that produces PostgreSQL-compatible SQL.
 #[derive(Debug, Clone)]

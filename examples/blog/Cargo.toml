@@ -1,10 +1,10 @@
 [package]
-name = "lref-blog-example"
+name = "rust-ef-blog-example"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-lref = { path = "../../crates/lref" }
-lref-provider-postgres = { path = "../../crates/lref-provider-postgres" }
+rust-ef = { path = "../../crates/lref" }
+rust-ef-provider-postgres = { path = "../../crates/lref-provider-postgres" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"

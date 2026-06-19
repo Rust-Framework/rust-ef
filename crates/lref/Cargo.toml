@@ -1,5 +1,5 @@
 [package]
-name = "lref"
+name = "rust-ef"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,17 +9,16 @@ keywords = ["orm", "efcore", "entity-framework", "database", "postgresql"]
 categories = ["database"]
 
 [dependencies]
-lref-macros = { version = "0.3.2", path = "../lref-macros" }
+rust-ef-macros = { version = "0.3.2", path = "../lref-macros" }
 lrdi = "0.2.6"
 async-trait = "0.1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
-pin-project-lite = "0.2"
 serde = { version = "1", features = ["derive"], optional = true }
 chrono = { version = "0.4", optional = true }
 
 [dev-dependencies]
-lref-provider-sqlite = { path = "../lref-provider-sqlite" }
+rust-ef-provider-sqlite = { path = "../lref-provider-sqlite" }
 
 [features]
 default = []

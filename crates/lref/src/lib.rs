@@ -1,4 +1,4 @@
-//! # Rust Entity Framework (lref)
+//! # Rust Entity Framework (rust-ef)
 //!
 //! An EFCore-inspired ORM for Rust, bringing the familiar
 //! DbContext/DbSet/EntityType patterns to the Rust ecosystem.
@@ -6,7 +6,7 @@
 //! ## Example
 //!
 //! ```rust,ignore
-//! use lref::prelude::*;
+//! use rust_ef::prelude::*;
 //!
 //! #[derive(EntityType)]
 //! #[table("blogs")]
@@ -62,6 +62,6 @@ pub mod prelude {
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::save_changes_all;
     pub use crate::tracking::ChangeTracker;
-    pub use lref_macros::column;
-    pub use lref_macros::EntityType;
+    pub use rust_ef_macros::column;
+    pub use rust_ef_macros::EntityType;
 }

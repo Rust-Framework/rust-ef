@@ -7,8 +7,8 @@
 //! `.use_mysql("mysql://user:pass@localhost/db")`
 
 use async_trait::async_trait;
-use lref::error::{LrefError, LrefResult};
-use lref::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
+use rust_ef::error::{LrefError, LrefResult};
+use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 use sqlx::{Column, Row};
 
 // ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ pub trait DbContextOptionsBuilderExt {
     fn use_mysql(&mut self, connection_string: &str) -> &mut Self;
 }
 
-impl DbContextOptionsBuilderExt for lref::db_context::DbContextOptionsBuilder {
+impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder {
     fn use_mysql(&mut self, connection_string: &str) -> &mut Self {
         self.set_provider("mysql", connection_string)
     }
