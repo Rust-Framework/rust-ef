@@ -5,7 +5,6 @@ members = [
     "crates/rust-ef-postgres",
     "crates/rust-ef-mysql",
     "crates/rust-ef-sqlite",
-    "crates/rust-ef-cli",
     "crates/rust-dicore",
     "examples/blog",
 ]
