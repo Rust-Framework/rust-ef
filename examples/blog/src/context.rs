@@ -2,7 +2,7 @@
 
 use rust_ef::prelude::*;
 use rust_ef::provider::IDatabaseProvider;
-use rust_ef_provider_postgres::PostgresProvider;
+use rust_ef_postgres::PostgresProvider;
 use std::sync::Arc;
 
 use super::entities::{Blog, Post};

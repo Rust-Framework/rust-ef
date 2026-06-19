@@ -8,7 +8,7 @@
 //! use lrdi::ServiceCollection;
 //! use rust_ef::di::*;
 //! use rust_ef::db_context::DbContext;
-//! use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
+//! use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 //!
 //! let provider = ServiceCollection::new()
 //!     .add_dbcontext::<DbContext>(|options| {

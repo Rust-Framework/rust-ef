@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rust-ef = { path = "../../crates/lref" }
-rust-ef-provider-postgres = { path = "../../crates/lref-provider-postgres" }
+rust-ef = { path = "../../crates/rust-ef" }
+rust-ef-postgres = { path = "../../crates/rust-ef-postgres" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"

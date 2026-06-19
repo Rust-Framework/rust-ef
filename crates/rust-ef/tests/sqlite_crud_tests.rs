@@ -10,7 +10,7 @@ mod sqlite_crud {
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
     use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
-    use rust_ef_provider_sqlite::SqliteProvider;
+    use rust_ef_sqlite::SqliteProvider;
     use std::collections::HashMap;
     use std::sync::Arc;
 

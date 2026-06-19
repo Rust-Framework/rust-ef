@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "database", "postgresql"]
 categories = ["database"]
 
 [dependencies]
-rust-ef-macros = { version = "0.3.2", path = "../lref-macros" }
+rust-ef-macros = { version = "0.3.3", path = "../rust-ef-macros" }
 lrdi = "0.2.6"
 async-trait = "0.1"
 thiserror = "2"
@@ -18,7 +18,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 chrono = { version = "0.4", optional = true }
 
 [dev-dependencies]
-rust-ef-provider-sqlite = { path = "../lref-provider-sqlite" }
+rust-ef-sqlite = { path = "../rust-ef-sqlite" }
 
 [features]
 default = []

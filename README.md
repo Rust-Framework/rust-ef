@@ -12,7 +12,7 @@ Interface-oriented, EFCore-inspired ORM for Rust — `IDbContext` / `IDbSet<T>` 
 ```toml
 [dependencies]
 rust-ef = "0.3"
-rust-ef-provider-sqlite = "0.3"
+rust-ef-sqlite = "0.3"
 lrdi = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -123,9 +123,9 @@ User Application
           ├── IQueryable<T>  — query entry point
           ├── ISaveChangesInterceptor — before/after save hooks
           └── IDatabaseProvider — backend abstraction
-                ├── rust-ef-provider-sqlite    (use_sqlite: injects factory)
-                ├── rust-ef-provider-postgres  (use_postgres: injects factory)
-                └── rust-ef-provider-mysql     (use_mysql: tag only)
+                ├── rust-ef-sqlite    (use_sqlite: injects factory)
+                ├── rust-ef-postgres  (use_postgres: injects factory)
+                └── rust-ef-mysql     (use_mysql: tag only)
 ```
 
 ### Interface Hierarchy

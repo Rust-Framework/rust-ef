@@ -1,17 +1,17 @@
 [workspace]
 members = [
-    "crates/lref",
-    "crates/lref-macros",
-    "crates/lref-provider-postgres",
-    "crates/lref-provider-mysql",
-    "crates/lref-provider-sqlite",
-    "crates/lref-cli",
+    "crates/rust-ef",
+    "crates/rust-ef-macros",
+    "crates/rust-ef-postgres",
+    "crates/rust-ef-mysql",
+    "crates/rust-ef-sqlite",
+    "crates/rust-ef-cli",
     "examples/blog",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 license = "MIT"
 repository = "https://gitcode.com/rf2026/rust-ef"

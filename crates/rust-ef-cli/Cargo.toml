@@ -13,8 +13,8 @@ name = "rust-ef"
 path = "src/main.rs"
 
 [dependencies]
-rust-ef = { version = "0.3.2", path = "../lref" }
-rust-ef-provider-postgres = { version = "0.3.2", path = "../lref-provider-postgres" }
+rust-ef = { version = "0.3.3", path = "../rust-ef" }
+rust-ef-postgres = { version = "0.3.3", path = "../rust-ef-postgres" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"

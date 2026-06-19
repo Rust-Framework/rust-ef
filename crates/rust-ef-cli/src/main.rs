@@ -438,7 +438,7 @@ async fn read_database_schema(connection: &str, provider: &str) -> Result<Vec<Ta
     match provider {
         "postgres" => {
             println!("    Connecting to PostgreSQL and reading information_schema...");
-            let db_tables = rust_ef_provider_postgres::introspection::introspect_postgres(connection)
+            let db_tables = rust_ef_postgres::introspection::introspect_postgres(connection)
                 .await
                 .map_err(|e| format!("Introspection failed: {}", e))?;
 
@@ -538,7 +538,7 @@ fn generate_db_context_code(tables: &[TableInfo]) -> String {
     format!(
         r#"use rust_ef::prelude::*;
 
-use rust_ef_provider_postgres::PostgresProvider;
+use rust_ef_postgres::PostgresProvider;
 
 {imports}
 pub struct DbContext {{

@@ -5,10 +5,10 @@
 # Publishes 6 crates in dependency order:
 #   1. rust-ef-macros                (leaf — no workspace deps)
 #   2. rust-ef                       (depends on rust-ef-macros)
-#   3. rust-ef-provider-postgres     (depends on rust-ef)
-#   4. rust-ef-provider-mysql        (depends on rust-ef)
-#   5. rust-ef-provider-sqlite       (depends on rust-ef)
-#   6. rust-ef-cli                   (depends on rust-ef + provider-postgres)
+#   3. rust-ef-postgres              (depends on rust-ef)
+#   4. rust-ef-mysql                 (depends on rust-ef)
+#   5. rust-ef-sqlite                (depends on rust-ef)
+#   6. rust-ef-cli                   (depends on rust-ef + rust-ef-postgres)
 #
 # Usage:
 #   sh scripts/publish.sh                 # Dry-run: check + test + package
@@ -17,7 +17,7 @@
 #
 # Note: crates.io resolves path+version deps against the registry,
 # so publishing must happen in strict order with index-update delays.
-# The dry-run packages lref-macros only (it has no workspace deps).
+# The dry-run packages rust-ef-macros only (it has no workspace deps).
 # =============================================================================
 
 set -e
@@ -73,7 +73,7 @@ fi
 # ── Step 1: Verify ──────────────────────────────────────────────────────────
 
 echo "${GREEN}[verify]${NC} Checking workspace compiles..."
-cargo check -p rust-ef -p rust-ef-macros -p rust-ef-provider-postgres -p rust-ef-provider-mysql -p rust-ef-provider-sqlite 2>/dev/null
+cargo check -p rust-ef -p rust-ef-macros -p rust-ef-postgres -p rust-ef-mysql -p rust-ef-sqlite 2>/dev/null
 echo "  OK"
 
 echo "${GREEN}[verify]${NC} Running tests..."
@@ -93,7 +93,7 @@ else
 fi
 echo ""
 
-# ── Step 3: Publish lref ───────────────────────────────────────────────────
+# ── Step 3: Publish rust-ef ─────────────────────────────────────────────────
 
 echo "${GREEN}[2/6]${NC} ${YELLOW}rust-ef${NC} (needs rust-ef-macros on crates.io)"
 if $DRY_RUN; then
@@ -107,8 +107,8 @@ echo ""
 
 # ── Step 4: Publish providers ───────────────────────────────────────────────
 
-for crate in rust-ef-provider-postgres rust-ef-provider-mysql rust-ef-provider-sqlite; do
-    NUM=$(echo "rust-ef-provider-postgres rust-ef-provider-mysql rust-ef-provider-sqlite" | tr ' ' '\n' | grep -n "$crate" | cut -d: -f1)
+for crate in rust-ef-postgres rust-ef-mysql rust-ef-sqlite; do
+    NUM=$(echo "rust-ef-postgres rust-ef-mysql rust-ef-sqlite" | tr ' ' '\n' | grep -n "$crate" | cut -d: -f1)
     STEP=$((2 + NUM))
     echo "${GREEN}[${STEP}/6]${NC} ${YELLOW}${crate}${NC} (needs rust-ef on crates.io)"
     if $DRY_RUN; then
@@ -121,7 +121,7 @@ done
 
 # ── Step 5: Publish cli ─────────────────────────────────────────────────────
 
-echo "${GREEN}[6/6]${NC} ${YELLOW}rust-ef-cli${NC} (needs rust-ef + provider-postgres on crates.io)"
+echo "${GREEN}[6/6]${NC} ${YELLOW}rust-ef-cli${NC} (needs rust-ef + rust-ef-postgres on crates.io)"
 if $DRY_RUN; then
     echo "  (skipped — requires rust-ef published first)"
 else
@@ -133,7 +133,7 @@ fi
 echo ""
 echo "${GREEN}============================================${NC}"
 if $DRY_RUN; then
-    echo "${GREEN}  Workspace compiles, tests pass, lref-macros packages OK.${NC}"
+    echo "${GREEN}  Workspace compiles, tests pass, rust-ef-macros packages OK.${NC}"
     echo ""
     echo "  To publish (in dependency order):"
     echo "    sh scripts/publish.sh --execute --allow-dirty"
