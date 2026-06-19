@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "mysql", "database"]
 categories = ["database"]
 
 [dependencies]
-rust-ef = { version = "0.3.3", path = "../rust-ef" }
+rust-ef = { version = "0.3.4", path = "../rust-ef" }
 async-trait = "0.1"
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }
 tokio = { version = "1", features = ["full"] }

@@ -22,7 +22,7 @@ pub struct Blog {
 }
 
 // DI registration
-use lrdi::ServiceCollection;
+use rust_dicore::ServiceCollection;
 use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
@@ -50,7 +50,7 @@ lref/src/
 ├── tracking.rs     — ChangeTracker (property-level snapshots)
 ├── relations.rs    — BelongsTo, HasMany, HasOne (no trait bounds)
 ├── migration.rs    — MigrationEngine
-├── di.rs           — lrdi integration (add_dbcontext / FromDbContextOptions)
+├── di.rs           — rust-dicore integration (add_dbcontext / FromDbContextOptions)
 ├── cache.rs        — DbCache (Identity Map)
 └── error.rs        — LrefError, LrefResult
 ```
@@ -130,7 +130,7 @@ pub trait IDatabaseProvider: Send + Sync {
 ## DI Integration
 
 ```rust
-use lrdi::ServiceCollection;
+use rust_dicore::ServiceCollection;
 use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 

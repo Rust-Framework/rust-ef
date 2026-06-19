@@ -6,14 +6,14 @@
 //
 // Multi-DB: use add_dbcontext_keyed::<DbContext>("key", |o| ...).
 
-use lrdi::ServiceCollection;
-use lref::di::*;                                  // DbContextServiceCollectionExt
-use lref::db_context::DbContext;
-use lref_provider_sqlite::DbContextOptionsBuilderExt as _;  // .use_sqlite()
-// use lref_provider_postgres::DbContextOptionsBuilderExt as _; // .use_postgres()
-// use lref_provider_mysql::DbContextOptionsBuilderExt as _;    // .use_mysql()
+use rust_dicore::ServiceCollection;
+use rust_ef::di::*;                                  // DbContextServiceCollectionExt
+use rust_ef::db_context::DbContext;
+use rust_ef_provider_sqlite::DbContextOptionsBuilderExt as _;  // .use_sqlite()
+// use rust_ef_postgres::DbContextOptionsBuilderExt as _; // .use_postgres()
+// use rust_ef_mysql::DbContextOptionsBuilderExt as _;    // .use_mysql()
 
-fn build_provider() -> lrdi::ServiceProvider {
+fn build_provider() -> rust_dicore::ServiceProvider {
     ServiceCollection::new()
         // --- Register additional services (optional) ---
         // .singleton(|_| Arc::new(Logger::new()))

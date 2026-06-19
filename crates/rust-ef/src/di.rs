@@ -1,11 +1,11 @@
-//! DI integration — `AddDbContext<T>` on `lrdi`, interface-oriented.
+//! DI integration — `AddDbContext<T>` on `rust-dicore`, interface-oriented.
 //!
 //! Supports single-context (default) and multi-context (keyed) registration.
 //!
 //! # Single database (recommended)
 //!
 //! ```rust,ignore
-//! use lrdi::ServiceCollection;
+//! use rust_dicore::ServiceCollection;
 //! use rust_ef::di::*;
 //! use rust_ef::db_context::DbContext;
 //! use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
@@ -43,7 +43,7 @@ use crate::db_context::{DbContext, DbContextOptions, DbContextOptionsBuilder, ID
 use std::sync::Arc;
 
 /// Adds `add_dbcontext`, `add_dbcontext_keyed`, and
-/// `add_dbcontext_from_options` to `lrdi::ServiceCollection`.
+/// `add_dbcontext_from_options` to `rust_dicore::ServiceCollection`.
 pub trait DbContextServiceCollectionExt {
     /// Registers a `DbContext` as transient with default key.
     ///
@@ -81,7 +81,7 @@ pub trait DbContextServiceCollectionExt {
         T: IDbContext + FromDbContextOptions + 'static;
 }
 
-impl DbContextServiceCollectionExt for ::lrdi::ServiceCollection {
+impl DbContextServiceCollectionExt for ::rust_dicore::ServiceCollection {
     fn add_dbcontext<T, F>(self, configure: F) -> Self
     where
         T: IDbContext + FromDbContextOptions + 'static,
@@ -136,4 +136,4 @@ impl FromDbContextOptions for DbContext {
     }
 }
 
-pub use lrdi::{ServiceCollection, ServiceProvider};
+pub use rust_dicore::{ServiceCollection, ServiceProvider};

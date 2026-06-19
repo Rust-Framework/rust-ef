@@ -6,12 +6,13 @@ members = [
     "crates/rust-ef-mysql",
     "crates/rust-ef-sqlite",
     "crates/rust-ef-cli",
+    "crates/rust-dicore",
     "examples/blog",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 license = "MIT"
 repository = "https://gitcode.com/rf2026/rust-ef"

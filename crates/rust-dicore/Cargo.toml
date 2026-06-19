@@ -1,0 +1,15 @@
+[package]
+name = "rust-dicore"
+version = "0.2.6"
+edition = "2021"
+description = "A Rust dependency injection framework inspired by Microsoft.Extensions.DependencyInjection"
+readme = "README.md"
+keywords = ["di", "dependency-injection", "ioc", "service-provider"]
+categories = ["rust-patterns", "asynchronous"]
+license = "MIT"
+repository = "https://gitcode.com/rf2026/rust-dicore"
+
+[dependencies]
+rust-dicore-macros = "0.2.6"
+inventory = "0.3"
+thiserror = "1"

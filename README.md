@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/rust-ef)](https://crates.io/crates/rust-ef)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Interface-oriented, EFCore-inspired ORM for Rust — `IDbContext` / `IDbSet<T>` / `IEntityType` with lrdi DI integration.
+Interface-oriented, EFCore-inspired ORM for Rust — `IDbContext` / `IDbSet<T>` / `IEntityType` with rust-dicore DI integration.
 
 ---
 
@@ -13,7 +13,7 @@ Interface-oriented, EFCore-inspired ORM for Rust — `IDbContext` / `IDbSet<T>` 
 [dependencies]
 rust-ef = "0.3"
 rust-ef-sqlite = "0.3"
-lrdi = "0.2"
+rust-dicore = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -45,7 +45,7 @@ pub struct Post {
 ### DI Registration + Usage (Single DB)
 
 ```rust
-use lrdi::ServiceCollection;
+use rust_dicore::ServiceCollection;
 use rust_ef::di::*;
 use rust_ef::db_context::DbContext;
 use rust_ef_provider_sqlite::DbContextOptionsBuilderExt as _;
@@ -113,7 +113,7 @@ impl ISaveChangesInterceptor for AuditInterceptor {
 
 ```
 User Application
-    ├── lrdi (DI container — resolves Arc<dyn IDbContext>)
+    ├── rust-dicore (DI container — resolves Arc<dyn IDbContext>)
     │     ├── provider.get()           — default registration
     │     └── provider.get_keyed("k")  — keyed registration
     └── rust-ef (ORM)

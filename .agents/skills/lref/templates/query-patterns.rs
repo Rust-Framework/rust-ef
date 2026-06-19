@@ -2,7 +2,7 @@
 //
 // All queries start with: ctx.set::<Entity>().query()
 
-use lref::prelude::*;
+use rust_ef::prelude::*;
 
 async fn query_examples(ctx: &mut DbContext) -> Result<(), LrefError> {
     // === Basic filtering ===

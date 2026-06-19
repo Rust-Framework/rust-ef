@@ -4,9 +4,9 @@
 // Access via ctx.set::<Entity>() — lazy-creates DbSet on first call.
 // save_changes() auto-discovers all entity types via SetOps dispatchers.
 
-use lref::prelude::*;
-use lref::db_context::{DbContext, DbContextOptions};
-use lref_provider_sqlite::SqliteProvider; // or postgres / mysql
+use rust_ef::prelude::*;
+use rust_ef::db_context::{DbContext, DbContextOptions};
+use rust_ef_sqlite::SqliteProvider; // or postgres / mysql
 use std::sync::Arc;
 
 #[tokio::main]
@@ -23,8 +23,8 @@ async fn main() -> Result<(), LrefError> {
     // let mut ctx = DbContext { ... }; // internal fields are not public
 
     // --- 3. Run migration (CREATE TABLE) ---
-    let engine = lref::migration::MigrationEngine::new(
-        lref::migration::MigrationDialect::Sqlite
+    let engine = rust_ef::migration::MigrationEngine::new(
+        rust_ef::migration::MigrationDialect::Sqlite
     );
     let metas = vec![Blog::entity_meta(), Post::entity_meta()];
     let migration = engine.generate("InitialCreate", &metas, &None)?;

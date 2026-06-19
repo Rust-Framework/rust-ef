@@ -1,7 +1,7 @@
 // Template: lref entity definition
 // Copy and modify for each entity type in your application.
 
-use lref::prelude::*;
+use rust_ef::prelude::*;
 
 // --- Primary entity ---
 
