@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "sqlite", "database"]
 categories = ["database"]
 
 [dependencies]
-rust-ef = { version = "0.3.4", path = "../rust-ef" }
+rust-ef = { version = "0.3.5", path = "../rust-ef" }
 async-trait = "0.1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }

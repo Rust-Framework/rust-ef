@@ -2,13 +2,12 @@
 # =============================================================================
 # rust-ef crates.io publishing script
 #
-# Publishes 6 crates in dependency order:
+# Publishes 5 crates in dependency order:
 #   1. rust-ef-macros                (leaf — no workspace deps)
 #   2. rust-ef                       (depends on rust-ef-macros)
 #   3. rust-ef-postgres              (depends on rust-ef)
 #   4. rust-ef-mysql                 (depends on rust-ef)
 #   5. rust-ef-sqlite                (depends on rust-ef)
-#   6. rust-ef-cli                   (depends on rust-ef + rust-ef-postgres)
 #
 # Usage:
 #   sh scripts/publish.sh                 # Dry-run: check + test + package
@@ -64,7 +63,7 @@ if $DRY_RUN; then
     echo ""
 else
     printf "${RED}=== LIVE PUBLISH v%s ===${NC}\n" "$VERSION"
-    printf "  This will publish 6 crates to crates.io. Continue? [y/N] "
+    printf "  This will publish 5 crates to crates.io. Continue? [y/N] "
     read -r CONFIRM
     case $CONFIRM in [yY]*) ;; *) echo "  Aborted."; exit 0 ;; esac
     echo ""
@@ -83,7 +82,7 @@ echo ""
 
 # ── Step 2: Publish leaf crate ──────────────────────────────────────────────
 
-echo "${GREEN}[1/6]${NC} ${YELLOW}rust-ef-macros${NC} (leaf — no workspace deps)"
+echo "${GREEN}[1/5]${NC} ${YELLOW}rust-ef-macros${NC} (leaf — no workspace deps)"
 if $DRY_RUN; then
     cargo publish --dry-run $ALLOW_DIRTY -p rust-ef-macros
 else
@@ -95,7 +94,7 @@ echo ""
 
 # ── Step 3: Publish rust-ef ─────────────────────────────────────────────────
 
-echo "${GREEN}[2/6]${NC} ${YELLOW}rust-ef${NC} (needs rust-ef-macros on crates.io)"
+echo "${GREEN}[2/5]${NC} ${YELLOW}rust-ef${NC} (needs rust-ef-macros on crates.io)"
 if $DRY_RUN; then
     echo "  (skipped — requires rust-ef-macros published first)"
 else
@@ -107,10 +106,14 @@ echo ""
 
 # ── Step 4: Publish providers ───────────────────────────────────────────────
 
-for crate in rust-ef-postgres rust-ef-mysql rust-ef-sqlite; do
-    NUM=$(echo "rust-ef-postgres rust-ef-mysql rust-ef-sqlite" | tr ' ' '\n' | grep -n "$crate" | cut -d: -f1)
-    STEP=$((2 + NUM))
-    echo "${GREEN}[${STEP}/6]${NC} ${YELLOW}${crate}${NC} (needs rust-ef on crates.io)"
+for i in 1 2 3; do
+    case $i in
+        1) crate="rust-ef-postgres" ;;
+        2) crate="rust-ef-mysql" ;;
+        3) crate="rust-ef-sqlite" ;;
+    esac
+    STEP=$((2 + i))
+    echo "${GREEN}[${STEP}/5]${NC} ${YELLOW}${crate}${NC} (needs rust-ef on crates.io)"
     if $DRY_RUN; then
         echo "  (skipped — requires rust-ef published first)"
     else
@@ -118,15 +121,6 @@ for crate in rust-ef-postgres rust-ef-mysql rust-ef-sqlite; do
     fi
     echo ""
 done
-
-# ── Step 5: Publish cli ─────────────────────────────────────────────────────
-
-echo "${GREEN}[6/6]${NC} ${YELLOW}rust-ef-cli${NC} (needs rust-ef + rust-ef-postgres on crates.io)"
-if $DRY_RUN; then
-    echo "  (skipped — requires rust-ef published first)"
-else
-    cargo publish $ALLOW_DIRTY -p rust-ef-cli
-fi
 
 # ── Done ────────────────────────────────────────────────────────────────────
 
@@ -138,6 +132,6 @@ if $DRY_RUN; then
     echo "  To publish (in dependency order):"
     echo "    sh scripts/publish.sh --execute --allow-dirty"
 else
-    echo "${GREEN}  All crates published to crates.io!${NC}"
+    echo "${GREEN}  All 5 crates published to crates.io!${NC}"
 fi
 echo "${GREEN}============================================${NC}"
