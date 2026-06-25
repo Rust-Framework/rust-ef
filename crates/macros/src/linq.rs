@@ -178,11 +178,10 @@ fn parse_value_index_or_key(
     input: syn::parse::ParseStream,
     kind: ValueKind,
 ) -> syn::Result<ValueInput> {
-    let keyword: Ident = input.parse()?;
-    let kw_str = keyword.to_string();
+    let _keyword: Ident = input.parse()?;
 
     let _open: Token![|] = input.parse()?;
-    let param: Ident = input.parse()?;
+    let _param: Ident = input.parse()?;
     let _colon: Token![:] = input.parse()?;
     let entity: Type = input.parse()?;
     let _close: Token![|] = input.parse()?;
@@ -191,17 +190,10 @@ fn parse_value_index_or_key(
 
     // The param is consumed but unused for field extraction context —
     // we resolve fields against `entity` directly.
-    let _ = param;
-
     match kind {
         ValueKind::Index => Ok(ValueInput::Index { entity, fields }),
         ValueKind::Key => Ok(ValueInput::Key { entity, fields }),
     }
-    .map(|v| {
-        // Suppress unused warning
-        let _ = kw_str;
-        v
-    })
 }
 
 /// Parses a single field `b.col` or a tuple `(b.col1, b.col2, ...)`.
@@ -339,12 +331,16 @@ fn source_entity_type(expr: &Expr) -> syn::Result<Type> {
     loop {
         match current {
             Expr::MethodCall(call) => {
-                if let Some(turbofish) = &call.turbofish {
-                    if let Some(arg) = turbofish.args.first() {
-                        if let syn::GenericArgument::Type(ty) = arg {
-                            return Ok(ty.clone());
-                        }
-                    }
+                if let Some(ty) = call
+                    .turbofish
+                    .as_ref()
+                    .and_then(|tf| tf.args.first())
+                    .and_then(|arg| match arg {
+                        syn::GenericArgument::Type(ty) => Some(ty.clone()),
+                        _ => None,
+                    })
+                {
+                    return Ok(ty);
                 }
                 current = &call.receiver;
             }
