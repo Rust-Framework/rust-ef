@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod advanced_tests {
     use rust_ef::entity::EntityState;
-    use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
+    use rust_ef::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
 
     fn make_pk_col(name: &'static str, fk: bool) -> PropertyMeta {
@@ -154,6 +154,98 @@ mod advanced_tests {
     }
 
     #[test]
+    fn test_foreign_key_migration_from_navigation() {
+        let engine = MigrationEngine::new(MigrationDialect::Sqlite);
+        let blog_meta = EntityTypeMeta {
+            type_id: std::any::TypeId::of::<i32>(),
+            type_name: std::borrow::Cow::Borrowed("Blog"),
+            table_name: std::borrow::Cow::Borrowed("blogs"),
+            properties: vec![PropertyMeta {
+                field_name: std::borrow::Cow::Borrowed("blog_id"),
+                column_name: std::borrow::Cow::Borrowed("blog_id"),
+                type_id: std::any::TypeId::of::<i32>(),
+                type_name: std::borrow::Cow::Borrowed("i32"),
+                is_primary_key: true,
+                is_auto_increment: true,
+                is_required: true,
+                is_foreign_key: false,
+                is_concurrency_token: false,
+                max_length: None,
+                is_unique: false,
+                has_index: false,
+                is_not_mapped: false,
+            }],
+            navigations: vec![],
+            primary_keys: vec![std::borrow::Cow::Borrowed("blog_id")],
+        };
+        let post_meta = EntityTypeMeta {
+            type_id: std::any::TypeId::of::<i64>(),
+            type_name: std::borrow::Cow::Borrowed("Post"),
+            table_name: std::borrow::Cow::Borrowed("posts"),
+            properties: vec![
+                PropertyMeta {
+                    field_name: std::borrow::Cow::Borrowed("post_id"),
+                    column_name: std::borrow::Cow::Borrowed("post_id"),
+                    type_id: std::any::TypeId::of::<i32>(),
+                    type_name: std::borrow::Cow::Borrowed("i32"),
+                    is_primary_key: true,
+                    is_auto_increment: true,
+                    is_required: true,
+                    is_foreign_key: false,
+                    is_concurrency_token: false,
+                    max_length: None,
+                    is_unique: false,
+                    has_index: false,
+                    is_not_mapped: false,
+                },
+                PropertyMeta {
+                    field_name: std::borrow::Cow::Borrowed("blog_id"),
+                    column_name: std::borrow::Cow::Borrowed("blog_id"),
+                    type_id: std::any::TypeId::of::<i32>(),
+                    type_name: std::borrow::Cow::Borrowed("i32"),
+                    is_primary_key: false,
+                    is_auto_increment: false,
+                    is_required: true,
+                    is_foreign_key: true,
+                    is_concurrency_token: false,
+                    max_length: None,
+                    is_unique: false,
+                    has_index: false,
+                    is_not_mapped: false,
+                },
+            ],
+            navigations: vec![NavigationMeta {
+                field_name: std::borrow::Cow::Borrowed("blog"),
+                kind: NavigationKind::BelongsTo,
+                related_type_id: std::any::TypeId::of::<i32>(),
+                related_type_name: std::borrow::Cow::Borrowed("Blog"),
+                foreign_key_field: Some(std::borrow::Cow::Borrowed("blog_id")),
+                inverse_navigation: None,
+                through_type_id: None,
+                through_table: None,
+                through_parent_fk: None,
+                through_related_fk: None,
+                through_parent_fk_index: 0,
+                through_related_fk_index: 0,
+                related_table: Some(std::borrow::Cow::Borrowed("blogs")),
+                fk_column: Some(std::borrow::Cow::Borrowed("blog_id")),
+                referenced_key_column: Some(std::borrow::Cow::Borrowed("blog_id")),
+                fk_row_index: 1,
+                pk_row_index: 0,
+                related_entity_meta: None,
+            }],
+            primary_keys: vec![std::borrow::Cow::Borrowed("post_id")],
+        };
+
+        let migration = engine
+            .generate("Initial", &[blog_meta, post_meta], &None)
+            .unwrap();
+        assert!(migration.up_sql.contains("CREATE TABLE"));
+        assert!(migration.up_sql.contains("FOREIGN KEY"));
+        assert!(migration.up_sql.contains("fk_posts_blog_id_blogs"));
+    }
+
+    #[test]
     fn test_change_tracker_states() {
         let mut tracker = rust_ef::tracking::ChangeTracker::new();
         let type_id = std::any::TypeId::of::<i32>();
@@ -162,19 +254,5 @@ mod advanced_tests {
         assert_eq!(tracker.count_by_state(EntityState::Added), 1);
         tracker.accept_all_changes();
         assert!(!tracker.has_changes());
-    }
-
-    #[test]
-    fn test_cache_operations() {
-        use rust_ef::cache::DbCache;
-        let mut cache = DbCache::new();
-        assert!(cache.is_empty());
-        let type_id = std::any::TypeId::of::<String>();
-        cache.store(type_id, "key1", "value1".to_string());
-        assert_eq!(cache.len(), 1);
-        let retrieved: &String = cache.get(type_id, "key1").expect("should be in cache");
-        assert_eq!(retrieved, "value1");
-        cache.remove(type_id, "key1");
-        assert!(cache.is_empty());
     }
 }

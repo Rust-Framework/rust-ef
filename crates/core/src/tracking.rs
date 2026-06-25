@@ -1,4 +1,4 @@
-//! Change tracking — entity state management, snapshots, and detection.
+//! Change tracking �?entity state management, snapshots, and detection.
 //!
 //! Implements EFCore's change-tracking semantics:
 //!   - Entity states: Detached | Added | Unchanged | Modified | Deleted
@@ -68,7 +68,7 @@ impl ChangeTracker {
 
     /// Takes a snapshot of the entity's current properties and begins tracking.
     ///
-    /// The `snapshotter` closure should return a map of property-name → string
+    /// The `snapshotter` closure should return a map of property-name �?string
     /// serialization of the property's current value.
     pub fn track_entity_with_snapshot(
         &mut self,
@@ -108,8 +108,6 @@ impl ChangeTracker {
     /// Compares current property values (provided by the caller) against the
     /// stored snapshots. Any property whose value differs is marked as modified,
     /// and the entity transitions to `EntityState::Modified`.
-    ///
-    /// This is the core of EFCore's `DetectChanges()`.
     pub fn detect_changes_with_properties(
         &mut self,
         current_properties: &[(u64, HashMap<String, String>)],
@@ -151,15 +149,6 @@ impl ChangeTracker {
                 .map(|(k, v)| (k, PropertySnapshot { serialized: v }))
                 .collect();
         }
-    }
-
-    /// Detects changes using no-op logic (used when auto-detect-changes runs but
-    /// no property map is available).
-    pub fn detect_changes(&mut self) {
-        // Without property access, we can only check state transitions
-        // performed explicitly via DbSet operations (add/remove/attach).
-        // The property-level comparison requires calling
-        // detect_changes_with_properties().
     }
 
     /// Returns whether any tracked entity has changes pending.
@@ -205,9 +194,9 @@ impl ChangeTracker {
     }
 
     /// After successful SaveChanges:
-    /// - Added → Unchanged (save snapshot)
-    /// - Modified → Unchanged (save current as new snapshot)
-    /// - Deleted → Detached (removed from tracker)
+    /// - Added �?Unchanged (save snapshot)
+    /// - Modified �?Unchanged (save current as new snapshot)
+    /// - Deleted �?Detached (removed from tracker)
     pub fn accept_all_changes(&mut self) {
         self.entries.retain(|e| e.state != EntityState::Deleted);
         for entry in &mut self.entries {
@@ -248,7 +237,7 @@ impl Default for ChangeTracker {
 }
 
 // ---------------------------------------------------------------------------
-// TrackedEntity — generic container for tracked entities
+// TrackedEntity �?generic container for tracked entities
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]

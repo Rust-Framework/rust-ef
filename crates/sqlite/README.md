@@ -17,7 +17,7 @@ Implements `DatabaseProvider`, `SqlGenerator`, and `AsyncConnection` traits for 
 - SQLite-native parameterized queries (`?`)
 - Double-quoted identifier quoting (`"table_name"`)
 - Full CRUD, transactions, `AUTOINCREMENT`
-- Bundled SQLite (`features = ["bundled"]`) — no system SQLite required
+- Bundled SQLite (`features = ["bundled"]`)  - ?no system SQLite required
 
 ---
 
@@ -67,7 +67,7 @@ use lref_provider_sqlite::SqliteProvider;
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> Result<(), LrefError> {
+async fn main() -> Result<(), EfError> {
     let provider = Arc::new(SqliteProvider::new_in_memory()?);
 
     // Create table
@@ -106,4 +106,4 @@ async fn main() -> Result<(), LrefError> {
 
 ## License
 
-MIT — see [LICENSE](../../LICENSE)
+MIT  - ?see [LICENSE](../../LICENSE)

@@ -1,7 +1,7 @@
 //! SQLite provider for Rust Entity Framework.
 
 use async_trait::async_trait;
-use rust_ef::error::{LrefError, LrefResult};
+use rust_ef::error::{EfError, EfResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 use std::path::Path;
 use std::sync::Arc;
@@ -59,7 +59,7 @@ impl ISqlGenerator for SqliteSqlGenerator {
             .map(|c| format!("{} = ?", self.quote_identifier(c)))
             .collect();
         format!(
-            "UPDATE {} SET {} {}",
+            "UPDATE {} SET {} WHERE {}",
             self.quote_identifier(table),
             sets.join(", "),
             where_clause
@@ -67,7 +67,7 @@ impl ISqlGenerator for SqliteSqlGenerator {
     }
     fn delete(&self, table: &str, where_clause: &str) -> String {
         format!(
-            "DELETE FROM {} {}",
+            "DELETE FROM {} WHERE {}",
             self.quote_identifier(table),
             where_clause
         )
@@ -113,16 +113,16 @@ pub struct SqliteProvider {
 }
 
 impl SqliteProvider {
-    pub fn new(path: impl AsRef<Path>) -> LrefResult<Self> {
+    pub fn new(path: impl AsRef<Path>) -> EfResult<Self> {
         let conn = rusqlite::Connection::open(path)
-            .map_err(|e| LrefError::Connection(format!("SQLite open failed: {}", e)))?;
+            .map_err(|e| EfError::Connection(format!("SQLite open failed: {}", e)))?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")
-            .map_err(|e| LrefError::Connection(format!("SQLite WAL setup failed: {}", e)))?;
+            .map_err(|e| EfError::Connection(format!("SQLite WAL setup failed: {}", e)))?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
     }
-    pub fn new_in_memory() -> LrefResult<Self> {
+    pub fn new_in_memory() -> EfResult<Self> {
         Self::new(":memory:")
     }
 }
@@ -132,17 +132,20 @@ impl IDatabaseProvider for SqliteProvider {
     fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
         Box::new(SqliteSqlGenerator::new())
     }
-    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
+    async fn get_connection(&self) -> EfResult<Box<dyn IAsyncConnection>> {
         Ok(Box::new(SqliteConnection::new(self.conn.clone())))
     }
-    async fn execute_migration_command(&self, sql: &str) -> LrefResult<()> {
+    async fn execute_migration_command(&self, sql: &str) -> EfResult<()> {
         let conn = self.conn.lock().await;
         conn.execute_batch(sql)
-            .map_err(|e| LrefError::Migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| EfError::Migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
     fn name(&self) -> &str {
         "SQLite"
+    }
+    fn migration_dialect(&self) -> rust_ef::migration::MigrationDialect {
+        rust_ef::migration::MigrationDialect::Sqlite
     }
 }
 
@@ -169,7 +172,7 @@ impl SqliteConnection {
 
 #[async_trait]
 impl IAsyncConnection for SqliteConnection {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64> {
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64> {
         let conn = self.conn.lock().await;
         let rp = to_rusqlite_params(params);
         let refs: Vec<&dyn rusqlite::types::ToSql> = rp
@@ -178,9 +181,9 @@ impl IAsyncConnection for SqliteConnection {
             .collect();
         conn.execute(sql, refs.as_slice())
             .map(|c| c as u64)
-            .map_err(|e| LrefError::Query(format!("Execution error: {}", e)))
+            .map_err(|e| EfError::Query(format!("Execution error: {}", e)))
     }
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>> {
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>> {
         let conn = self.conn.lock().await;
         let rp = to_rusqlite_params(params);
         let refs: Vec<&dyn rusqlite::types::ToSql> = rp
@@ -189,7 +192,7 @@ impl IAsyncConnection for SqliteConnection {
             .collect();
         let mut stmt = conn
             .prepare(sql)
-            .map_err(|e| LrefError::Query(format!("Prepare error: {}", e)))?;
+            .map_err(|e| EfError::Query(format!("Prepare error: {}", e)))?;
         let cc = stmt.column_count();
         let rows = stmt
             .query_map(refs.as_slice(), |row| {
@@ -204,20 +207,20 @@ impl IAsyncConnection for SqliteConnection {
                 }
                 Ok(vals)
             })
-            .map_err(|e| LrefError::Query(format!("Query error: {}", e)))?;
+            .map_err(|e| EfError::Query(format!("Query error: {}", e)))?;
         let mut result = Vec::new();
         for row in rows {
-            result.push(row.map_err(|e| LrefError::Query(format!("Row read error: {}", e)))?);
+            result.push(row.map_err(|e| EfError::Query(format!("Row read error: {}", e)))?);
         }
         Ok(result)
     }
-    async fn begin_transaction(&mut self) -> LrefResult<()> {
+    async fn begin_transaction(&mut self) -> EfResult<()> {
         self.execute("BEGIN TRANSACTION", &[]).await.map(|_| ())
     }
-    async fn commit_transaction(&mut self) -> LrefResult<()> {
+    async fn commit_transaction(&mut self) -> EfResult<()> {
         self.execute("COMMIT", &[]).await.map(|_| ())
     }
-    async fn rollback_transaction(&mut self) -> LrefResult<()> {
+    async fn rollback_transaction(&mut self) -> EfResult<()> {
         self.execute("ROLLBACK", &[]).await.map(|_| ())
     }
 }
@@ -240,7 +243,7 @@ fn to_rusqlite_params(params: &[DbValue]) -> Vec<Box<dyn rusqlite::types::ToSql>
 }
 
 // ---------------------------------------------------------------------------
-// DbContextOptionsBuilder extension — .use_sqlite()
+// DbContextOptionsBuilder extension  - ?.use_sqlite()
 // ---------------------------------------------------------------------------
 
 pub trait DbContextOptionsBuilderExt {

@@ -6,10 +6,13 @@
 //! Also provides `DbContextOptionsBuilderExt` for EFCore-style configuration:
 //! `.use_mysql("mysql://user:pass@localhost/db")`
 
+pub mod introspection;
+
 use async_trait::async_trait;
-use rust_ef::error::{LrefError, LrefResult};
+use rust_ef::error::{EfError, EfResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 use sqlx::{Column, Row};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // MySQL SQL Generator
@@ -60,7 +63,7 @@ impl ISqlGenerator for MySqlSqlGenerator {
             .map(|c| format!("{} = ?", self.quote_identifier(c)))
             .collect();
         format!(
-            "UPDATE {} SET {} {}",
+            "UPDATE {} SET {} WHERE {}",
             self.quote_identifier(table),
             sets.join(", "),
             where_clause
@@ -69,7 +72,7 @@ impl ISqlGenerator for MySqlSqlGenerator {
 
     fn delete(&self, table: &str, where_clause: &str) -> String {
         format!(
-            "DELETE FROM {} {}",
+            "DELETE FROM {} WHERE {}",
             self.quote_identifier(table),
             where_clause
         )
@@ -124,16 +127,23 @@ pub struct MySqlProvider {
 
 impl MySqlProvider {
     /// Creates a new MySQL provider with a connection pool.
-    pub async fn new(connection_string: &str) -> LrefResult<Self> {
+    pub async fn new(connection_string: &str) -> EfResult<Self> {
         let pool = sqlx::MySqlPool::connect(connection_string)
             .await
-            .map_err(|e| LrefError::Connection(format!("MySQL connection failed: {}", e)))?;
+            .map_err(|e| EfError::Connection(format!("MySQL connection failed: {}", e)))?;
         Ok(Self { pool })
     }
 
     /// Creates a provider with an existing pool.
     pub fn from_pool(pool: sqlx::MySqlPool) -> Self {
         Self { pool }
+    }
+
+    /// Creates a provider from a lazy connection pool (sync  - ?for DI factory registration).
+    pub fn new_lazy(connection_string: &str) -> EfResult<Self> {
+        let pool = sqlx::MySqlPool::connect_lazy(connection_string)
+            .map_err(|e| EfError::Connection(format!("MySQL pool failed: {}", e)))?;
+        Ok(Self { pool })
     }
 }
 
@@ -143,26 +153,29 @@ impl IDatabaseProvider for MySqlProvider {
         Box::new(MySqlSqlGenerator::new())
     }
 
-    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
+    async fn get_connection(&self) -> EfResult<Box<dyn IAsyncConnection>> {
         let conn = self
             .pool
             .acquire()
             .await
-            .map_err(|e| LrefError::Connection(format!("Pool acquire failed: {}", e)))?;
+            .map_err(|e| EfError::Connection(format!("Pool acquire failed: {}", e)))?;
 
         Ok(Box::new(MySqlConnection::new(conn)))
     }
 
-    async fn execute_migration_command(&self, sql: &str) -> LrefResult<()> {
+    async fn execute_migration_command(&self, sql: &str) -> EfResult<()> {
         sqlx::query(sql)
             .execute(&self.pool)
             .await
-            .map_err(|e| LrefError::Migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| EfError::Migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
 
     fn name(&self) -> &str {
         "MySQL"
+    }
+    fn migration_dialect(&self) -> rust_ef::migration::MigrationDialect {
+        rust_ef::migration::MigrationDialect::MySql
     }
 }
 
@@ -191,27 +204,27 @@ impl MySqlConnection {
 
 #[async_trait]
 impl IAsyncConnection for MySqlConnection {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64> {
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64> {
         let conn = self
             .conn
             .as_mut()
-            .ok_or_else(|| LrefError::Connection("Connection already closed".to_string()))?;
+            .ok_or_else(|| EfError::Connection("Connection already closed".to_string()))?;
         let result = build_mysql_query(sql, params)
             .execute(&mut **conn)
             .await
-            .map_err(|e| LrefError::Query(format!("Execution error: {}", e)))?;
+            .map_err(|e| EfError::Query(format!("Execution error: {}", e)))?;
         Ok(result.rows_affected())
     }
 
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>> {
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>> {
         let conn = self
             .conn
             .as_mut()
-            .ok_or_else(|| LrefError::Connection("Connection already closed".to_string()))?;
+            .ok_or_else(|| EfError::Connection("Connection already closed".to_string()))?;
         let rows = build_mysql_query(sql, params)
             .fetch_all(&mut **conn)
             .await
-            .map_err(|e| LrefError::Query(format!("Query error: {}", e)))?;
+            .map_err(|e| EfError::Query(format!("Query error: {}", e)))?;
 
         if rows.is_empty() {
             return Ok(Vec::new());
@@ -240,15 +253,15 @@ impl IAsyncConnection for MySqlConnection {
         Ok(result)
     }
 
-    async fn begin_transaction(&mut self) -> LrefResult<()> {
+    async fn begin_transaction(&mut self) -> EfResult<()> {
         self.execute("START TRANSACTION", &[]).await.map(|_| ())
     }
 
-    async fn commit_transaction(&mut self) -> LrefResult<()> {
+    async fn commit_transaction(&mut self) -> EfResult<()> {
         self.execute("COMMIT", &[]).await.map(|_| ())
     }
 
-    async fn rollback_transaction(&mut self) -> LrefResult<()> {
+    async fn rollback_transaction(&mut self) -> EfResult<()> {
         self.execute("ROLLBACK", &[]).await.map(|_| ())
     }
 }
@@ -286,6 +299,13 @@ pub trait DbContextOptionsBuilderExt {
 
 impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder {
     fn use_mysql(&mut self, connection_string: &str) -> &mut Self {
-        self.set_provider("mysql", connection_string)
+        let cs = connection_string.to_string();
+        self.set_provider_factory(
+            "mysql",
+            &cs,
+            Arc::new(move |cs: &str| {
+                Ok(Arc::new(MySqlProvider::new_lazy(cs)?) as Arc<dyn IDatabaseProvider>)
+            }),
+        )
     }
 }

@@ -1,4 +1,4 @@
-# lref — Core ORM Crate
+# lref �?Core ORM Crate
 
 [![Crates.io](https://img.shields.io/crates/v/lref)](https://crates.io/crates/lref)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
@@ -39,20 +39,20 @@ let ctx: Arc<dyn IDbContext> = provider.get();
 
 ```
 lref/src/
-├── entity.rs       — IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
-├── metadata.rs     — EntityTypeMeta, PropertyMeta, NavigationMeta
-├── provider.rs     — IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
-├── db_context.rs   — IDbContext, IDbContextExt, DbContext, DbContextOptions
-├── db_set.rs       — IDbSet<T>, DbSet<T>
-├── query.rs        — IQueryable<T>, QueryBuilder<T>
-├── change_executor.rs — ChangeExecutor (INSERT/UPDATE/DELETE)
-├── model_builder.rs   — ModelBuilder, IEntityTypeConfiguration<T>
-├── tracking.rs     — ChangeTracker (property-level snapshots)
-├── relations.rs    — BelongsTo, HasMany, HasOne (no trait bounds)
-├── migration.rs    — MigrationEngine
-├── di.rs           — rust-dicore integration (add_dbcontext / FromDbContextOptions)
-├── cache.rs        — DbCache (Identity Map)
-└── error.rs        — LrefError, LrefResult
+├── entity.rs       �?IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
+├── metadata.rs     �?EntityTypeMeta, PropertyMeta, NavigationMeta
+├── provider.rs     �?IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
+├── db_context.rs   �?IDbContext, IDbContextExt, DbContext, DbContextOptions
+├── db_set.rs       �?IDbSet<T>, DbSet<T>
+├── query.rs        �?IQueryable<T>, QueryBuilder<T>
+├── change_executor.rs �?ChangeExecutor (INSERT/UPDATE/DELETE)
+├── model_builder.rs   �?ModelBuilder, IEntityTypeConfiguration<T>
+├── tracking.rs     �?ChangeTracker (property-level snapshots)
+├── relations.rs    �?BelongsTo, HasMany, HasOne (no trait bounds)
+├── migration.rs    �?MigrationEngine
+├── di.rs           �?rust-dicore integration (add_dbcontext / FromDbContextOptions)
+├── cache.rs        �?DbCache (Identity Map)
+└── error.rs        �?EfError, EfResult
 ```
 
 ---
@@ -63,7 +63,7 @@ lref/src/
 
 ```rust
 pub trait IEntityType: Send + Sync + 'static { fn entity_meta() -> EntityTypeMeta; }
-pub trait IFromRow: IEntityType + Sized { fn from_row(v: &[String]) -> LrefResult<Self>; }
+pub trait IFromRow: IEntityType + Sized { fn from_row(v: &[String]) -> EfResult<Self>; }
 pub trait IGetKeyValues: IEntityType { fn key_values(&self) -> HashMap<String, DbValue>; }
 pub trait IEntitySnapshot: IEntityType { fn snapshot(&self) -> HashMap<String, DbValue>; }
 ```
@@ -76,12 +76,12 @@ pub trait IDbContext: Send + Sync {
     fn provider(&self) -> &dyn IDatabaseProvider;
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
     fn change_tracker(&self) -> &ChangeTracker;
-    async fn save_changes(&mut self) -> LrefResult<SaveChangesResult>;
+    async fn save_changes(&mut self) -> EfResult<SaveChangesResult>;
 }
 
 #[async_trait]
 pub trait IDbContextExt: IDbContext {
-    async fn use_transaction<F, Fut, R>(&self, f: F) -> LrefResult<R>;
+    async fn use_transaction<F, Fut, R>(&self, f: F) -> EfResult<R>;
 }
 ```
 
@@ -109,18 +109,18 @@ pub trait ISqlGenerator: Send + Sync { /* select, insert, update, delete, ... */
 
 #[async_trait]
 pub trait IAsyncConnection: Send + Sync {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64>;
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>>;
-    async fn begin_transaction(&mut self) -> LrefResult<()>;
-    async fn commit_transaction(&mut self) -> LrefResult<()>;
-    async fn rollback_transaction(&mut self) -> LrefResult<()>;
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64>;
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>>;
+    async fn begin_transaction(&mut self) -> EfResult<()>;
+    async fn commit_transaction(&mut self) -> EfResult<()>;
+    async fn rollback_transaction(&mut self) -> EfResult<()>;
 }
 
 #[async_trait]
 pub trait IDatabaseProvider: Send + Sync {
     fn sql_generator(&self) -> Box<dyn ISqlGenerator>;
-    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>>;
-    async fn execute_migration_command(&self, sql: &str) -> LrefResult<()>;
+    async fn get_connection(&self) -> EfResult<Box<dyn IAsyncConnection>>;
+    async fn execute_migration_command(&self, sql: &str) -> EfResult<()>;
     fn name(&self) -> &str;
 }
 ```
@@ -141,7 +141,7 @@ let provider = ServiceCollection::new()
 let ctx: Arc<dyn IDbContext> = provider.get();
 ```
 
-**Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider — core stays fully decoupled.
+**Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider �?core stays fully decoupled.
 
 ---
 

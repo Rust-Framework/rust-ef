@@ -1,7 +1,7 @@
-// Template: DbContext usage — type-map pattern, no entity-specific fields.
+// Template: DbContext usage  - ?type-map pattern, no entity-specific fields.
 //
 // DbContext stores entity sets in a HashMap<TypeId, Box<dyn Any>>.
-// Access via ctx.set::<Entity>() — lazy-creates DbSet on first call.
+// Access via ctx.set::<Entity>()  - ?lazy-creates DbSet on first call.
 // save_changes() auto-discovers all entity types via SetOps dispatchers.
 
 use rust_ef::prelude::*;
@@ -10,7 +10,7 @@ use rust_ef_sqlite::SqliteProvider; // or postgres / mysql
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> Result<(), LrefError> {
+async fn main() -> Result<(), EfError> {
     // --- 1. Create provider and options ---
     let provider = Arc::new(SqliteProvider::new("data source=app.db")?);
 

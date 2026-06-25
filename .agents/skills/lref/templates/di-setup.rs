@@ -9,7 +9,7 @@
 use rust_dicore::ServiceCollection;
 use rust_ef::di::*;                                  // DbContextServiceCollectionExt
 use rust_ef::db_context::DbContext;
-use rust_ef_provider_sqlite::DbContextOptionsBuilderExt as _;  // .use_sqlite()
+use rust_ef_sqlite::DbContextOptionsBuilderExt as _;  // .use_sqlite()
 // use rust_ef_postgres::DbContextOptionsBuilderExt as _; // .use_postgres()
 // use rust_ef_mysql::DbContextOptionsBuilderExt as _;    // .use_mysql()
 

@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rust-ef = { path = "../../crates/rust-ef" }
-rust-ef-postgres = { path = "../../crates/rust-ef-postgres" }
+rust-ef = { path = "../../crates/core" }
+rust-ef-sqlite = { path = "../../crates/sqlite" }
 tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"

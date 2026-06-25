@@ -1,8 +1,8 @@
-//! DbContext trait, DbContextOptions, and ChangeTracker — the session / unit-of-work layer.
+//! DbContext trait, DbContextOptions, and ChangeTracker ??the session / unit-of-work layer.
 //!
 //! ## Architecture
 //!
-//! `IDbContext` is object-safe — no `Sized`, no associated type, no generic methods.
+//! `IDbContext` is object-safe ??no `Sized`, no associated type, no generic methods.
 //! This enables `dyn IDbContext` resolution from DI containers.
 //!
 //! Entity sets use a type-map: `ctx.set::<Blog>()` lazy-creates `DbSet<Blog>`.
@@ -15,12 +15,14 @@
 //! `DbContext::from_options()` calls this factory to create the provider.
 
 use crate::change_executor::ChangeExecutor;
-use crate::db_set::{DbSet, IDbSet};
-use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
-use crate::error::LrefResult;
+use crate::db_set::DbSet;
+use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use crate::error::{EfError, EfResult};
 use crate::interceptor::{InterceptorPipeline, SaveChangesContext, SaveChangesResultContext};
 use crate::metadata::EntityTypeMeta;
-use crate::provider::{IAsyncConnection, IDatabaseProvider};
+use crate::migration::MigrationEngine;
+use crate::model_builder::ModelBuilder;
+use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
 use crate::tracking::ChangeTracker;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -36,7 +38,7 @@ pub struct DbContextOptions {
     pub(crate) connection_string: String,
     pub(crate) provider_tag: Option<String>,
     pub(crate) provider_factory:
-        Option<Arc<dyn Fn(&str) -> LrefResult<Arc<dyn IDatabaseProvider>> + Send + Sync>>,
+        Option<Arc<dyn Fn(&str) -> EfResult<Arc<dyn IDatabaseProvider>> + Send + Sync>>,
     pub(crate) interceptors: Vec<Arc<dyn crate::interceptor::ISaveChangesInterceptor>>,
 }
 
@@ -56,9 +58,9 @@ impl DbContextOptions {
     pub fn provider_tag(&self) -> Option<&str> {
         self.provider_tag.as_deref()
     }
-    pub fn create_provider(&self) -> LrefResult<Arc<dyn IDatabaseProvider>> {
+    pub fn create_provider(&self) -> EfResult<Arc<dyn IDatabaseProvider>> {
         let factory = self.provider_factory.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider configured. Call use_sqlite / use_postgres / use_mysql first.".into(),
             )
         })?;
@@ -100,7 +102,7 @@ impl DbContextOptionsBuilder {
         &mut self,
         tag: &str,
         cs: impl Into<String>,
-        factory: Arc<dyn Fn(&str) -> LrefResult<Arc<dyn IDatabaseProvider>> + Send + Sync>,
+        factory: Arc<dyn Fn(&str) -> EfResult<Arc<dyn IDatabaseProvider>> + Send + Sync>,
     ) -> &mut Self {
         self.inner.provider_tag = Some(tag.to_string());
         self.inner.connection_string = cs.into();
@@ -150,7 +152,8 @@ trait ErasedSetOps: Send + Sync {
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
-    ) -> LrefResult<(usize, usize, usize)>;
+    ) -> EfResult<(usize, usize, usize)>;
+    fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync));
     fn clear(&self, raw_set: &mut (dyn Any + Send + Sync + 'static));
 }
 
@@ -168,18 +171,23 @@ impl<E> SetOps<E> {
 #[async_trait::async_trait]
 impl<E> ErasedSetOps for SetOps<E>
 where
-    E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow + Send + Sync + 'static,
+    E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow + INavigationSetter + Send + Sync + 'static,
 {
     async fn save(
         &self,
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
-    ) -> LrefResult<(usize, usize, usize)> {
+    ) -> EfResult<(usize, usize, usize)> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
             .expect("SetOps type mismatch");
         save_one_set(conn, provider, db_set).await
+    }
+    fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync)) {
+        if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
+            db_set.detect_changes();
+        }
     }
     fn clear(&self, raw_set: &mut (dyn Any + Send + Sync + 'static)) {
         if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
@@ -195,6 +203,8 @@ where
 pub struct DbContext {
     sets: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     savers: HashMap<TypeId, Box<dyn ErasedSetOps>>,
+    entity_metas: HashMap<TypeId, EntityTypeMeta>,
+    model_builder: ModelBuilder,
     change_tracker: ChangeTracker,
     provider: Arc<dyn IDatabaseProvider>,
     interceptor_pipeline: InterceptorPipeline,
@@ -202,11 +212,13 @@ pub struct DbContext {
 
 impl DbContext {
     /// Creates the context from options (uses the provider factory stored in options).
-    pub fn from_options(options: &DbContextOptions) -> LrefResult<Self> {
+    pub fn from_options(options: &DbContextOptions) -> EfResult<Self> {
         let provider = options.create_provider()?;
         Ok(Self {
             sets: HashMap::new(),
             savers: HashMap::new(),
+            entity_metas: HashMap::new(),
+            model_builder: ModelBuilder::new(),
             change_tracker: ChangeTracker::new(),
             provider,
             interceptor_pipeline: InterceptorPipeline::new(options.interceptors.clone()),
@@ -215,28 +227,101 @@ impl DbContext {
 
     pub fn set<T>(&mut self) -> &mut DbSet<T>
     where
-        T: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow + Send + Sync + 'static,
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
     {
         let type_id = TypeId::of::<T>();
         self.savers
             .entry(type_id)
             .or_insert_with(|| Box::new(SetOps::<T>::new()));
+        self.entity_metas
+            .entry(type_id)
+            .or_insert_with(T::entity_meta);
         self.sets.entry(type_id).or_insert_with(|| {
             let meta = T::entity_meta();
-            Box::new(DbSet::<T>::with_provider(
+            let mut db_set = DbSet::<T>::with_provider(
                 meta.table_name.as_ref(),
                 Arc::clone(&self.provider),
-            ))
+            );
+            if let Some(filter) = self.model_builder.get_query_filter(&type_id) {
+                db_set.set_query_filter(filter);
+            }
+            Box::new(db_set)
         });
         self.sets
             .get_mut(&type_id)
             .and_then(|b| b.downcast_mut::<DbSet<T>>())
             .expect("DbSet type mismatch")
     }
+
+    /// Returns the model builder for Fluent API configuration.
+    pub fn model(&mut self) -> &mut ModelBuilder {
+        &mut self.model_builder
+    }
+
+    /// Detects changes on all tracked DbSets by comparing property snapshots.
+    pub fn detect_changes(&mut self) {
+        let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
+        for type_id in type_ids {
+            if let Some(set) = self.sets.get_mut(&type_id) {
+                if let Some(saver) = self.savers.get(&type_id) {
+                    saver.detect_changes(set.as_mut());
+                }
+            }
+        }
+    }
+
+    /// Creates all tables for entity types registered via `set::<T>()`.
+    /// Corresponds to EF Core `Database.EnsureCreated()`.
+    pub async fn ensure_created(&self) -> EfResult<()> {
+        let metas: Vec<EntityTypeMeta> = self.entity_metas.values().cloned().collect();
+        if metas.is_empty() {
+            return Err(EfError::Configuration(
+                "No entity types registered. Call ctx.set::<T>() before ensure_created()."
+                    .into(),
+            ));
+        }
+        let dialect = self.provider.migration_dialect();
+        MigrationEngine::new(dialect)
+            .ensure_created(&*self.provider, &metas)
+            .await?;
+
+        for (type_id, meta) in &self.entity_metas {
+            let rows = self.model_builder.seed_rows_for(type_id);
+            if !rows.is_empty() {
+                MigrationEngine::new(dialect)
+                    .apply_seed_data(&*self.provider, meta, rows)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Drops all tables for entity types registered via `set::<T>()`.
+    /// Corresponds to EF Core `Database.EnsureDeleted()`.
+    pub async fn ensure_deleted(&self) -> EfResult<()> {
+        let metas: Vec<EntityTypeMeta> = self.entity_metas.values().cloned().collect();
+        if metas.is_empty() {
+            return Err(EfError::Configuration(
+                "No entity types registered. Call ctx.set::<T>() before ensure_deleted()."
+                    .into(),
+            ));
+        }
+        let dialect = self.provider.migration_dialect();
+        MigrationEngine::new(dialect)
+            .ensure_deleted(&*self.provider, &metas)
+            .await
+    }
 }
 
 // ---------------------------------------------------------------------------
-// IDbContext — object-safe
+// IDbContext ??object-safe
 // ---------------------------------------------------------------------------
 
 #[async_trait::async_trait]
@@ -244,9 +329,9 @@ pub trait IDbContext: Send + Sync {
     fn provider(&self) -> &dyn IDatabaseProvider;
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
     fn change_tracker(&self) -> &ChangeTracker;
-    async fn save_changes(&mut self) -> LrefResult<SaveChangesResult>;
+    async fn save_changes(&mut self) -> EfResult<SaveChangesResult>;
 
-    async fn begin_transaction(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
+    async fn begin_transaction(&self) -> EfResult<Box<dyn IAsyncConnection>> {
         let mut conn = self.provider().get_connection().await?;
         conn.begin_transaction().await?;
         Ok(conn)
@@ -255,10 +340,10 @@ pub trait IDbContext: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait IDbContextExt: IDbContext {
-    async fn use_transaction<F, Fut, R>(&self, f: F) -> LrefResult<R>
+    async fn use_transaction<F, Fut, R>(&self, f: F) -> EfResult<R>
     where
         F: FnOnce(&mut dyn IAsyncConnection) -> Fut + Send,
-        Fut: Future<Output = LrefResult<R>> + Send,
+        Fut: Future<Output = EfResult<R>> + Send,
         R: Send,
     {
         let mut conn = self.provider().get_connection().await?;
@@ -295,8 +380,12 @@ impl IDbContext for DbContext {
         &self.change_tracker
     }
 
-    async fn save_changes(&mut self) -> LrefResult<SaveChangesResult> {
-        self.change_tracker.detect_changes();
+    async fn save_changes(&mut self) -> EfResult<SaveChangesResult> {
+        let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
+        for type_id in &type_ids {
+            let set = self.sets.get_mut(type_id).unwrap();
+            self.savers.get(type_id).unwrap().detect_changes(set.as_mut());
+        }
 
         // --- Interceptor: on_saving (pre-commit) ---
         let save_ctx = SaveChangesContext::from_tracker(&self.change_tracker);
@@ -364,26 +453,26 @@ impl IDbContext for DbContext {
 pub async fn save_one_set<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
-    db_set: &mut dyn IDbSet<E>,
-) -> LrefResult<(usize, usize, usize)>
+    db_set: &mut DbSet<E>,
+) -> EfResult<(usize, usize, usize)>
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow,
 {
     let meta = E::entity_meta();
     let added: Vec<(&E, &EntityTypeMeta)> = db_set
-        .added_entities()
+        .tracked_by_state(crate::entity::EntityState::Added)
         .into_iter()
-        .map(|e| (e, &meta))
+        .map(|(e, _)| (e, &meta))
         .collect();
-    let modified: Vec<(&E, &EntityTypeMeta)> = db_set
-        .modified_entities()
+    let modified: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
+        .tracked_by_state(crate::entity::EntityState::Modified)
         .into_iter()
-        .map(|e| (e, &meta))
+        .map(|(e, orig)| (e, &meta, orig))
         .collect();
-    let deleted: Vec<(&E, &EntityTypeMeta)> = db_set
-        .deleted_entities()
+    let deleted: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
+        .tracked_by_state(crate::entity::EntityState::Deleted)
         .into_iter()
-        .map(|e| (e, &meta))
+        .map(|(e, orig)| (e, &meta, orig))
         .collect();
     let mut ac = 0usize;
     let mut uc = 0usize;
@@ -398,26 +487,6 @@ where
         dc = ChangeExecutor::execute_deletes(conn, provider, &deleted).await?;
     }
     Ok((ac, uc, dc))
-}
-
-// ---------------------------------------------------------------------------
-// save_changes_all! macro
-// ---------------------------------------------------------------------------
-
-#[macro_export]
-macro_rules! save_changes_all {
-    ($ctx:expr, $first:expr $(, $rest:expr)* $(,)?) => {{
-        $ctx.change_tracker_mut().detect_changes();
-        let mut conn = $ctx.provider().get_connection().await?;
-        conn.begin_transaction().await?;
-        let mut added = 0usize; let mut updated = 0usize; let mut deleted = 0usize;
-        { let (a, u, d) = $crate::db_context::save_one_set(&mut *conn, $ctx.provider(), &mut $first).await?; added += a; updated += u; deleted += d; }
-        $({ let (a, u, d) = $crate::db_context::save_one_set(&mut *conn, $ctx.provider(), &mut $rest).await?; added += a; updated += u; deleted += d; })*
-        conn.commit_transaction().await?;
-        $ctx.change_tracker_mut().accept_all_changes();
-        $first.clear_entries(); $($rest.clear_entries();)*
-        Ok($crate::db_context::SaveChangesResult { added, updated, deleted })
-    }};
 }
 
 // ---------------------------------------------------------------------------

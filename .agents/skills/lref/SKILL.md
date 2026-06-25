@@ -8,7 +8,7 @@ description: |
   user asks about lref ORM, entity framework, DbContext, or Rust database code.
 ---
 
-# lref — Rust Entity Framework v0.3
+# lref ??Rust Entity Framework v0.3
 
 You are implementing features for lref, an interface-oriented EFCore-inspired
 ORM for Rust. Follow the patterns below exactly.
@@ -48,16 +48,16 @@ attribute and at least one `#[primary_key]`.
 | `#[concurrency_check]` | Optimistic concurrency token |
 
 **Rules:**
-- Navigation fields use `BelongsTo<T>`, `HasMany<T>`, `HasOne<T>` — these are
+- Navigation fields use `BelongsTo<T>`, `HasMany<T>`, `HasOne<T>` ??these are
   pure container types, no trait bounds
-- Optional DB columns → `Option<T>` in Rust
+- Optional DB columns ??`Option<T>` in Rust
 - Read `templates/entity-definition.rs` for the complete pattern
 
 ---
 
 ## 2. DbContext
 
-The framework provides `DbContext` — you do NOT define a custom context
+The framework provides `DbContext` ??you do NOT define a custom context
 struct. No `DbSet<Blog>` fields. Use `ctx.set::<Blog>()` instead.
 
 **Construction:**
@@ -79,13 +79,13 @@ Read `templates/dbcontext.rs` for the full setup with migration.
 
 ---
 
-## 3. DI Integration (lrdi)
+## 3. DI Integration (rust-dicore)
 
 Register with `add_dbcontext` (single DB, recommended):
 ```rust
-use lrdi::ServiceCollection;
-use lref::di::*;
-use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
+use rust_dicore::ServiceCollection;
+use rust_ef::di::*;
+use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 let provider = ServiceCollection::new()
     .add_dbcontext::<DbContext>(|options| {
@@ -124,9 +124,9 @@ let options = DbContextOptionsBuilder::new()
 ```
 
 **Provider methods:**
-- `use_sqlite(cs)` / `use_sqlite_in_memory()` — injects factory
-- `use_postgres(cs)` — injects factory
-- `use_mysql(cs)` — tag only (async init)
+- `use_sqlite(cs)` / `use_sqlite_in_memory()` ??injects factory
+- `use_postgres(cs)` ??injects factory
+- `use_mysql(cs)` ??tag only (async init)
 
 **How it works:** `use_sqlite()` injects a `provider_factory` closure into
 `DbContextOptions`. `DbContext::from_options()` calls this factory to
@@ -134,12 +134,12 @@ create the provider. The core crate stays fully decoupled from provider types.
 
 **SaveChanges Interceptors:**
 ```rust
-use lref::interceptor::*;
+use rust_ef::interceptor::*;
 
 struct AuditInterceptor;
 #[async_trait::async_trait]
 impl ISaveChangesInterceptor for AuditInterceptor {
-    async fn on_saving(&self, ctx: &SaveChangesContext) -> LrefResult<()> {
+    async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
         println!("Saving +{} ~{} -{}", ctx.added_count(), ctx.modified_count(), ctx.deleted_count());
         Ok(())
     }
@@ -161,12 +161,24 @@ Read `templates/di-setup.rs` for the complete pattern.
 
 ## 4. QueryBuilder
 
-Use `ctx.set::<T>().query()` to get a `QueryBuilder<T>`.
+Use `ctx.set::<T>().query()` or `ctx.set::<T>().filter(linq!(?))`.
 
-**Filtering:** `filter_column("col", "=", val)`, `filter_in`, `filter_is_null`,
-`filter_is_not_null`, `filter_between`
+**LINQ expression trees** (compile-time, like C# `Where`):
+```rust
+use rust_ef::linq;
 
-**Ordering/pagination:** `order_by_column`, `order_by_desc_column`, `skip(n)`, `take(n)`
+// Direct ? closest to C# DbSet.Where
+linq!(ctx.set::<Blog>(), |b: Blog| b.rating > 5).to_list().await?;
+
+// Reusable expression tree
+let expr = linq!(|b: Blog| b.rating > min_rating);
+ctx.set::<Blog>().filter(expr).to_list().await?;
+
+// IN clause ? LINQ style: ids.Contains(b.Id)
+linq!(ctx.set::<Blog>(), |b: Blog| ids.contains(b.blog_id));
+```
+
+**Ordering/pagination:** `order_by`, `order_by_desc`, `skip(n)`, `take(n)`
 
 **JOIN:** `inner_join("table", "left_col", "right_col")`, `left_join(...)`
 
@@ -198,6 +210,6 @@ Read `templates/query-patterns.rs` for examples.
 - Define `DbSet<Blog>` struct fields on the context
 - Put `IEntityType` bounds on `BelongsTo<T>` or `HasMany<T>`
 - Put `IEntityType` bounds on builder structs (`EntityTypeBuilder<T>`)
-- Create your own `ServiceCollection` — use `lrdi::ServiceCollection`
+- Create your own `ServiceCollection` ??use `lrdi::ServiceCollection`
 
 Read `references/architecture.md` for the full architecture documentation.

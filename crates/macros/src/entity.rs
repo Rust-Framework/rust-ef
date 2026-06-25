@@ -36,9 +36,19 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
     let mut property_builders = Vec::new();
     let mut navigation_builders = Vec::new();
     let mut primary_key_names = Vec::new();
+    let mut pk_column_names: Vec<String> = Vec::new();
+    let mut fk_column_names: Vec<String> = Vec::new();
     let mut from_row_fields = Vec::new();
     let mut nav_field_names = Vec::new();
-    let mut pk_field_idents: Vec<&syn::Ident> = Vec::new(); // primary key field names
+    let mut pk_field_idents: Vec<&syn::Ident> = Vec::new();
+    let mut has_many_setter_arms = Vec::new();
+    let mut reference_setter_arms = Vec::new();
+    let mut nested_loader_arms = Vec::new();
+    let mut fk_const_decls = Vec::new();
+    let mut fk_index_arms = Vec::new();
+    let mut fk_target_arms = Vec::new();
+    let mut pk_column_name_lit = quote! { "id" };
+    let mut pk_column_index_lit = quote! { 0usize };
 
     for field in fields {
         let field_name = field.ident.as_ref().unwrap();
@@ -60,10 +70,18 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         if is_primary_key {
             primary_key_names.push(quote! { std::borrow::Cow::Borrowed(#field_name_str) });
             pk_field_idents.push(field_name);
+            pk_column_names.push(column_name.clone());
+            pk_column_name_lit = quote! { #column_name };
         }
 
         if is_navigation {
-            let (nav_kind, inner_type) = detect_navigation_kind_and_inner(field_type);
+            let mut nav_info = detect_navigation_type(field_type);
+            if let Some(through_ty) = extract_through_type(&field.attrs) {
+                nav_info.join = Some(through_ty);
+                nav_info.kind = NavigationDiscriminant::ManyToMany;
+            }
+            let inner_type = &nav_info.related;
+            let nav_kind = nav_info.kind;
             let nav_kind_token = match nav_kind {
                 NavigationDiscriminant::BelongsTo => {
                     quote! { rust_ef::metadata::NavigationKind::BelongsTo }
@@ -74,22 +92,199 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 NavigationDiscriminant::HasMany => {
                     quote! { rust_ef::metadata::NavigationKind::HasMany }
                 }
+                NavigationDiscriminant::ManyToMany => {
+                    quote! { rust_ef::metadata::NavigationKind::ManyToMany }
+                }
             };
             let fk_field = extract_foreign_key_field_name(&field.attrs);
+            let parent_pk_col = pk_column_names
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("id");
+            let parent_fk_col = fk_column_names
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or("id");
+            let parent_type_name = struct_name.to_string();
+            let related_type_name = type_ident_string(inner_type);
+            let fk_const = syn::Ident::new(
+                &format!("FK_{}", parent_type_name),
+                struct_name.span(),
+            );
 
-            navigation_builders.push(quote! {
-                rust_ef::metadata::NavigationMeta {
-                    field_name: std::borrow::Cow::Borrowed(#field_name_str),
-                    kind: #nav_kind_token,
-                    related_type_id: std::any::TypeId::of::<#inner_type>(),
-                    related_type_name: std::borrow::Cow::Borrowed(std::any::type_name::<#inner_type>()),
-                    foreign_key_field: #fk_field,
-                    inverse_navigation: None,
-                    through_type_id: None,
+            navigation_builders.push(match nav_kind {
+                NavigationDiscriminant::ManyToMany => {
+                    let join_type = nav_info.join.as_ref().expect("ManyToMany requires join type");
+                    let _ = related_type_name;
+                    quote! {
+                        rust_ef::metadata::NavigationMeta {
+                            field_name: std::borrow::Cow::Borrowed(#field_name_str),
+                            kind: #nav_kind_token,
+                            related_type_id: std::any::TypeId::of::<#inner_type>(),
+                            related_type_name: std::borrow::Cow::Borrowed(std::any::type_name::<#inner_type>()),
+                            foreign_key_field: #fk_field,
+                            inverse_navigation: None,
+                            through_type_id: Some(std::any::TypeId::of::<#join_type>()),
+                            through_table: Some(std::borrow::Cow::Borrowed(<#join_type>::TABLE)),
+                            through_parent_fk: {
+                                <#join_type>::fk_column_for(std::any::TypeId::of::<#struct_name>())
+                                    .map(std::borrow::Cow::Borrowed)
+                            },
+                            through_related_fk: {
+                                <#join_type>::fk_column_for(std::any::TypeId::of::<#inner_type>())
+                                    .map(std::borrow::Cow::Borrowed)
+                            },
+                            through_parent_fk_index: <#join_type>::fk_column_for(std::any::TypeId::of::<#struct_name>())
+                                .map(|c| <#join_type>::fk_column_index(c))
+                                .unwrap_or(0),
+                            through_related_fk_index: <#join_type>::fk_column_for(std::any::TypeId::of::<#inner_type>())
+                                .map(|c| <#join_type>::fk_column_index(c))
+                                .unwrap_or(0),
+                            related_table: Some(std::borrow::Cow::Borrowed(<#inner_type>::TABLE)),
+                            fk_column: None,
+                            referenced_key_column: Some(std::borrow::Cow::Borrowed(<#inner_type>::pk_column_name())),
+                            fk_row_index: 0,
+                            pk_row_index: <#inner_type>::pk_column_index(),
+                            related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                        }
+                    }
                 }
+                NavigationDiscriminant::HasMany => quote! {
+                    rust_ef::metadata::NavigationMeta {
+                        field_name: std::borrow::Cow::Borrowed(#field_name_str),
+                        kind: #nav_kind_token,
+                        related_type_id: std::any::TypeId::of::<#inner_type>(),
+                        related_type_name: std::borrow::Cow::Borrowed(std::any::type_name::<#inner_type>()),
+                        foreign_key_field: #fk_field,
+                        inverse_navigation: None,
+                        through_type_id: None,
+                        through_table: None,
+                        through_parent_fk: None,
+                        through_related_fk: None,
+                        through_parent_fk_index: 0,
+                        through_related_fk_index: 0,
+                        related_table: Some(std::borrow::Cow::Borrowed(<#inner_type>::TABLE)),
+                        fk_column: Some(std::borrow::Cow::Borrowed(<#inner_type>::#fk_const)),
+                        referenced_key_column: Some(std::borrow::Cow::Borrowed(#parent_pk_col)),
+                        fk_row_index: <#inner_type>::fk_column_index(stringify!(#fk_const)),
+                        pk_row_index: <#inner_type>::pk_column_index(),
+                        related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                    }
+                },
+                NavigationDiscriminant::BelongsTo | NavigationDiscriminant::HasOne => quote! {
+                    rust_ef::metadata::NavigationMeta {
+                        field_name: std::borrow::Cow::Borrowed(#field_name_str),
+                        kind: #nav_kind_token,
+                        related_type_id: std::any::TypeId::of::<#inner_type>(),
+                        related_type_name: std::borrow::Cow::Borrowed(std::any::type_name::<#inner_type>()),
+                        foreign_key_field: #fk_field,
+                        inverse_navigation: None,
+                        through_type_id: None,
+                        through_table: None,
+                        through_parent_fk: None,
+                        through_related_fk: None,
+                        through_parent_fk_index: 0,
+                        through_related_fk_index: 0,
+                        related_table: Some(std::borrow::Cow::Borrowed(<#inner_type>::TABLE)),
+                        fk_column: Some(std::borrow::Cow::Borrowed(#parent_fk_col)),
+                        referenced_key_column: Some(std::borrow::Cow::Borrowed(
+                            <#inner_type>::pk_column_name(),
+                        )),
+                        fk_row_index: Self::fk_column_index(#parent_fk_col),
+                        pk_row_index: <#inner_type>::pk_column_index(),
+                        related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                    }
+                },
             });
+
+            match nav_kind {
+                NavigationDiscriminant::HasMany | NavigationDiscriminant::ManyToMany => {
+                    has_many_setter_arms.push(quote! {
+                        if field == #field_name_str {
+                            let items: rust_ef::error::EfResult<Vec<#inner_type>> = rows
+                                .iter()
+                                .map(|r| <#inner_type as rust_ef::entity::IFromRow>::from_row(r))
+                                .collect();
+                            self.#field_name = rust_ef::relations::HasMany::with(items?);
+                            return Ok(());
+                        }
+                    });
+                    nested_loader_arms.push(quote! {
+                        if parent_navigation == #field_name_str && !nested.is_empty() {
+                            let children = self.#field_name.items_mut();
+                            rust_ef::navigation_loader::load_includes(children, nested, provider).await?;
+                            for path in nested {
+                                if !path.nested.is_empty() {
+                                    for child in children.iter_mut() {
+                                        child.load_nested_includes(&path.navigation, &path.nested, provider).await?;
+                                    }
+                                }
+                            }
+                            return Ok(());
+                        }
+                    });
+                }
+                NavigationDiscriminant::BelongsTo => {
+                    reference_setter_arms.push(quote! {
+                        if field == #field_name_str {
+                            self.#field_name = rust_ef::relations::BelongsTo::with(
+                                <#inner_type as rust_ef::entity::IFromRow>::from_row(row)?,
+                            );
+                            return Ok(());
+                        }
+                    });
+                    nested_loader_arms.push(quote! {
+                        if parent_navigation == #field_name_str && !nested.is_empty() {
+                            if let Some(related) = self.#field_name.get_mut() {
+                                rust_ef::navigation_loader::load_includes(
+                                    std::slice::from_mut(related),
+                                    nested,
+                                    provider,
+                                ).await?;
+                                for path in nested {
+                                    if !path.nested.is_empty() {
+                                        related.load_nested_includes(&path.navigation, &path.nested, provider).await?;
+                                    }
+                                }
+                            }
+                            return Ok(());
+                        }
+                    });
+                }
+                NavigationDiscriminant::HasOne => {
+                    reference_setter_arms.push(quote! {
+                        if field == #field_name_str {
+                            self.#field_name = rust_ef::relations::HasOne::with(
+                                <#inner_type as rust_ef::entity::IFromRow>::from_row(row)?,
+                            );
+                            return Ok(());
+                        }
+                    });
+                    nested_loader_arms.push(quote! {
+                        if parent_navigation == #field_name_str && !nested.is_empty() {
+                            if let Some(related) = self.#field_name.get_mut() {
+                                rust_ef::navigation_loader::load_includes(
+                                    std::slice::from_mut(related),
+                                    nested,
+                                    provider,
+                                ).await?;
+                                for path in nested {
+                                    if !path.nested.is_empty() {
+                                        related.load_nested_includes(&path.navigation, &path.nested, provider).await?;
+                                    }
+                                }
+                            }
+                            return Ok(());
+                        }
+                    });
+                }
+            }
             nav_field_names.push(field_name);
         } else if !is_not_mapped {
+            let scalar_idx = from_row_fields.len();
+            if is_primary_key {
+                pk_column_index_lit = quote! { #scalar_idx };
+            }
             property_builders.push(quote! {
                 rust_ef::metadata::PropertyMeta {
                     field_name: std::borrow::Cow::Borrowed(#field_name_str),
@@ -109,6 +304,28 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             });
             // Collect for FromRow generation
             from_row_fields.push((field_name, field_type));
+            if is_foreign_key {
+                fk_column_names.push(column_name.clone());
+                if let Some(target) = extract_foreign_key_target(&field.attrs) {
+                    let target_ident = syn::Ident::new(&target, field_name.span());
+                    let fk_ident = syn::Ident::new(
+                        &format!("FK_{}", target),
+                        field_name.span(),
+                    );
+                    let col = column_name.clone();
+                    fk_const_decls.push(quote! {
+                        pub const #fk_ident: &'static str = #col;
+                    });
+                    fk_index_arms.push(quote! {
+                        #col | stringify!(#fk_ident) => #scalar_idx,
+                    });
+                    fk_target_arms.push(quote! {
+                        if target == std::any::TypeId::of::<#target_ident>() {
+                            return Some(#col);
+                        }
+                    });
+                }
+            }
         }
     }
 
@@ -190,7 +407,30 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         }
 
         impl #struct_name {
+            pub const TABLE: &'static str = #table_name;
             #(#column_consts)*
+            #(#fk_const_decls)*
+
+            pub fn pk_column_name() -> &'static str {
+                #pk_column_name_lit
+            }
+
+            pub fn pk_column_index() -> usize {
+                #pk_column_index_lit
+            }
+
+            pub fn fk_column_index(col: &str) -> usize {
+                match col {
+                    #( #fk_index_arms )*
+                    _ => 0,
+                }
+            }
+
+            /// Resolves the FK column pointing at `target` (many-to-many join lookup).
+            pub fn fk_column_for(target: std::any::TypeId) -> Option<&'static str> {
+                #( #fk_target_arms )*
+                None
+            }
         }
 
         impl rust_ef::entity::IGetKeyValues for #struct_name {
@@ -215,15 +455,46 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         }
 
         impl rust_ef::entity::IFromRow for #struct_name {
-            fn from_row(values: &[String]) -> rust_ef::error::LrefResult<Self> {
+            fn from_row(values: &[String]) -> rust_ef::error::EfResult<Self> {
                 if values.len() < #field_count {
-                    return Err(rust_ef::error::LrefError::TypeConversion(
+                    return Err(rust_ef::error::EfError::TypeConversion(
                         format!("Expected {} columns, got {}", #field_count, values.len())
                     ));
                 }
                 Ok(#struct_name {
                     #(#from_row_assignments)*
                 })
+            }
+        }
+
+        #[rust_ef::async_trait::async_trait]
+        impl rust_ef::entity::INavigationSetter for #struct_name {
+            fn apply_has_many(
+                &mut self,
+                field: &str,
+                rows: &[Vec<String>],
+            ) -> rust_ef::error::EfResult<()> {
+                #( #has_many_setter_arms )*
+                Ok(())
+            }
+
+            fn apply_reference(
+                &mut self,
+                field: &str,
+                row: &[String],
+            ) -> rust_ef::error::EfResult<()> {
+                #( #reference_setter_arms )*
+                Ok(())
+            }
+
+            async fn load_nested_includes(
+                &mut self,
+                parent_navigation: &str,
+                nested: &[rust_ef::query::IncludePath],
+                provider: &dyn rust_ef::provider::IDatabaseProvider,
+            ) -> rust_ef::error::EfResult<()> {
+                #( #nested_loader_arms )*
+                Ok(())
             }
         }
     };
@@ -239,14 +510,33 @@ enum NavigationDiscriminant {
     BelongsTo,
     HasOne,
     HasMany,
+    ManyToMany,
 }
 
-/// Detects the navigation kind (BelongsTo/HasOne/HasMany) from a type
-/// like `BelongsTo<Blog>`, `HasMany<Post>`, `HasOne<User>`.
-///
-/// Extracts both the discriminant and the inner entity type from the
-/// angle-bracketed generic argument.
-fn detect_navigation_kind_and_inner(ty: &Type) -> (NavigationDiscriminant, syn::Type) {
+struct NavTypeInfo {
+    kind: NavigationDiscriminant,
+    related: syn::Type,
+    join: Option<syn::Type>,
+}
+
+fn type_ident_string(ty: &syn::Type) -> String {
+    if let syn::Type::Path(p) = ty {
+        p.path
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_else(|| "Entity".to_string())
+    } else {
+        "Entity".to_string()
+    }
+}
+
+fn is_unit_type(ty: &syn::Type) -> bool {
+    quote!(#ty).to_string().replace(' ', "") == "()"
+}
+
+/// Detects navigation kind and related/join types from `BelongsTo<T>`, `HasMany<T, J>`, etc.
+fn detect_navigation_type(ty: &syn::Type) -> NavTypeInfo {
     let unit_type: syn::Type = syn::parse_quote! { () };
 
     if let Type::Path(type_path) = ty {
@@ -255,38 +545,77 @@ fn detect_navigation_kind_and_inner(ty: &Type) -> (NavigationDiscriminant, syn::
 
             let kind = if ident.starts_with("BelongsTo") {
                 NavigationDiscriminant::BelongsTo
-            } else if ident.starts_with("HasMany") {
-                NavigationDiscriminant::HasMany
             } else if ident.starts_with("HasOne") {
                 NavigationDiscriminant::HasOne
+            } else if ident.starts_with("HasMany") {
+                NavigationDiscriminant::HasMany
             } else {
                 NavigationDiscriminant::BelongsTo
             };
 
-            let inner = if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                args.args
-                    .first()
-                    .and_then(|a| {
-                        if let GenericArgument::Type(inner_ty) = a {
-                            Some(inner_ty.clone())
-                        } else {
-                            None
+            let mut related_ty = unit_type.clone();
+            let mut join_ty = None;
+
+            if let PathArguments::AngleBracketed(args) = &segment.arguments {
+                if let Some(GenericArgument::Type(first)) = args.args.first() {
+                    related_ty = first.clone();
+                }
+                if ident.starts_with("HasMany") {
+                    if let Some(GenericArgument::Type(second)) = args.args.get(1) {
+                        if !is_unit_type(second) {
+                            join_ty = Some(second.clone());
                         }
-                    })
-                    .unwrap_or_else(|| unit_type.clone())
+                    }
+                }
+            }
+
+            let final_kind = if ident.starts_with("HasMany") && join_ty.is_some() {
+                NavigationDiscriminant::ManyToMany
             } else {
-                unit_type.clone()
+                kind
             };
 
-            return (kind, inner);
+            return NavTypeInfo {
+                kind: final_kind,
+                related: related_ty,
+                join: join_ty,
+            };
         }
     }
 
-    (NavigationDiscriminant::BelongsTo, unit_type)
+    NavTypeInfo {
+        kind: NavigationDiscriminant::BelongsTo,
+        related: unit_type,
+        join: None,
+    }
 }
 
 /// Extracts the target type name from `#[foreign_key(TargetType)]`
 /// and produces `Some(Cow::Borrowed("TargetType"))`.
+fn extract_foreign_key_target(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("foreign_key") {
+            if let syn::Meta::List(list) = &attr.meta {
+                return Some(list.tokens.to_string().trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Parses `#[through(JoinEntity)]` on a navigation property.
+fn extract_through_type(attrs: &[syn::Attribute]) -> Option<syn::Type> {
+    for attr in attrs {
+        if attr.path().is_ident("through") {
+            if let syn::Meta::List(list) = &attr.meta {
+                let tokens = list.tokens.to_string();
+                return syn::parse_str::<syn::Type>(&tokens).ok();
+            }
+        }
+    }
+    None
+}
+
 fn extract_foreign_key_field_name(attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {
     for attr in attrs {
         if attr.path().is_ident("foreign_key") {

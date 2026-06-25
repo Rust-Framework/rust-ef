@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "crates/rust-ef",
-    "crates/rust-ef-macros",
-    "crates/rust-ef-postgres",
-    "crates/rust-ef-mysql",
-    "crates/rust-ef-sqlite",
-    "crates/rust-dicore",
+    "crates/core",
+    "crates/macros",
+    "crates/postgres",
+    "crates/mysql",
+    "crates/sqlite",
+    "crates/cli",
     "examples/blog",
 ]
 resolver = "2"

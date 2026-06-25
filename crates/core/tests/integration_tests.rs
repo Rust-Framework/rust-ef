@@ -22,13 +22,12 @@ mod tests {
     #[test]
     fn test_query_state_to_sql_with_filter() {
         let mut state = QueryState::new("blogs");
-        state.filters.push(FilterCondition::new(
-            "rating", ">", Some(DbValue::I32(3)),
-        ));
+        state.filters.push(FilterCondition::new("rating", ">", 1));
         state.parameters.push(DbValue::I32(3));
         let sql = state.to_sql();
         assert!(sql.contains("WHERE"));
         assert!(sql.contains("rating"));
+        assert!(sql.contains("?"));
     }
 
     #[test]
@@ -111,6 +110,55 @@ mod tests {
     }
 
     #[test]
+    fn test_migration_foreign_key_naming() {
+        let name = rust_ef::migration::MigrationEngine::foreign_key_name(
+            "posts",
+            "blog_id",
+            "blogs",
+        );
+        assert_eq!(name, "fk_posts_blog_id_blogs");
+    }
+
+    #[test]
+    fn test_migration_binary_type_mapping() {
+        let col = SnapshotColumn {
+            field_name: "data".into(),
+            column_name: "data".into(),
+            type_name: "Vec<u8>".into(),
+            is_primary_key: false,
+            is_required: false,
+            is_foreign_key: false,
+            max_length: None,
+            is_auto_increment: false,
+            fk_referenced_table: None,
+            fk_referenced_column: None,
+        };
+        assert_eq!(MigrationDialect::Postgres.map_column_type(&col), "BYTEA");
+        assert_eq!(MigrationDialect::MySql.map_column_type(&col), "BLOB");
+        assert_eq!(MigrationDialect::Sqlite.map_column_type(&col), "BLOB");
+    }
+
+    #[test]
+    fn test_migration_alter_column_mysql() {
+        let engine = rust_ef::migration::MigrationEngine::new(MigrationDialect::MySql);
+        let col = SnapshotColumn {
+            field_name: "title".into(),
+            column_name: "title".into(),
+            type_name: "String".into(),
+            is_primary_key: false,
+            is_required: true,
+            is_foreign_key: false,
+            max_length: Some(200),
+            is_auto_increment: false,
+            fk_referenced_table: None,
+            fk_referenced_column: None,
+        };
+        let sql = engine.generate_alter_column_sql("posts", "title", &col);
+        assert!(sql.contains("MODIFY COLUMN"));
+        assert!(sql.contains("VARCHAR(200)"));
+    }
+
+    #[test]
     fn test_migration_dialect_type_mapping() {
         let col = SnapshotColumn {
             field_name: "id".into(),
@@ -121,6 +169,8 @@ mod tests {
             is_foreign_key: false,
             max_length: None,
             is_auto_increment: true,
+            fk_referenced_table: None,
+            fk_referenced_column: None,
         };
         assert_eq!(MigrationDialect::Postgres.map_column_type(&col), "SERIAL");
         assert_eq!(MigrationDialect::MySql.map_column_type(&col), "INT AUTO_INCREMENT");

@@ -6,25 +6,24 @@ pub mod type_mapping;
 
 use async_trait::async_trait;
 use deadpool_postgres::{Config, Pool, Runtime};
-use rust_ef::error::{LrefError, LrefResult};
+use rust_ef::error::{EfError, EfResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider, ISqlGenerator};
 pub use sql_generator::PostgresSqlGenerator;
 use std::sync::Arc;
 use tokio_postgres::{types::ToSql, NoTls};
-pub use type_mapping::PostgresTypeMapping;
 
 pub struct PostgresProvider {
     pool: Pool,
 }
 
 impl PostgresProvider {
-    pub fn new(connection_string: &str, _pool_size: usize) -> LrefResult<Self> {
+    pub fn new(connection_string: &str, _pool_size: usize) -> EfResult<Self> {
         let config: tokio_postgres::Config = connection_string
             .parse()
-            .map_err(|e| LrefError::Connection(format!("Invalid connection string: {}", e)))?;
+            .map_err(|e| EfError::Connection(format!("Invalid connection string: {}", e)))?;
         let mut cfg = Config::new();
-        if let Some(host) = config.get_hosts().first() {
-            cfg.host = Some(format!("{:?}", host));
+        if let Some(tokio_postgres::config::Host::Tcp(h)) = config.get_hosts().first() {
+            cfg.host = Some(h.clone());
         }
         cfg.port = Some(config.get_ports().first().copied().unwrap_or(5432));
         cfg.dbname = Some(config.get_dbname().unwrap_or("postgres").to_string());
@@ -34,7 +33,7 @@ impl PostgresProvider {
             .map(|p| String::from_utf8_lossy(p).to_string());
         let pool = cfg
             .create_pool(Some(Runtime::Tokio1), NoTls)
-            .map_err(|e| LrefError::Connection(format!("Failed to create pool: {}", e)))?;
+            .map_err(|e| EfError::Connection(format!("Failed to create pool: {}", e)))?;
         Ok(Self { pool })
     }
 }
@@ -44,28 +43,31 @@ impl IDatabaseProvider for PostgresProvider {
     fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
         Box::new(PostgresSqlGenerator::new())
     }
-    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>> {
+    async fn get_connection(&self) -> EfResult<Box<dyn IAsyncConnection>> {
         let client = self
             .pool
             .get()
             .await
-            .map_err(|e| LrefError::Connection(format!("Pool error: {}", e)))?;
+            .map_err(|e| EfError::Connection(format!("Pool error: {}", e)))?;
         Ok(Box::new(PostgresConnection { client }))
     }
-    async fn execute_migration_command(&self, sql: &str) -> LrefResult<()> {
+    async fn execute_migration_command(&self, sql: &str) -> EfResult<()> {
         let client = self
             .pool
             .get()
             .await
-            .map_err(|e| LrefError::Connection(format!("Pool error: {}", e)))?;
+            .map_err(|e| EfError::Connection(format!("Pool error: {}", e)))?;
         client
             .batch_execute(sql)
             .await
-            .map_err(|e| LrefError::Migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| EfError::Migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
     fn name(&self) -> &str {
         "PostgreSQL"
+    }
+    fn migration_dialect(&self) -> rust_ef::migration::MigrationDialect {
+        rust_ef::migration::MigrationDialect::Postgres
     }
 }
 
@@ -75,7 +77,7 @@ struct PostgresConnection {
 
 #[async_trait]
 impl IAsyncConnection for PostgresConnection {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64> {
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64> {
         let pgp: Vec<Box<dyn ToSql + Sync + Send>> = db_values_to_pg_params(params);
         let refs: Vec<&(dyn ToSql + Sync)> = pgp
             .iter()
@@ -84,9 +86,9 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .execute(sql, &refs)
             .await
-            .map_err(|e| LrefError::Query(format!("Execution error: {}", e)))
+            .map_err(|e| EfError::Query(format!("Execution error: {}", e)))
     }
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>> {
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>> {
         let pgp: Vec<Box<dyn ToSql + Sync + Send>> = db_values_to_pg_params(params);
         let refs: Vec<&(dyn ToSql + Sync)> = pgp
             .iter()
@@ -96,7 +98,7 @@ impl IAsyncConnection for PostgresConnection {
             .client
             .query(sql, &refs)
             .await
-            .map_err(|e| LrefError::Query(format!("Query error: {}", e)))?;
+            .map_err(|e| EfError::Query(format!("Query error: {}", e)))?;
         let columns: Vec<String> = if !rows.is_empty() {
             rows[0]
                 .columns()
@@ -121,25 +123,25 @@ impl IAsyncConnection for PostgresConnection {
             .collect();
         Ok(result)
     }
-    async fn begin_transaction(&mut self) -> LrefResult<()> {
+    async fn begin_transaction(&mut self) -> EfResult<()> {
         self.client
             .simple_query("BEGIN")
             .await
-            .map_err(|e| LrefError::Transaction(format!("BEGIN failed: {}", e)))?;
+            .map_err(|e| EfError::Transaction(format!("BEGIN failed: {}", e)))?;
         Ok(())
     }
-    async fn commit_transaction(&mut self) -> LrefResult<()> {
+    async fn commit_transaction(&mut self) -> EfResult<()> {
         self.client
             .simple_query("COMMIT")
             .await
-            .map_err(|e| LrefError::Transaction(format!("COMMIT failed: {}", e)))?;
+            .map_err(|e| EfError::Transaction(format!("COMMIT failed: {}", e)))?;
         Ok(())
     }
-    async fn rollback_transaction(&mut self) -> LrefResult<()> {
+    async fn rollback_transaction(&mut self) -> EfResult<()> {
         self.client
             .simple_query("ROLLBACK")
             .await
-            .map_err(|e| LrefError::Transaction(format!("ROLLBACK failed: {}", e)))?;
+            .map_err(|e| EfError::Transaction(format!("ROLLBACK failed: {}", e)))?;
         Ok(())
     }
 }
@@ -170,7 +172,7 @@ impl std::fmt::Debug for PostgresProvider {
 }
 
 // ---------------------------------------------------------------------------
-// DbContextOptionsBuilder extension — .use_postgres()
+// DbContextOptionsBuilder extension ??.use_postgres()
 // ---------------------------------------------------------------------------
 
 pub trait DbContextOptionsBuilderExt {

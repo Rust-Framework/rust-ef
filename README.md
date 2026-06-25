@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/rust-ef)](https://crates.io/crates/rust-ef)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Interface-oriented, EFCore-inspired ORM for Rust — `IDbContext` / `IDbSet<T>` / `IEntityType` with rust-dicore DI integration.
+Interface-oriented, EFCore-inspired ORM for Rust ??`IDbContext` / `IDbSet<T>` / `IEntityType` with rust-dicore DI integration.
 
 ---
 
@@ -48,7 +48,7 @@ pub struct Post {
 use rust_dicore::ServiceCollection;
 use rust_ef::di::*;
 use rust_ef::db_context::DbContext;
-use rust_ef_provider_sqlite::DbContextOptionsBuilderExt as _;
+use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -93,7 +93,7 @@ use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext};
 struct AuditInterceptor;
 #[async_trait::async_trait]
 impl ISaveChangesInterceptor for AuditInterceptor {
-    async fn on_saving(&self, ctx: &SaveChangesContext) -> LrefResult<()> {
+    async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
         tracing::info!("Saving +{} ~{} -{}", ctx.added_count(), ctx.modified_count(), ctx.deleted_count());
         Ok(())
     }
@@ -113,50 +113,48 @@ impl ISaveChangesInterceptor for AuditInterceptor {
 
 ```
 User Application
-    ├── rust-dicore (DI container — resolves Arc<dyn IDbContext>)
-    │     ├── provider.get()           — default registration
-    │     └── provider.get_keyed("k")  — keyed registration
-    └── rust-ef (ORM)
+    ??? rust-dicore (crates.io ??DI, resolves Arc<dyn IDbContext>)
+    ??? rust-ef (ORM, workspace: crates/core)
           DbContext (type-map set storage, no entity-specific fields)
-          ├── IDbContext     — object-safe session trait
-          ├── IDbSet<T>      — entity collection (mutation)
-          ├── IQueryable<T>  — query entry point
-          ├── ISaveChangesInterceptor — before/after save hooks
-          └── IDatabaseProvider — backend abstraction
-                ├── rust-ef-sqlite    (use_sqlite: injects factory)
-                ├── rust-ef-postgres  (use_postgres: injects factory)
-                └── rust-ef-mysql     (use_mysql: tag only)
+          ??? IDbContext     ??object-safe session trait
+          ??? IDbSet<T>      ??entity collection (mutation)
+          ??? IQueryable<T>  ??query entry point
+          ??? ISaveChangesInterceptor ??before/after save hooks
+          ??? IDatabaseProvider ??backend abstraction
+                ??? crates/sqlite    ??rust-ef-sqlite  (use_sqlite)
+                ??? crates/postgres  ??rust-ef-postgres (use_postgres)
+                ??? crates/mysql     ??rust-ef-mysql   (use_mysql)
 ```
 
 ### Interface Hierarchy
 
 ```
-IEntityType ─── IFromRow
-             ├── IGetKeyValues
-             └── IEntitySnapshot
+IEntityType ??? IFromRow
+             ??? IGetKeyValues
+             ??? IEntitySnapshot
 
-IQueryable<T> ─── IDbSet<T>
+IQueryable<T> ??? IDbSet<T>
 
-IDbContext (object-safe — dyn compatible)
-    ├── provider() → &dyn IDatabaseProvider
-    ├── save_changes() → SaveChangesResult
-    └── change_tracker() → &ChangeTracker
+IDbContext (object-safe ??dyn compatible)
+    ??? provider() ??&dyn IDatabaseProvider
+    ??? save_changes() ??SaveChangesResult
+    ??? change_tracker() ??&ChangeTracker
 
-IDbContextExt (non-object-safe — generic helpers)
-    └── use_transaction(f)
+IDbContextExt (non-object-safe ??generic helpers)
+    ??? use_transaction(f)
 
 IDatabaseProvider
-    ├── sql_generator() → ISqlGenerator
-    ├── get_connection() → IAsyncConnection
-    └── execute_migration_command(sql)
+    ??? sql_generator() ??ISqlGenerator
+    ??? get_connection() ??IAsyncConnection
+    ??? execute_migration_command(sql)
 
 ISaveChangesInterceptor
-    ├── on_saving(ctx)           // pre-commit; Err aborts save
-    ├── on_saved(ctx, result)    // post-commit
-    └── on_save_failed(ctx, err) // on error (after rollback)
+    ??? on_saving(ctx)           // pre-commit; Err aborts save
+    ??? on_saved(ctx, result)    // post-commit
+    ??? on_save_failed(ctx, err) // on error (after rollback)
 
 FromDbContextOptions (DI bridge)
-    └── from_options(&DbContextOptions) → Self
+    ??? from_options(&DbContextOptions) ??Self
 ```
 
 ---
@@ -180,12 +178,12 @@ FromDbContextOptions (DI bridge)
 | Category | Feature |
 |----------|---------|
 | **Entity** | `#[derive(EntityType)]` with 12 attributes, navigation types |
-| **Query** | LINQ-style `QueryBuilder`: filter, join, group_by, aggregation, bulk ops |
-| **Persistence** | `save_changes_all!` macro, parameterized queries, transactions |
+| **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation |
+| **Persistence** | `save_changes()`, parameterized queries, transactions |
 | **DI** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`, `Arc<dyn IDbContext>` |
-| **Interception** | `ISaveChangesInterceptor` — on_saving/on_saved/on_save_failed hooks |
-| **Migrations** | Model diff, Up/Down SQL for PostgreSQL/MySQL/SQLite |
-| **CLI** | `migration add/apply/revert/list/script`, `scaffold-dbcontext` |
+| **Interception** | `ISaveChangesInterceptor` ??on_saving/on_saved/on_save_failed hooks |
+| **Migrations** | Model diff, Up/Down SQL, history tracking, `MigrationStore` |
+| **CLI** | `rust-ef-cli`: `migration init/add/apply/revert/list/script`, `scaffold dbcontext` |
 
 ---
 

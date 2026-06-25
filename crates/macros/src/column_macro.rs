@@ -26,22 +26,18 @@ pub fn expand_column(input: TokenStream) -> TokenStream {
                 return TokenStream::from(expanded);
             }
         }
-        Expr::Path(path) => {
-            // Handle simple path like `Type::field`
-            // This is a simplified parse — full path segments may need more handling
-            if path.path.segments.len() >= 2 {
-                let segments = &path.path.segments;
-                let type_part = &segments[0].ident;
-                let field_part = &segments[1].ident;
-                let const_name = syn::Ident::new(
-                    &format!("COLUMN_{}", field_part.to_string().to_uppercase()),
-                    field_part.span(),
-                );
-                let expanded = quote! {
-                    #type_part::#const_name
-                };
-                return TokenStream::from(expanded);
-            }
+        Expr::Path(path) if path.path.segments.len() >= 2 => {
+            let segments = &path.path.segments;
+            let type_part = &segments[0].ident;
+            let field_part = &segments[1].ident;
+            let const_name = syn::Ident::new(
+                &format!("COLUMN_{}", field_part.to_string().to_uppercase()),
+                field_part.span(),
+            );
+            let expanded = quote! {
+                #type_part::#const_name
+            };
+            return TokenStream::from(expanded);
         }
         _ => {}
     }

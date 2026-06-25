@@ -1,18 +1,19 @@
-//! DbSet<T> — entry point for querying and manipulating entity collections.
+//! DbSet<T> �?entry point for querying and manipulating entity collections.
 //!
 //! `DbSet<T>` represents a typed collection of entities that can be queried
 //! and mutated. It implements two interfaces following ISP:
-//!   - `IQueryable<T>` — query capabilities
-//!   - `IDbSet<T>`     — collection mutation capabilities
+//!   - `IQueryable<T>` �?query capabilities
+//!   - `IDbSet<T>`     �?collection mutation capabilities
 
-use crate::entity::{EntityState, IEntityType};
-use crate::error::LrefResult;
-use crate::provider::IDatabaseProvider;
+use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use crate::error::EfResult;
+use crate::provider::{DbValue, IDatabaseProvider};
 use crate::query::{IQueryable, QueryBuilder};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// IDbSet<T> — interface for entity collection manipulation
+// IDbSet<T> �?interface for entity collection manipulation
 // ---------------------------------------------------------------------------
 
 /// Interface for manipulating a typed entity collection.
@@ -27,7 +28,7 @@ pub trait IDbSet<T: IEntityType>: IQueryable<T> + Send + Sync {
     fn remove_all(&mut self);
 
     /// Marks the entity at the given index as Deleted.
-    fn remove_at(&mut self, index: usize) -> LrefResult<()>;
+    fn remove_at(&mut self, index: usize) -> EfResult<()>;
 
     /// Attaches an existing entity in Unchanged state.
     fn attach(&mut self, entity: T);
@@ -55,26 +56,30 @@ pub trait IDbSet<T: IEntityType>: IQueryable<T> + Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// DbSet<T> — concrete implementation
+// DbSet<T> �?concrete implementation
 // ---------------------------------------------------------------------------
 
 pub struct DbSet<T: IEntityType> {
     pub(crate) entries: Vec<TrackedEntry<T>>,
     table_name: String,
     provider: Option<Arc<dyn IDatabaseProvider>>,
+    query_filter: Option<String>,
 }
 
 pub struct TrackedEntry<T: IEntityType> {
     pub entity: T,
     pub state: EntityState,
+    /// Snapshot taken when the entity was attached (for change detection).
+    pub original: Option<HashMap<String, DbValue>>,
 }
 
-impl<T: IEntityType> DbSet<T> {
+impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     pub fn new(table_name: impl Into<String>) -> Self {
         Self {
             entries: Vec::new(),
             table_name: table_name.into(),
             provider: None,
+            query_filter: None,
         }
     }
 
@@ -86,46 +91,51 @@ impl<T: IEntityType> DbSet<T> {
             entries: Vec::new(),
             table_name: table_name.into(),
             provider: Some(provider),
+            query_filter: None,
         }
+    }
+
+    pub fn set_query_filter(&mut self, filter: impl Into<String>) {
+        self.query_filter = Some(filter.into());
     }
 
     pub fn set_provider(&mut self, provider: Arc<dyn IDatabaseProvider>) {
         self.provider = Some(provider);
     }
 
-    // ── Convenience inherent methods — delegate to trait implementations ──
+    // ── Convenience inherent methods �?delegate to trait implementations ──
 
-    /// Convenience inherent method — delegates to `IDbSet::add`.
+    /// Convenience inherent method �?delegates to `IDbSet::add`.
     pub fn add(&mut self, entity: T) {
         IDbSet::add(self, entity);
     }
 
-    /// Convenience inherent method — delegates to `IDbSet::remove_all`.
+    /// Convenience inherent method �?delegates to `IDbSet::remove_all`.
     pub fn remove_all(&mut self) {
         IDbSet::remove_all(self);
     }
 
-    /// Convenience inherent method — delegates to `IDbSet::remove_at`.
-    pub fn remove_at(&mut self, index: usize) -> LrefResult<()> {
+    /// Convenience inherent method �?delegates to `IDbSet::remove_at`.
+    pub fn remove_at(&mut self, index: usize) -> EfResult<()> {
         IDbSet::remove_at(self, index)
     }
 
-    /// Convenience inherent method — delegates to `IDbSet::clear_entries`.
+    /// Convenience inherent method �?delegates to `IDbSet::clear_entries`.
     pub fn clear_entries(&mut self) {
         IDbSet::clear_entries(self);
     }
 
-    /// Convenience inherent method — delegates to `IDbSet::len`.
+    /// Convenience inherent method �?delegates to `IDbSet::len`.
     pub fn len(&self) -> usize {
         IDbSet::len(self)
     }
 
-    /// Convenience inherent method — delegates to `IDbSet::is_empty`.
+    /// Convenience inherent method �?delegates to `IDbSet::is_empty`.
     pub fn is_empty(&self) -> bool {
         IDbSet::is_empty(self)
     }
 
-    /// Convenience inherent method — delegates to `IQueryable::query`.
+    /// Convenience inherent method �?delegates to `IQueryable::query`.
     pub fn query(&self) -> QueryBuilder<T> {
         IQueryable::query(self)
     }
@@ -145,6 +155,87 @@ impl<T: IEntityType> DbSet<T> {
     pub fn retain(&mut self, f: impl FnMut(&TrackedEntry<T>) -> bool) {
         self.entries.retain(f);
     }
+
+    /// Marks multiple entities as deleted.
+    pub fn remove_range(&mut self, entities: &[T])
+    where
+        T: PartialEq,
+    {
+        for entity in entities {
+            if let Some(entry) = self
+                .entries
+                .iter_mut()
+                .find(|e| e.entity == *entity)
+            {
+                entry.state = EntityState::Deleted;
+            }
+        }
+    }
+
+    /// Loads all rows from the database into the change tracker as Unchanged.
+    pub async fn load_all(&mut self) -> EfResult<()>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        let items = self.query().to_list().await?;
+        self.clear_entries();
+        for item in items {
+            self.attach(item);
+        }
+        Ok(())
+    }
+
+    /// Marks an entity as modified.
+    pub fn update(&mut self, entity: T) {
+        self.entries.push(TrackedEntry {
+            entity,
+            state: EntityState::Modified,
+            original: None,
+        });
+    }
+
+    /// Compares attached entities against their original snapshots and marks changes.
+    pub fn detect_changes(&mut self)
+    where
+        T: IEntitySnapshot,
+    {
+        for entry in &mut self.entries {
+            if entry.state != EntityState::Unchanged {
+                continue;
+            }
+            if let Some(ref original) = entry.original {
+                if entry.entity.snapshot() != *original {
+                    entry.state = EntityState::Modified;
+                }
+            }
+        }
+    }
+
+    /// Returns tracked entities in the given state with their original snapshots.
+    pub(crate) fn tracked_by_state(
+        &self,
+        state: EntityState,
+    ) -> Vec<(&T, Option<&HashMap<String, DbValue>>)> {
+        self.entries
+            .iter()
+            .filter(|e| e.state == state)
+            .map(|e| (&e.entity, e.original.as_ref()))
+            .collect()
+    }
+    pub async fn exists_by_id(&self, key_values: HashMap<String, DbValue>) -> EfResult<bool>
+    where
+        T: IFromRow,
+    {
+        self.query().find_by_key(&key_values).any().await
+    }
+
+    /// Starts a query filtered by a compile-time LINQ expression tree (`linq!(�?`).
+    pub fn filter<F>(&self, apply: F) -> QueryBuilder<T>
+    where
+        F: FnOnce(QueryBuilder<T>) -> QueryBuilder<T>,
+    {
+        apply(self.query())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,10 +244,14 @@ impl<T: IEntityType> DbSet<T> {
 
 impl<T: IEntityType> IQueryable<T> for DbSet<T> {
     fn query(&self) -> QueryBuilder<T> {
-        match &self.provider {
+        let mut qb = match &self.provider {
             Some(p) => QueryBuilder::with_provider(&self.table_name, p.clone()),
             None => QueryBuilder::new(&self.table_name),
+        };
+        if let Some(ref filter) = self.query_filter {
+            qb = qb.filter_raw(filter);
         }
+        qb
     }
 }
 
@@ -164,11 +259,12 @@ impl<T: IEntityType> IQueryable<T> for DbSet<T> {
 // IDbSet<T> implementation
 // ---------------------------------------------------------------------------
 
-impl<T: IEntityType> IDbSet<T> for DbSet<T> {
+impl<T: IEntityType + IEntitySnapshot> IDbSet<T> for DbSet<T> {
     fn add(&mut self, entity: T) {
         self.entries.push(TrackedEntry {
             entity,
             state: EntityState::Added,
+            original: None,
         });
     }
 
@@ -178,21 +274,23 @@ impl<T: IEntityType> IDbSet<T> for DbSet<T> {
         }
     }
 
-    fn remove_at(&mut self, index: usize) -> LrefResult<()> {
+    fn remove_at(&mut self, index: usize) -> EfResult<()> {
         if let Some(entry) = self.entries.get_mut(index) {
             entry.state = EntityState::Deleted;
             Ok(())
         } else {
-            Err(crate::error::LrefError::NotFound(
+            Err(crate::error::EfError::NotFound(
                 "Entity not found at the given index".to_string(),
             ))
         }
     }
 
     fn attach(&mut self, entity: T) {
+        let original = entity.snapshot();
         self.entries.push(TrackedEntry {
             entity,
             state: EntityState::Unchanged,
+            original: Some(original),
         });
     }
 

@@ -1,0 +1,21 @@
+[package]
+name = "rust-ef-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI for Rust Entity Framework migrations"
+keywords = ["orm", "efcore", "migration", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "rust-ef"
+path = "src/main.rs"
+
+[dependencies]
+rust-ef = { path = "../core" }
+rust-ef-sqlite = { path = "../sqlite" }
+rust-ef-postgres = { path = "../postgres" }
+rust-ef-mysql = { path = "../mysql" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

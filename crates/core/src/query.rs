@@ -1,12 +1,12 @@
-//! Query builder — LINQ-style chainable query API.
+//! Query builder ??LINQ-style chainable query API.
 //!
 //! Accumulates filter conditions, orderings, pagination, includes, and
 //! projection metadata through a fluent interface. Terminal methods
 //! (`to_list`, `first`, `count`, etc.) produce real SQL that can be
 //! executed against a database provider.
 
-use crate::entity::{IEntityType, IFromRow};
-use crate::error::LrefResult;
+use crate::entity::{IEntityType, IFromRow, INavigationSetter, IGetKeyValues, IEntitySnapshot};
+use crate::error::EfResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -20,36 +20,100 @@ use std::sync::Arc;
 pub struct FilterCondition {
     /// The column name this condition applies to.
     column: String,
-    /// SQL operator (e.g., "=", ">", "LIKE", "IS NULL").
+    /// SQL operator (e.g., "=", ">", "LIKE", "IN", "BETWEEN", "IS NULL").
     operator: String,
-    /// The typed parameter value (None = no value, e.g. IS NULL).
-    value: Option<DbValue>,
+    /// Number of bound parameters consumed by this condition.
+    param_count: usize,
 }
 
 impl FilterCondition {
     pub fn new(
         column: impl Into<String>,
         operator: impl Into<String>,
-        value: Option<DbValue>,
+        param_count: usize,
     ) -> Self {
         Self {
             column: column.into(),
             operator: operator.into(),
-            value,
+            param_count,
         }
     }
 
-    /// Convert to a SQL WHERE fragment using the given placeholder.
-    pub fn to_sql(&self, placeholder: &str) -> String {
-        match &self.value {
-            Some(_) => format!("{} {} {}", self.column, self.operator, placeholder),
-            None => format!("{} {}", self.column, self.operator),
+    /// Convert to a SQL WHERE fragment using dialect-specific placeholders.
+    pub fn to_sql(&self, placeholders: &[String]) -> String {
+        match self.operator.as_str() {
+            "IS NULL" => format!("{} IS NULL", self.column),
+            "IS NOT NULL" => format!("{} IS NOT NULL", self.column),
+            "IN" => format!("{} IN ({})", self.column, placeholders.join(", ")),
+            "BETWEEN" if placeholders.len() >= 2 => format!(
+                "{} BETWEEN {} AND {}",
+                self.column, placeholders[0], placeholders[1]
+            ),
+            op if self.param_count == 0 => format!("{} {}", self.column, op),
+            op => format!("{} {} {}", self.column, op, placeholders[0]),
         }
     }
 
-    /// Returns the DbValue parameter if one exists.
-    pub fn db_value(&self) -> Option<&DbValue> {
-        self.value.as_ref()
+    pub fn param_count(&self) -> usize {
+        self.param_count
+    }
+
+    pub fn column(&self) -> &str {
+        &self.column
+    }
+
+    pub fn operator(&self) -> &str {
+        &self.operator
+    }
+}
+
+/// Boolean expression AST for WHERE clauses.
+#[derive(Debug, Clone)]
+pub enum BoolExpr {
+    /// A single parameterized filter condition.
+    Filter(FilterCondition),
+    /// Raw SQL fragment (no parameters), e.g. global query filters.
+    Raw(String),
+    /// AND combination.
+    And(Box<BoolExpr>, Box<BoolExpr>),
+    /// OR combination.
+    Or(Box<BoolExpr>, Box<BoolExpr>),
+    /// NOT negation.
+    Not(Box<BoolExpr>),
+}
+
+impl BoolExpr {
+    pub fn filter(
+        column: impl Into<String>,
+        operator: impl Into<String>,
+        param_count: usize,
+    ) -> Self {
+        BoolExpr::Filter(FilterCondition::new(column, operator, param_count))
+    }
+
+    pub fn raw(sql: impl Into<String>) -> Self {
+        BoolExpr::Raw(sql.into())
+    }
+
+    pub fn and(self, other: BoolExpr) -> Self {
+        BoolExpr::And(Box::new(self), Box::new(other))
+    }
+
+    pub fn or(self, other: BoolExpr) -> Self {
+        BoolExpr::Or(Box::new(self), Box::new(other))
+    }
+
+    pub fn not(self) -> Self {
+        BoolExpr::Not(Box::new(self))
+    }
+
+    pub fn total_param_count(&self) -> usize {
+        match self {
+            BoolExpr::Filter(f) => f.param_count(),
+            BoolExpr::Raw(_) => 0,
+            BoolExpr::And(a, b) | BoolExpr::Or(a, b) => a.total_param_count() + b.total_param_count(),
+            BoolExpr::Not(inner) => inner.total_param_count(),
+        }
     }
 }
 
@@ -87,7 +151,8 @@ impl OrderBy {
 #[derive(Debug, Clone)]
 pub struct IncludePath {
     pub navigation: String,
-    pub nested: Vec<String>,
+    /// Nested ThenInclude paths (tree).
+    pub nested: Vec<IncludePath>,
     /// The related table name for JOIN generation.
     pub related_table: Option<String>,
     /// The foreign key column for the JOIN condition.
@@ -181,6 +246,8 @@ pub struct QueryState {
     pub aggregate_column: Option<String>,
     /// Collected parameter values in order of appearance.
     pub parameters: Vec<DbValue>,
+    /// Boolean WHERE expression (preferred over `filters`).
+    pub where_expr: Option<BoolExpr>,
 }
 
 impl QueryState {
@@ -201,11 +268,24 @@ impl QueryState {
             aggregate: None,
             aggregate_column: None,
             parameters: Vec::new(),
+            where_expr: None,
         }
     }
 
-    /// Compile the state into a SQL string with parameterized placeholders.
-    pub fn to_sql(&self) -> String {
+    fn append_bool_expr(&mut self, expr: BoolExpr) {
+        self.where_expr = Some(match self.where_expr.take() {
+            None => expr,
+            Some(existing) => BoolExpr::And(Box::new(existing), Box::new(expr)),
+        });
+    }
+
+    fn append_filter(&mut self, condition: FilterCondition) {
+        self.filters.push(condition.clone());
+        self.append_bool_expr(BoolExpr::Filter(condition));
+    }
+
+    /// Compile the state into a SQL string using the provider's placeholder style.
+    pub fn to_sql_with(&self, gen: &dyn crate::provider::ISqlGenerator) -> String {
         let select = if self.is_count {
             "SELECT COUNT(*)".to_string()
         } else if self.is_exists {
@@ -227,14 +307,14 @@ impl QueryState {
         }
 
         // WHERE
-        if !self.filters.is_empty() {
-            let clauses: Vec<String> = self
-                .filters
-                .iter()
-                .enumerate()
-                .map(|(i, f)| f.to_sql(&format!("${}", i + 1)))
-                .collect();
-            sql.push_str(&format!(" WHERE {}", clauses.join(" AND ")));
+        if let Some(ref expr) = self.where_expr {
+            let mut param_idx = 1usize;
+            sql.push_str(&format!(
+                " WHERE {}",
+                compile_bool_expr(expr, gen, &mut param_idx)
+            ));
+        } else if !self.filters.is_empty() {
+            sql.push_str(&format!(" WHERE {}", build_where_clauses(&self.filters, gen)));
         }
 
         // GROUP BY
@@ -270,9 +350,50 @@ impl QueryState {
         sql
     }
 
+    /// Compile SQL with `?` placeholders (SQLite/MySQL style).
+    pub fn to_sql(&self) -> String {
+        self.to_sql_with(&PortablePlaceholderGenerator)
+    }
+
     /// Returns the accumulated parameters.
     pub fn params(&self) -> &[DbValue] {
         &self.parameters
+    }
+}
+
+/// Fallback generator for SQL-only queries without an attached provider.
+struct PortablePlaceholderGenerator;
+
+impl crate::provider::ISqlGenerator for PortablePlaceholderGenerator {
+    fn select(&self, _: &str, _: &[&str]) -> String {
+        String::new()
+    }
+    fn insert(&self, _: &str, _: &[&str], _: bool) -> String {
+        String::new()
+    }
+    fn update(&self, _: &str, _: &[&str], _: &str) -> String {
+        String::new()
+    }
+    fn delete(&self, _: &str, _: &str) -> String {
+        String::new()
+    }
+    fn create_table(&self, _: &str, _: &[(String, String)]) -> String {
+        String::new()
+    }
+    fn drop_table(&self, _: &str) -> String {
+        String::new()
+    }
+    fn pagination(&self, _: Option<usize>, _: Option<usize>) -> String {
+        String::new()
+    }
+    fn parameter_placeholder(&self, _: usize) -> String {
+        "?".to_string()
+    }
+    fn quote_identifier(&self, identifier: &str) -> String {
+        format!("\"{}\"", identifier)
+    }
+    fn auto_increment_syntax(&self) -> &'static str {
+        "AUTOINCREMENT"
     }
 }
 
@@ -290,7 +411,7 @@ pub struct QueryBuilder<T: IEntityType> {
 }
 
 impl<T: IEntityType> QueryBuilder<T> {
-    /// Creates a new QueryBuilder for a given table (without provider — SQL-only).
+    /// Creates a new QueryBuilder for a given table (without provider ??SQL-only).
     pub fn new(table_name: impl Into<String>) -> Self {
         Self {
             state: QueryState::new(table_name),
@@ -316,24 +437,16 @@ impl<T: IEntityType> QueryBuilder<T> {
         &self.state
     }
 
-    // -------------------------------------------------------------------
-    // Chainable methods (each returns Self with accumulated state)
-    // -------------------------------------------------------------------
-
-    /// Adds a filter condition (WHERE clause).
-    pub fn filter<F>(mut self, _predicate: F) -> Self
-    where
-        F: Fn(&T) -> bool,
-    {
-        self.state.filters.push(FilterCondition::new(
-            "__filter__",
-            "=",
-            Some(DbValue::String("?".to_string())),
-        ));
-        self
+    /// Applies a compile-time LINQ expression tree from `linq!(?)`.
+    pub fn filter(self, f: impl FnOnce(Self) -> Self) -> Self {
+        f(self)
     }
 
-    /// Adds a named filter condition with a specific operator and DbValue.
+    // -------------------------------------------------------------------
+    // `linq!` expansion targets (`#[doc(hidden)]`)
+    // -------------------------------------------------------------------
+
+    #[doc(hidden)]
     pub fn filter_column(
         mut self,
         column: &str,
@@ -341,73 +454,64 @@ impl<T: IEntityType> QueryBuilder<T> {
         value: impl Into<DbValue>,
     ) -> Self {
         let db_val = value.into();
-        self.state.parameters.push(db_val.clone());
+        self.state.parameters.push(db_val);
         self.state
-            .filters
-            .push(FilterCondition::new(column, operator, Some(db_val)));
+            .append_filter(FilterCondition::new(column, operator, 1));
         self
     }
 
-    /// Finds an entity by its primary key.
-    /// For composite keys, use `find_by_key`.
-    pub fn find_by_id(mut self, id: i32) -> Self {
-        let val = DbValue::I32(id);
-        self.state.parameters.push(val.clone());
-        self.state
-            .filters
-            .push(FilterCondition::new("id", "=", Some(val)));
+    #[doc(hidden)]
+    pub fn filter_not(
+        mut self,
+        column: &str,
+        operator: &str,
+        value: impl Into<DbValue>,
+    ) -> Self {
+        let db_val = value.into();
+        self.state.parameters.push(db_val);
+        self.state.append_bool_expr(BoolExpr::Not(Box::new(BoolExpr::Filter(
+            FilterCondition::new(column, operator, 1),
+        ))));
         self
     }
 
-    /// Finds an entity by composite primary key values.
-    pub fn find_by_key(mut self, key_values: &std::collections::HashMap<String, DbValue>) -> Self {
-        for (col, val) in key_values {
-            self.state.parameters.push(val.clone());
-            self.state
-                .filters
-                .push(FilterCondition::new(col.as_str(), "=", Some(val.clone())));
-        }
-        self
-    }
-
-    /// Adds an IN condition (uses parameterized placeholders correctly).
-    pub fn filter_in(mut self, column: &str, values: Vec<impl Into<DbValue>>) -> Self {
-        let db_vals: Vec<DbValue> = values.into_iter().map(|v| v.into()).collect();
-        // Build parameterized placeholder list: the indices are determined
-        // by the current parameter count + each new value's position
-        let start = self.state.parameters.len() + 1;
-        let placeholders: Vec<String> = (0..db_vals.len())
-            .map(|i| format!("${}", start + i))
-            .collect();
-        for v in db_vals {
+    #[doc(hidden)]
+    pub fn filter_in(mut self, column: &str, values: Vec<DbValue>) -> Self {
+        let count = values.len();
+        for v in values {
             self.state.parameters.push(v);
         }
-        // Use None value so to_sql outputs just "column IN (...)" without extra placeholder
-        self.state.filters.push(FilterCondition::new(
-            column,
-            &format!("IN ({})", placeholders.join(", ")),
-            None,
-        ));
+        self.state.append_filter(FilterCondition::new(column, "IN", count));
         self
     }
 
-    /// Adds an IS NULL condition.
+    #[doc(hidden)]
+    pub fn filter_not_in(mut self, column: &str, values: Vec<DbValue>) -> Self {
+        let count = values.len();
+        for v in values {
+            self.state.parameters.push(v);
+        }
+        self.state.append_bool_expr(BoolExpr::Not(Box::new(BoolExpr::Filter(
+            FilterCondition::new(column, "IN", count),
+        ))));
+        self
+    }
+
+    #[doc(hidden)]
     pub fn filter_is_null(mut self, column: &str) -> Self {
         self.state
-            .filters
-            .push(FilterCondition::new(column, "IS NULL", None));
+            .append_filter(FilterCondition::new(column, "IS NULL", 0));
         self
     }
 
-    /// Adds an IS NOT NULL condition.
+    #[doc(hidden)]
     pub fn filter_is_not_null(mut self, column: &str) -> Self {
         self.state
-            .filters
-            .push(FilterCondition::new(column, "IS NOT NULL", None));
+            .append_filter(FilterCondition::new(column, "IS NOT NULL", 0));
         self
     }
 
-    /// Adds a BETWEEN low AND high condition.
+    #[doc(hidden)]
     pub fn filter_between(
         mut self,
         column: &str,
@@ -416,26 +520,23 @@ impl<T: IEntityType> QueryBuilder<T> {
     ) -> Self {
         let lo: DbValue = low.into();
         let hi: DbValue = high.into();
-        let start = self.state.parameters.len() + 1;
         self.state.parameters.push(lo);
         self.state.parameters.push(hi);
-        self.state.filters.push(FilterCondition::new(
-            column,
-            &format!("BETWEEN ${} AND ${}", start, start + 1),
-            None,
-        ));
+        self.state.append_filter(FilterCondition::new(column, "BETWEEN", 2));
         self
     }
 
-    /// Adds an ascending order-by clause on a named column.
-    pub fn order_by<V>(mut self, _accessor: fn(&T) -> &V) -> Self {
-        self.state
-            .orderings
-            .push(OrderBy::new("__order__", OrderDirection::Ascending));
-        self
+    #[doc(hidden)]
+    pub fn filter_like(self, column: &str, pattern: impl Into<DbValue>) -> Self {
+        self.filter_column(column, "LIKE", pattern)
     }
 
-    /// Adds a named ascending order-by.
+    #[doc(hidden)]
+    pub fn filter_not_like(self, column: &str, pattern: impl Into<DbValue>) -> Self {
+        self.filter_not(column, "LIKE", pattern)
+    }
+
+    #[doc(hidden)]
     pub fn order_by_column(mut self, column: &str) -> Self {
         self.state
             .orderings
@@ -443,20 +544,78 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
-    /// Adds a descending order-by clause.
-    pub fn order_by_desc<V>(mut self, _accessor: fn(&T) -> &V) -> Self {
-        self.state
-            .orderings
-            .push(OrderBy::new("__order__", OrderDirection::Descending));
-        self
-    }
-
-    /// Adds a named descending order-by.
+    #[doc(hidden)]
     pub fn order_by_desc_column(mut self, column: &str) -> Self {
         self.state
             .orderings
             .push(OrderBy::new(column, OrderDirection::Descending));
         self
+    }
+
+    /// Global query filter SQL (used by `ModelBuilder::has_query_filter`).
+    pub(crate) fn filter_raw(mut self, sql: &str) -> Self {
+        self.state.append_bool_expr(BoolExpr::Raw(sql.to_string()));
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn or_where(
+        mut self,
+        f: impl FnOnce(QueryBuilder<T>) -> QueryBuilder<T>,
+    ) -> Self {
+        let sub = f(QueryBuilder {
+            state: QueryState::new(&self.state.from),
+            provider: self.provider.clone(),
+            _phantom: PhantomData,
+        });
+        let right = sub.state.where_expr.or_else(|| {
+            if sub.state.filters.is_empty() {
+                None
+            } else {
+                Some(filters_to_and_expr(&sub.state.filters))
+            }
+        });
+        if let Some(right_expr) = right {
+            self.state.where_expr = Some(match self.state.where_expr.take() {
+                None => right_expr,
+                Some(left) => BoolExpr::Or(Box::new(left), Box::new(right_expr)),
+            });
+            self.state.parameters.extend(sub.state.parameters);
+            self.state.filters.extend(sub.state.filters);
+        }
+        self
+    }
+
+    // -------------------------------------------------------------------
+    // Chainable methods (each returns Self with accumulated state)
+    // -------------------------------------------------------------------
+
+    /// Finds an entity by its primary key.
+    /// For composite keys, use `find_by_key`.
+    pub fn find_by_id(mut self, id: i32) -> Self {
+        let val = DbValue::I32(id);
+        self.state.parameters.push(val);
+        self.state.append_filter(FilterCondition::new("id", "=", 1));
+        self
+    }
+
+    /// Finds an entity by composite primary key values.
+    pub fn find_by_key(mut self, key_values: &std::collections::HashMap<String, DbValue>) -> Self {
+        for (col, val) in key_values {
+            self.state.parameters.push(val.clone());
+            self.state.append_filter(FilterCondition::new(col.as_str(), "=", 1));
+        }
+        self
+    }
+
+    /// Adds a named ascending order-by (public API for non-linq ordering).
+    pub fn order_by(self, column: &str) -> Self {
+        self.order_by_column(column)
+    }
+
+    /// Adds a named descending order-by (public API for non-linq ordering).
+    pub fn order_by_desc(self, column: &str) -> Self {
+        self.order_by_desc_column(column)
     }
 
     /// Skips the specified number of rows.
@@ -471,55 +630,58 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
-    /// Eagerly loads a related navigation.
-    pub fn include<Nav>(mut self, _navigation: fn(&T) -> &Nav) -> Self {
-        self.state.includes.push(IncludePath {
-            navigation: "__include__".to_string(),
-            nested: Vec::new(),
-            related_table: None,
-            foreign_key_column: None,
-            referenced_key_column: None,
-        });
-        self
-    }
-
-    /// Eagerly loads a named navigation.
+    /// Eagerly loads a named navigation (resolves FK/table from entity metadata).
     pub fn include_named(mut self, navigation: &str) -> Self {
+        let meta = T::entity_meta();
+        let nav_meta = meta.find_navigation(navigation);
+        let (related_table, fk_col, ref_col) = nav_meta
+            .map(|n| {
+                (
+                    n.related_table.as_ref().map(|s| s.to_string()),
+                    n.fk_column.as_ref().map(|s| s.to_string()),
+                    n.referenced_key_column.as_ref().map(|s| s.to_string()),
+                )
+            })
+            .unwrap_or((None, None, None));
+
         self.state.includes.push(IncludePath {
             navigation: navigation.to_string(),
             nested: Vec::new(),
-            related_table: None,
-            foreign_key_column: None,
-            referenced_key_column: None,
+            related_table,
+            foreign_key_column: fk_col,
+            referenced_key_column: ref_col,
         });
         self
     }
 
-    /// Eagerly loads a named navigation with a full JOIN specification.
-    pub fn include_with_join(
-        mut self,
-        navigation: &str,
-        related_table: &str,
-        foreign_key: &str,
-        referenced_key: &str,
-        join_type: &str,
-    ) -> Self {
-        self.state.includes.push(IncludePath {
-            navigation: navigation.to_string(),
-            nested: Vec::new(),
-            related_table: Some(related_table.to_string()),
-            foreign_key_column: Some(foreign_key.to_string()),
-            referenced_key_column: Some(referenced_key.to_string()),
-        });
-        let on_clause = format!(
-            "{}.{} = {}.{}",
-            self.state.from, foreign_key, related_table, referenced_key
-        );
-        self.state.joins.push(JoinSpec {
-            join_type: join_type.to_string(),
-            table: related_table.to_string(),
-            on_clause,
-        });
+    /// Eagerly loads a nested navigation on the last `include_named` path.
+    pub fn then_include_named(mut self, navigation: &str) -> Self {
+        if let Some(last) = self.state.includes.last_mut() {
+            let parent_meta = T::entity_meta();
+            if let Some(parent_nav) = parent_meta.find_navigation(&last.navigation) {
+                if let Some(meta_fn) = parent_nav.related_entity_meta {
+                    let related_meta = meta_fn();
+                    if let Some(nav_meta) = related_meta.find_navigation(navigation) {
+                        last.nested.push(IncludePath {
+                            navigation: navigation.to_string(),
+                            nested: Vec::new(),
+                            related_table: nav_meta
+                                .related_table
+                                .as_ref()
+                                .map(|s| s.to_string()),
+                            foreign_key_column: nav_meta
+                                .fk_column
+                                .as_ref()
+                                .map(|s| s.to_string()),
+                            referenced_key_column: nav_meta
+                                .referenced_key_column
+                                .as_ref()
+                                .map(|s| s.to_string()),
+                        });
+                    }
+                }
+            }
+        }
         self
     }
 
@@ -563,35 +725,27 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
-    /// Eagerly loads a nested related navigation.
-    pub fn then_include<Nav, SubNav>(mut self, _navigation: fn(&Nav) -> &SubNav) -> Self {
-        if let Some(last) = self.state.includes.last_mut() {
-            last.nested.push("__then__".to_string());
-        }
-        self
-    }
-
     // -------------------------------------------------------------------
     // Aggregate terminal methods
     // -------------------------------------------------------------------
 
     /// Executes a SUM aggregation query.
-    pub async fn sum(self, column: &str) -> LrefResult<f64> {
+    pub async fn sum(self, column: &str) -> EfResult<f64> {
         let mut state = self.state.clone();
         state.aggregate = Some("SUM".to_string());
         state.aggregate_column = Some(column.to_string());
-        let sql = state.to_sql();
-        let params = state.params().to_vec();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
+        let sql = Self::compile_state_sql(&state, provider);
+        let params = state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
             first.trim().parse::<f64>().map_err(|_| {
-                crate::error::LrefError::TypeConversion("SUM result is not f64".to_string())
+                crate::error::EfError::TypeConversion("SUM result is not f64".to_string())
             })
         } else {
             Ok(0.0)
@@ -599,22 +753,22 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes an AVG aggregation query.
-    pub async fn avg(self, column: &str) -> LrefResult<f64> {
+    pub async fn avg(self, column: &str) -> EfResult<f64> {
         let mut state = self.state.clone();
         state.aggregate = Some("AVG".to_string());
         state.aggregate_column = Some(column.to_string());
-        let sql = state.to_sql();
-        let params = state.params().to_vec();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
+        let sql = Self::compile_state_sql(&state, provider);
+        let params = state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
             first.trim().parse::<f64>().map_err(|_| {
-                crate::error::LrefError::TypeConversion("AVG result is not f64".to_string())
+                crate::error::EfError::TypeConversion("AVG result is not f64".to_string())
             })
         } else {
             Ok(0.0)
@@ -622,34 +776,34 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes a MIN aggregation query.
-    pub async fn min<V>(self, column: &str) -> LrefResult<Option<String>> {
+    pub async fn min<V>(self, column: &str) -> EfResult<Option<String>> {
         let mut state = self.state.clone();
         state.aggregate = Some("MIN".to_string());
         state.aggregate_column = Some(column.to_string());
-        let sql = state.to_sql();
-        let params = state.params().to_vec();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
+        let sql = Self::compile_state_sql(&state, provider);
+        let params = state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         Ok(rows.first().and_then(|r| r.first().cloned()))
     }
 
     /// Executes a MAX aggregation query.
-    pub async fn max<V>(self, column: &str) -> LrefResult<Option<String>> {
+    pub async fn max<V>(self, column: &str) -> EfResult<Option<String>> {
         let mut state = self.state.clone();
         state.aggregate = Some("MAX".to_string());
         state.aggregate_column = Some(column.to_string());
-        let sql = state.to_sql();
-        let params = state.params().to_vec();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
+        let sql = Self::compile_state_sql(&state, provider);
+        let params = state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         Ok(rows.first().and_then(|r| r.first().cloned()))
@@ -659,28 +813,14 @@ impl<T: IEntityType> QueryBuilder<T> {
     // Terminal methods
     // -------------------------------------------------------------------
 
-    /// Projects to a different shape.
-    pub fn select<R, F>(self, _selector: F) -> SelectQueryBuilder<T, R>
-    where
-        F: Fn(&T) -> R,
-    {
-        let mut state = self.state.clone();
-        state.projected_columns = Some(vec!["__projected__".to_string()]);
-        SelectQueryBuilder::<T, R> {
-            state,
-            _phantom_t: PhantomData,
-            _phantom_r: PhantomData,
-        }
-    }
-
-    /// Projects to named columns.
-    pub fn select_columns(self, columns: &[&str]) -> SelectQueryBuilder<T, ()> {
+    /// Projects to named columns and returns raw row values.
+    pub fn select_columns(self, columns: &[&str]) -> SelectQueryBuilder<T> {
         let mut state = self.state.clone();
         state.projected_columns = Some(columns.iter().map(|s| s.to_string()).collect());
-        SelectQueryBuilder::<T, ()> {
+        SelectQueryBuilder {
             state,
-            _phantom_t: PhantomData,
-            _phantom_r: PhantomData,
+            provider: self.provider,
+            _phantom: PhantomData,
         }
     }
 
@@ -690,64 +830,95 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Builds the SQL string for this query.
     pub fn to_sql(&self) -> String {
-        self.state.to_sql()
+        if let Some(provider) = &self.provider {
+            let gen = provider.sql_generator();
+            self.state.to_sql_with(&*gen)
+        } else {
+            self.state.to_sql()
+        }
+    }
+
+    fn compile_sql(&self) -> (String, Vec<DbValue>) {
+        (self.to_sql(), self.state.params().to_vec())
+    }
+
+    fn compile_state_sql(state: &QueryState, provider: &Arc<dyn IDatabaseProvider>) -> String {
+        let gen = provider.sql_generator();
+        state.to_sql_with(&*gen)
     }
 
     /// Executes the query and returns all matching entities.
-    pub async fn to_list(self) -> LrefResult<Vec<T>>
+    pub async fn to_list(self) -> EfResult<Vec<T>>
     where
-        T: IFromRow,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
-        let sql = self.to_sql();
-        let params = self.state.params().to_vec();
+        let includes = self.state.includes.clone();
+        let (sql, params) = self.compile_sql();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to QueryBuilder. Use DbSet::query() or attach a provider."
                     .to_string(),
             )
         })?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
-        crate::entity::materialize_entities::<T>(&rows)
+        let mut entities = crate::entity::materialize_entities::<T>(&rows)?;
+        if !includes.is_empty() {
+            crate::navigation_loader::load_includes(
+                &mut entities,
+                &includes,
+                &**provider,
+            )
+            .await?;
+        }
+        Ok(entities)
+    }
+
+    /// Executes the query and eagerly loads included navigations.
+    pub async fn to_list_with_includes(self) -> EfResult<Vec<T>>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        self.to_list().await
     }
 
     /// Executes the query and returns the first matching entity.
-    pub async fn first(self) -> LrefResult<T>
+    pub async fn first(self) -> EfResult<T>
     where
-        T: IFromRow,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
         let mut results = self.take(1).to_list().await?;
         results
             .pop()
-            .ok_or_else(|| crate::error::LrefError::NotFound("Entity not found".to_string()))
+            .ok_or_else(|| crate::error::EfError::NotFound("Entity not found".to_string()))
     }
 
     /// Executes the query and returns the first matching entity or None.
-    pub async fn first_or_default(self) -> LrefResult<Option<T>>
+    pub async fn first_or_default(self) -> EfResult<Option<T>>
     where
-        T: IFromRow,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
         let mut results = self.take(1).to_list().await?;
         Ok(results.pop())
     }
 
     /// Executes a COUNT query.
-    pub async fn count(self) -> LrefResult<i64> {
+    pub async fn count(self) -> EfResult<i64> {
         let mut state = self.state.clone();
         state.is_count = true;
-        let sql = state.to_sql();
-        let params = state.params().to_vec();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
+        let sql = Self::compile_state_sql(&state, provider);
+        let params = state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first_row) = rows.first() {
             if let Some(first_val) = first_row.first() {
                 return first_val.trim().parse::<i64>().map_err(|e| {
-                    crate::error::LrefError::TypeConversion(format!(
+                    crate::error::EfError::TypeConversion(format!(
                         "COUNT result '{}' is not i64: {}",
                         first_val, e
                     ))
@@ -758,17 +929,17 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Checks if any entities match the query.
-    pub async fn any(self) -> LrefResult<bool> {
+    pub async fn any(self) -> EfResult<bool> {
         let mut state = self.state.clone();
         state.is_exists = true;
         state.limit = Some(1);
-        let sql = state.to_sql();
-        let params = state.params().to_vec();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
+        let sql = Self::compile_state_sql(&state, provider);
+        let params = state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         Ok(!rows.is_empty())
@@ -789,18 +960,25 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes a bulk delete operation.
-    pub async fn execute_delete(self) -> LrefResult<u64> {
-        let sql = format!(
-            "DELETE FROM {} {}",
-            self.state.from,
-            build_where(&self.state.filters)
-        );
-        let params = self.state.params().to_vec();
+    pub async fn execute_delete(self) -> EfResult<u64> {
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
+        let gen = provider.sql_generator();
+        let where_clause = if let Some(ref expr) = self.state.where_expr {
+            let mut param_idx = 1usize;
+            compile_bool_expr(expr, &*gen, &mut param_idx)
+        } else {
+            build_where_clauses(&self.state.filters, &*gen)
+        };
+        let sql = if where_clause.is_empty() {
+            format!("DELETE FROM {}", self.state.from)
+        } else {
+            format!("DELETE FROM {} WHERE {}", self.state.from, where_clause)
+        };
+        let params = self.state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         conn.execute(&sql, &params).await
     }
@@ -833,38 +1011,52 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
 
     /// Returns the generated SQL.
     pub fn to_sql(&self) -> String {
+        let gen = self
+            .provider
+            .as_ref()
+            .map(|p| p.sql_generator())
+            .unwrap_or_else(|| Box::new(PortablePlaceholderGenerator));
+        let mut param_idx = 1usize;
         let sets: Vec<String> = self
             .updates
             .iter()
-            .enumerate()
-            .map(|(i, (col, _))| format!("{} = ${}", col, i + 1))
+            .map(|(col, _)| {
+                let ph = gen.parameter_placeholder(param_idx);
+                param_idx += 1;
+                format!("{} = {}", col, ph)
+            })
             .collect();
-        let where_clause = build_where(&self.state.filters);
-        format!(
-            "UPDATE {} SET {} {}",
-            self.state.from,
-            sets.join(", "),
-            where_clause
-        )
+        let where_clause = if let Some(ref expr) = self.state.where_expr {
+            let mut param_idx = param_idx;
+            compile_bool_expr(expr, &*gen, &mut param_idx)
+        } else {
+            build_where_clause_with_offset(&self.state.filters, &*gen, param_idx)
+        };
+        if where_clause.is_empty() {
+            format!("UPDATE {} SET {}", self.state.from, sets.join(", "))
+        } else {
+            format!(
+                "UPDATE {} SET {} WHERE {}",
+                self.state.from,
+                sets.join(", "),
+                where_clause
+            )
+        }
     }
 
     /// Returns params for this bulk update.
     pub fn params(&self) -> Vec<DbValue> {
         let mut params: Vec<DbValue> = self.updates.iter().map(|(_, v)| v.clone()).collect();
-        for filter in &self.state.filters {
-            if let Some(v) = filter.db_value() {
-                params.push(v.clone());
-            }
-        }
+        params.extend_from_slice(&self.state.parameters);
         params
     }
 
     /// Executes the bulk update.
-    pub async fn execute(self) -> LrefResult<u64> {
+    pub async fn execute(self) -> EfResult<u64> {
         let sql = self.to_sql();
         let params = self.params();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::LrefError::Configuration(
+            crate::error::EfError::Configuration(
                 "No provider attached to ExecuteUpdateBuilder.".to_string(),
             )
         })?;
@@ -877,23 +1069,36 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
 // Select query builder (for projections)
 // ---------------------------------------------------------------------------
 
-/// A query builder for projected results.
-pub struct SelectQueryBuilder<T: IEntityType, R> {
+/// A query builder for projected column results.
+pub struct SelectQueryBuilder<T: IEntityType> {
     state: QueryState,
-    _phantom_t: PhantomData<T>,
-    _phantom_r: PhantomData<R>,
+    provider: Option<Arc<dyn IDatabaseProvider>>,
+    _phantom: PhantomData<T>,
 }
 
-impl<T: IEntityType, R> SelectQueryBuilder<T, R> {
+impl<T: IEntityType> SelectQueryBuilder<T> {
     /// Returns the generated SQL.
     pub fn to_sql(&self) -> String {
-        self.state.to_sql()
+        if let Some(provider) = &self.provider {
+            let gen = provider.sql_generator();
+            self.state.to_sql_with(&*gen)
+        } else {
+            self.state.to_sql()
+        }
     }
 
-    /// Executes the projection query.
-    pub async fn to_list(self) -> LrefResult<Vec<R>> {
-        let _sql = self.to_sql();
-        Ok(Vec::new())
+    /// Executes the projection query and returns raw column values per row.
+    pub async fn to_list(self) -> EfResult<Vec<Vec<String>>> {
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::EfError::Configuration(
+                "No provider attached to SelectQueryBuilder.".to_string(),
+            )
+        })?;
+        let gen = provider.sql_generator();
+        let sql = self.state.to_sql_with(&*gen);
+        let params = self.state.params().to_vec();
+        let mut conn = provider.get_connection().await?;
+        conn.query(&sql, &params).await
     }
 }
 
@@ -901,17 +1106,86 @@ impl<T: IEntityType, R> SelectQueryBuilder<T, R> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn build_where(filters: &[FilterCondition]) -> String {
-    if filters.is_empty() {
-        String::new()
-    } else {
-        let clauses: Vec<String> = filters
-            .iter()
-            .enumerate()
-            .map(|(i, f)| f.to_sql(&format!("${}", i + 1)))
-            .collect();
-        format!("WHERE {}", clauses.join(" AND "))
+fn filters_to_and_expr(filters: &[FilterCondition]) -> BoolExpr {
+    filters
+        .iter()
+        .cloned()
+        .map(BoolExpr::Filter)
+        .reduce(|acc, f| BoolExpr::And(Box::new(acc), Box::new(f)))
+        .unwrap_or(BoolExpr::Raw("1=1".to_string()))
+}
+
+fn compile_bool_expr(
+    expr: &BoolExpr,
+    gen: &dyn crate::provider::ISqlGenerator,
+    param_idx: &mut usize,
+) -> String {
+    match expr {
+        BoolExpr::Filter(f) => {
+            let placeholders: Vec<String> = (0..f.param_count())
+                .map(|i| gen.parameter_placeholder(*param_idx + i))
+                .collect();
+            *param_idx += f.param_count();
+            f.to_sql(&placeholders)
+        }
+        BoolExpr::Raw(sql) => sql.clone(),
+        BoolExpr::And(a, b) => format!(
+            "({}) AND ({})",
+            compile_bool_expr(a, gen, param_idx),
+            compile_bool_expr(b, gen, param_idx)
+        ),
+        BoolExpr::Or(a, b) => format!(
+            "({}) OR ({})",
+            compile_bool_expr(a, gen, param_idx),
+            compile_bool_expr(b, gen, param_idx)
+        ),
+        BoolExpr::Not(inner) => format!("NOT ({})", compile_bool_expr(inner, gen, param_idx)),
     }
+}
+
+fn build_where_clauses(filters: &[FilterCondition], gen: &dyn crate::provider::ISqlGenerator) -> String {
+    build_where_clause_with_offset(filters, gen, 1)
+}
+
+fn build_where_clause_with_offset(
+    filters: &[FilterCondition],
+    gen: &dyn crate::provider::ISqlGenerator,
+    start_index: usize,
+) -> String {
+    if filters.is_empty() {
+        return String::new();
+    }
+    let mut param_idx = start_index;
+    let clauses: Vec<String> = filters
+        .iter()
+        .map(|f| {
+            let placeholders: Vec<String> = (0..f.param_count())
+                .map(|i| gen.parameter_placeholder(param_idx + i))
+                .collect();
+            param_idx += f.param_count();
+            f.to_sql(&placeholders)
+        })
+        .collect();
+    clauses.join(" AND ")
+}
+
+// ---------------------------------------------------------------------------
+// LINQ string pattern helpers
+// ---------------------------------------------------------------------------
+
+/// Builds a `%value%` LIKE pattern (EFCore `Contains`).
+pub fn like_contains(value: impl AsRef<str>) -> String {
+    format!("%{}%", value.as_ref())
+}
+
+/// Builds a `value%` LIKE pattern (EFCore `StartsWith`).
+pub fn like_starts_with(value: impl AsRef<str>) -> String {
+    format!("{}%", value.as_ref())
+}
+
+/// Builds a `%value` LIKE pattern (EFCore `EndsWith`).
+pub fn like_ends_with(value: impl AsRef<str>) -> String {
+    format!("%{}", value.as_ref())
 }
 
 // ---------------------------------------------------------------------------

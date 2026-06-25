@@ -1,13 +1,13 @@
 //! Model metadata types for describing entities, properties, and relationships.
 //!
-//! These types form the metadata layer of lref, analogous to EFCore's
+//! These types form the metadata layer of rust-ef, analogous to EFCore's
 //! `IEntityType`, `IProperty`, `INavigation`, etc.
 
 use std::borrow::Cow;
 use std::any::TypeId;
 
 // ---------------------------------------------------------------------------
-// PropertyMeta — describes a single column / property
+// PropertyMeta ?describes a single column / property
 // ---------------------------------------------------------------------------
 
 /// Metadata describing a property (column) of an entity type.
@@ -124,18 +124,20 @@ impl PropertyMetaBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// NavigationMeta — describes a navigation property (relationship)
+// NavigationMeta ?describes a navigation property (relationship)
 // ---------------------------------------------------------------------------
 
 /// Describes the type of navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavigationKind {
-    /// BelongsTo<T> — reference to a single related entity (FK on this side).
+    /// BelongsTo<T> ?reference to a single related entity (FK on this side).
     BelongsTo,
-    /// HasOne<T> — reference to a single related entity (FK on other side).
+    /// HasOne<T> ?reference to a single related entity (FK on other side).
     HasOne,
-    /// HasMany<T> — collection of related entities.
+    /// HasMany<T> ?collection of related entities.
     HasMany,
+    /// HasMany<T, Join> ?many-to-many via join entity.
+    ManyToMany,
 }
 
 /// Metadata describing a navigation property (relationship).
@@ -156,10 +158,32 @@ pub struct NavigationMeta {
     pub inverse_navigation: Option<Cow<'static, str>>,
     /// For many-to-many: the join entity TypeId.
     pub through_type_id: Option<TypeId>,
+    /// Join table name (many-to-many).
+    pub through_table: Option<Cow<'static, str>>,
+    /// FK column on the join table pointing to the principal entity.
+    pub through_parent_fk: Option<Cow<'static, str>>,
+    /// FK column on the join table pointing to the related entity.
+    pub through_related_fk: Option<Cow<'static, str>>,
+    /// Column index in join-table rows for the principal FK.
+    pub through_parent_fk_index: usize,
+    /// Column index in join-table rows for the related FK.
+    pub through_related_fk_index: usize,
+    /// Related entity table name (for eager loading).
+    pub related_table: Option<Cow<'static, str>>,
+    /// Foreign key column on the dependent/related table.
+    pub fk_column: Option<Cow<'static, str>>,
+    /// Referenced key column on the principal table.
+    pub referenced_key_column: Option<Cow<'static, str>>,
+    /// Column index in `SELECT *` rows for the FK (HasMany grouping).
+    pub fk_row_index: usize,
+    /// Column index in `SELECT *` rows for the related PK (BelongsTo lookup).
+    pub pk_row_index: usize,
+    /// Resolves metadata for the related entity type (nested Include / ThenInclude).
+    pub related_entity_meta: Option<fn() -> EntityTypeMeta>,
 }
 
 // ---------------------------------------------------------------------------
-// EntityTypeMeta — describes an entity type as a whole
+// EntityTypeMeta ?describes an entity type as a whole
 // ---------------------------------------------------------------------------
 
 /// Metadata describing an entity type.

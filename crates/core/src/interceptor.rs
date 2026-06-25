@@ -1,4 +1,4 @@
-//! SaveChanges interceptor — hooks into the DbContext lifecycle.
+//! SaveChanges interceptor �?hooks into the DbContext lifecycle.
 //!
 //! Provides an interception pipeline analogous to EFCore's
 //! `ISaveChangesInterceptor`: before/after save, and on failure.
@@ -13,19 +13,19 @@
 //!
 //! #[async_trait::async_trait]
 //! impl ISaveChangesInterceptor for AuditInterceptor {
-//!     async fn on_saving(&self, ctx: &SaveChangesContext) -> LrefResult<()> {
+//!     async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
 //!         println!("Saving {} entries", ctx.entries().len());
 //!         Ok(())
 //!     }
 //! }
 //! ```
 
-use crate::error::{LrefError, LrefResult};
+use crate::error::{EfError, EfResult};
 use crate::tracking::{ChangeTracker, EntityEntry};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// SaveChangesContext — context passed to interceptor hooks
+// SaveChangesContext �?context passed to interceptor hooks
 // ---------------------------------------------------------------------------
 
 /// Read-only snapshot of the save operation, passed to interceptors.
@@ -49,7 +49,7 @@ pub struct SaveChangesContext {
 impl SaveChangesContext {
     /// Creates a context from the current change tracker state.
     ///
-    /// This takes an owned snapshot — no borrow is retained.
+    /// This takes an owned snapshot �?no borrow is retained.
     pub fn from_tracker(tracker: &ChangeTracker) -> Self {
         let entries = tracker.entries();
         let added_count = tracker.count_by_state(crate::entity::EntityState::Added);
@@ -91,7 +91,7 @@ impl SaveChangesContext {
 }
 
 // ---------------------------------------------------------------------------
-// SaveChangesResultContext — post-save context
+// SaveChangesResultContext �?post-save context
 // ---------------------------------------------------------------------------
 
 /// Context passed to interceptors after a successful save.
@@ -110,7 +110,7 @@ impl SaveChangesResultContext {
 }
 
 // ---------------------------------------------------------------------------
-// ISaveChangesInterceptor — the interceptor trait
+// ISaveChangesInterceptor �?the interceptor trait
 // ---------------------------------------------------------------------------
 
 /// Interface for intercepting `save_changes()` operations.
@@ -121,7 +121,7 @@ impl SaveChangesResultContext {
 /// # Lifecycle
 ///
 /// ```text
-/// on_saving(ctx) → [execute SQL] → on_saved(ctx, result)
+/// on_saving(ctx) �?[execute SQL] �?on_saved(ctx, result)
 ///                                    on_save_failed(ctx, error)  (if error)
 /// ```
 #[async_trait::async_trait]
@@ -131,7 +131,7 @@ pub trait ISaveChangesInterceptor: Send + Sync {
     /// Return `Err(...)` to abort the save. The transaction will be
     /// rolled back and `on_save_failed` will NOT be called (this is
     /// a pre-commit rejection, not a database failure).
-    async fn on_saving(&self, _ctx: &SaveChangesContext) -> LrefResult<()> {
+    async fn on_saving(&self, _ctx: &SaveChangesContext) -> EfResult<()> {
         Ok(())
     }
 
@@ -140,7 +140,7 @@ pub trait ISaveChangesInterceptor: Send + Sync {
         &self,
         _ctx: &SaveChangesContext,
         _result: &SaveChangesResultContext,
-    ) -> LrefResult<()> {
+    ) -> EfResult<()> {
         Ok(())
     }
 
@@ -149,13 +149,13 @@ pub trait ISaveChangesInterceptor: Send + Sync {
     /// The transaction has already been rolled back at this point.
     /// The error is passed by reference for inspection; the interceptor
     /// cannot suppress it.
-    async fn on_save_failed(&self, _ctx: &SaveChangesContext, _error: &LrefError) {
+    async fn on_save_failed(&self, _ctx: &SaveChangesContext, _error: &EfError) {
         // default: no-op
     }
 }
 
 // ---------------------------------------------------------------------------
-// InterceptorPipeline — ordered chain of interceptors
+// InterceptorPipeline �?ordered chain of interceptors
 // ---------------------------------------------------------------------------
 
 /// An ordered, immutable chain of save-changes interceptors.
@@ -172,7 +172,7 @@ impl InterceptorPipeline {
 
     /// Runs all `on_saving` hooks in registration order.
     /// Aborts early if any interceptor returns an error.
-    pub async fn on_saving(&self, ctx: &SaveChangesContext) -> LrefResult<()> {
+    pub async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
         for interceptor in &self.interceptors {
             interceptor.on_saving(ctx).await?;
         }
@@ -184,7 +184,7 @@ impl InterceptorPipeline {
         &self,
         ctx: &SaveChangesContext,
         result: &SaveChangesResultContext,
-    ) -> LrefResult<()> {
+    ) -> EfResult<()> {
         for interceptor in &self.interceptors {
             interceptor.on_saved(ctx, result).await?;
         }
@@ -192,8 +192,8 @@ impl InterceptorPipeline {
     }
 
     /// Runs all `on_save_failed` hooks. Errors from these hooks are
-    /// intentionally swallowed — they must not mask the original error.
-    pub async fn on_save_failed(&self, ctx: &SaveChangesContext, error: &LrefError) {
+    /// intentionally swallowed �?they must not mask the original error.
+    pub async fn on_save_failed(&self, ctx: &SaveChangesContext, error: &EfError) {
         for interceptor in &self.interceptors {
             interceptor.on_save_failed(ctx, error).await;
         }

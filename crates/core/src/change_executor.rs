@@ -5,8 +5,8 @@
 //! DML, and executes it against the database via the provider.
 
 use crate::entity::{IEntitySnapshot, IEntityType, IGetKeyValues};
-use crate::error::LrefResult;
-use crate::metadata::EntityTypeMeta;
+use crate::error::{EfError, EfResult};
+use crate::metadata::{EntityTypeMeta, PropertyMeta};
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
 use std::collections::HashMap;
 
@@ -23,7 +23,7 @@ impl ChangeExecutor {
         provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta)],
         mut on_key_backfill: F,
-    ) -> LrefResult<usize>
+    ) -> EfResult<usize>
     where
         E: IEntityType + IEntitySnapshot + IGetKeyValues,
         F: FnMut(usize, i64),
@@ -38,7 +38,6 @@ impl ChangeExecutor {
                 continue;
             }
 
-            // Build column list (exclude auto-increment primary keys for INSERT)
             let insert_cols: Vec<&str> = scalar_props
                 .iter()
                 .filter(|p| !p.is_auto_increment || !p.is_primary_key)
@@ -62,7 +61,6 @@ impl ChangeExecutor {
             let sql = gen.insert(meta.table_name.as_ref(), &insert_cols, true);
             let rows = conn.execute(&sql, &params).await?;
 
-            // Backfill auto-generated key from RETURNING
             if rows > 0 {
                 on_key_backfill(idx, rows as i64);
                 inserted += 1;
@@ -73,23 +71,23 @@ impl ChangeExecutor {
     }
 
     /// Executes UPDATE statements for all modified entities.
+    /// Uses original snapshots for optimistic concurrency tokens in the WHERE clause.
     pub async fn execute_updates<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
-        entities: &[(&E, &EntityTypeMeta)],
-    ) -> LrefResult<usize>
+        entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
+    ) -> EfResult<usize>
     where
         E: IEntityType + IEntitySnapshot + IGetKeyValues,
     {
         let gen = provider.sql_generator();
         let mut updated = 0;
 
-        for (_entity, meta) in entities {
-            let snap = _entity.snapshot();
-            let keys = _entity.key_values();
+        for (entity, meta, original) in entities {
+            let snap = entity.snapshot();
+            let keys = entity.key_values();
             let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
 
-            // SET columns = non-PK + non-auto-increment
             let set_cols: Vec<&str> = scalar_props
                 .iter()
                 .filter(|p| !p.is_primary_key)
@@ -100,27 +98,25 @@ impl ChangeExecutor {
                 continue;
             }
 
-            // Build WHERE clause from primary key
-            let where_parts: Vec<String> = keys
-                .keys()
-                .enumerate()
-                .map(|(i, k)| {
-                    format!(
-                        "{} = {}",
-                        gen.quote_identifier(k),
-                        gen.parameter_placeholder(i + 1)
-                    )
-                })
+            let concurrency_tokens: Vec<&PropertyMeta> = scalar_props
+                .iter()
+                .copied()
+                .filter(|p| p.is_concurrency_token)
                 .collect();
-            let where_clause = where_parts.join(" AND ");
+
+            let (where_clause, where_params) = build_where_with_concurrency(
+                &*gen,
+                &keys,
+                &concurrency_tokens,
+                *original,
+                set_cols.len() + 1,
+            )?;
 
             let sql = gen.update(meta.table_name.as_ref(), &set_cols, &where_clause);
 
-            // Params: SET values first, then WHERE values
             let mut params: Vec<DbValue> = set_cols
                 .iter()
                 .map(|col| {
-                    // Map column_name back to field_name
                     let prop = scalar_props.iter().find(|p| p.column_name.as_ref() == *col);
                     match prop {
                         Some(p) => snap
@@ -131,15 +127,16 @@ impl ChangeExecutor {
                     }
                 })
                 .collect();
-
-            for (_k, v) in &keys {
-                params.push(v.clone());
-            }
+            params.extend(where_params);
 
             let rows = conn.execute(&sql, &params).await?;
-            if rows > 0 {
-                updated += 1;
+            if rows == 0 {
+                return Err(EfError::ConcurrencyConflict(format!(
+                    "update affected 0 rows on {} (row may have been modified or deleted)",
+                    meta.table_name
+                )));
             }
+            updated += 1;
         }
 
         Ok(updated)
@@ -149,44 +146,92 @@ impl ChangeExecutor {
     pub async fn execute_deletes<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
-        entities: &[(&E, &EntityTypeMeta)],
-    ) -> LrefResult<usize>
+        entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
+    ) -> EfResult<usize>
     where
         E: IEntityType + IGetKeyValues,
     {
         let gen = provider.sql_generator();
         let mut deleted = 0;
 
-        for (_entity, meta) in entities {
-            let keys = _entity.key_values();
+        for (entity, meta, original) in entities {
+            let keys = entity.key_values();
             if keys.is_empty() {
                 continue;
             }
 
-            let where_parts: Vec<String> = keys
-                .keys()
-                .enumerate()
-                .map(|(i, k)| {
-                    format!(
-                        "{} = {}",
-                        gen.quote_identifier(k),
-                        gen.parameter_placeholder(i + 1)
-                    )
-                })
+            let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+            let concurrency_tokens: Vec<&PropertyMeta> = scalar_props
+                .iter()
+                .copied()
+                .filter(|p| p.is_concurrency_token)
                 .collect();
-            let where_clause = where_parts.join(" AND ");
+
+            let (where_clause, where_params) = build_where_with_concurrency(
+                &*gen,
+                &keys,
+                &concurrency_tokens,
+                *original,
+                1,
+            )?;
 
             let sql = gen.delete(meta.table_name.as_ref(), &where_clause);
-
-            let params: Vec<DbValue> = keys.values().cloned().collect();
-            let rows = conn.execute(&sql, &params).await?;
-            if rows > 0 {
-                deleted += 1;
+            let rows = conn.execute(&sql, &where_params).await?;
+            if rows == 0 {
+                return Err(EfError::ConcurrencyConflict(format!(
+                    "delete affected 0 rows on {} (row may have been modified or deleted)",
+                    meta.table_name
+                )));
             }
+            deleted += 1;
         }
 
         Ok(deleted)
     }
+}
+
+fn build_where_with_concurrency(
+    gen: &dyn crate::provider::ISqlGenerator,
+    keys: &HashMap<String, DbValue>,
+    concurrency_tokens: &[&PropertyMeta],
+    original: Option<&HashMap<String, DbValue>>,
+    start_param_idx: usize,
+) -> EfResult<(String, Vec<DbValue>)> {
+    let mut where_parts: Vec<String> = keys
+        .keys()
+        .enumerate()
+        .map(|(i, k)| {
+            format!(
+                "{} = {}",
+                gen.quote_identifier(k),
+                gen.parameter_placeholder(start_param_idx + i)
+            )
+        })
+        .collect();
+
+    let mut params: Vec<DbValue> = keys.values().cloned().collect();
+    let mut next_idx = start_param_idx + keys.len();
+
+    for token in concurrency_tokens {
+        where_parts.push(format!(
+            "{} = {}",
+            gen.quote_identifier(token.column_name.as_ref()),
+            gen.parameter_placeholder(next_idx)
+        ));
+        next_idx += 1;
+
+        let original_val = original
+            .and_then(|o| o.get(token.field_name.as_ref()))
+            .ok_or_else(|| {
+                EfError::ChangeTracking(format!(
+                    "missing original concurrency token for '{}'",
+                    token.field_name
+                ))
+            })?;
+        params.push(original_val.clone());
+    }
+
+    Ok((where_parts.join(" AND "), params))
 }
 
 // ---------------------------------------------------------------------------

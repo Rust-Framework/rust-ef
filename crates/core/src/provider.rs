@@ -3,12 +3,12 @@
 //! Corresponds to EFCore's database provider model, allowing multiple
 //! database backends (PostgreSQL, MySQL, SQLite, etc.) to be plugged in.
 
-use crate::error::LrefResult;
+use crate::error::EfResult;
 use async_trait::async_trait;
 use std::fmt;
 
 /// A typed database parameter value for parameterized queries.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DbValue {
     Null,
     Bool(bool),
@@ -48,9 +48,19 @@ impl From<i32> for DbValue {
         DbValue::I32(v)
     }
 }
+impl From<&i32> for DbValue {
+    fn from(v: &i32) -> Self {
+        DbValue::I32(*v)
+    }
+}
 impl From<i64> for DbValue {
     fn from(v: i64) -> Self {
         DbValue::I64(v)
+    }
+}
+impl From<&i64> for DbValue {
+    fn from(v: &i64) -> Self {
+        DbValue::I64(*v)
     }
 }
 impl From<String> for DbValue {
@@ -128,15 +138,15 @@ pub trait ISqlGenerator: Send + Sync {
 #[async_trait]
 pub trait IAsyncConnection: Send + Sync {
     /// Executes a query with parameters and returns the number of affected rows.
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<u64>;
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64>;
     /// Executes a query with parameters and returns rows.
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> LrefResult<Vec<Vec<String>>>;
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>>;
     /// Begins a transaction.
-    async fn begin_transaction(&mut self) -> LrefResult<()>;
+    async fn begin_transaction(&mut self) -> EfResult<()>;
     /// Commits the current transaction.
-    async fn commit_transaction(&mut self) -> LrefResult<()>;
+    async fn commit_transaction(&mut self) -> EfResult<()>;
     /// Rolls back the current transaction.
-    async fn rollback_transaction(&mut self) -> LrefResult<()>;
+    async fn rollback_transaction(&mut self) -> EfResult<()>;
 }
 
 /// The database provider abstraction.
@@ -147,11 +157,14 @@ pub trait IDatabaseProvider: Send + Sync {
     fn sql_generator(&self) -> Box<dyn ISqlGenerator>;
 
     /// Gets an async database connection from the pool.
-    async fn get_connection(&self) -> LrefResult<Box<dyn IAsyncConnection>>;
+    async fn get_connection(&self) -> EfResult<Box<dyn IAsyncConnection>>;
 
     /// Executes a migration command (DDL).
-    async fn execute_migration_command(&self, sql: &str) -> LrefResult<()>;
+    async fn execute_migration_command(&self, sql: &str) -> EfResult<()>;
 
     /// Returns the provider name (e.g., "PostgreSQL", "MySQL").
     fn name(&self) -> &str;
+
+    /// Returns the migration dialect for this provider.
+    fn migration_dialect(&self) -> crate::migration::MigrationDialect;
 }

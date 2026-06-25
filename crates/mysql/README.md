@@ -68,4 +68,4 @@ let rows = conn.query(
 
 ## License
 
-MIT — see [LICENSE](../../LICENSE)
+MIT  - ?see [LICENSE](../../LICENSE)

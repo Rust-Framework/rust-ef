@@ -6,7 +6,9 @@
 #[cfg(test)]
 mod sqlite_crud {
     use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
-    use rust_ef::error::LrefResult;
+    use rust_ef::linq;
+    use rust_ef::prelude::*;
+    use rust_ef::error::EfResult;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
     use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
@@ -23,6 +25,12 @@ mod sqlite_crud {
         pub id: i32,
         pub name: String,
         pub value: f64,
+    }
+
+    impl TestItem {
+        pub const COLUMN_ID: &'static str = "id";
+        pub const COLUMN_NAME: &'static str = "name";
+        pub const COLUMN_VALUE: &'static str = "value";
     }
 
     impl IEntityType for TestItem {
@@ -85,7 +93,7 @@ mod sqlite_crud {
     }
 
     impl IFromRow for TestItem {
-        fn from_row(values: &[String]) -> LrefResult<Self> {
+        fn from_row(values: &[String]) -> EfResult<Self> {
             Ok(TestItem {
                 id: values.get(0).and_then(|s| s.parse().ok()).unwrap_or(0),
                 name: values.get(1).cloned().unwrap_or_default(),
@@ -112,11 +120,13 @@ mod sqlite_crud {
         }
     }
 
+    impl rust_ef::entity::INavigationSetter for TestItem {}
+
     // -----------------------------------------------------------------------
     // Helper: create table via migration engine
     // -----------------------------------------------------------------------
 
-    async fn create_table(provider: &SqliteProvider, _table_name: &str) -> LrefResult<()> {
+    async fn create_table(provider: &SqliteProvider, _table_name: &str) -> EfResult<()> {
         let engine = MigrationEngine::new(MigrationDialect::Sqlite);
         let meta = TestItem::entity_meta();
         let migration = engine.generate("init", &[meta], &None)?;
@@ -220,28 +230,25 @@ mod sqlite_crud {
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
-        // Query with filter
+        // Query with linq filter
         let items = db_set
-            .query()
-            .filter_column("value", ">", 1.5)
+            .filter(linq!(TestItem, |t| t.value > 1.5))
             .to_list()
             .await
             .unwrap();
         assert_eq!(items.len(), 2);
 
-        // Query with IS NULL
+        // Query with IS NULL via linq
         let items_null = db_set
-            .query()
-            .filter_is_null("value")
+            .filter(linq!(TestItem, |t| t.value.is_null()))
             .to_list()
             .await
             .unwrap();
         assert_eq!(items_null.len(), 0);
 
-        // Query with IS NOT NULL
+        // Query with IS NOT NULL via linq
         let items_not_null = db_set
-            .query()
-            .filter_is_not_null("name")
+            .filter(linq!(TestItem, |t| t.name.is_not_null()))
             .to_list()
             .await
             .unwrap();
@@ -309,16 +316,14 @@ mod sqlite_crud {
         assert_eq!(count, 5);
 
         let any = db_set
-            .query()
-            .filter_column("value", "=", 3)
+            .filter(linq!(TestItem, |t| t.value == 3))
             .any()
             .await
             .unwrap();
         assert!(any);
 
         let any_none = db_set
-            .query()
-            .filter_column("value", "=", 99)
+            .filter(linq!(TestItem, |t| t.value == 99))
             .any()
             .await
             .unwrap();
@@ -420,5 +425,57 @@ mod sqlite_crud {
 
         let first = db_set.query().first_or_default().await.unwrap();
         assert!(first.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_created_and_deleted() {
+        use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+        use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
+
+        let mut builder = DbContextOptionsBuilder::new();
+        builder.use_sqlite_in_memory();
+        let options = builder.build();
+        let mut ctx = DbContext::from_options(&options).expect("create context");
+        ctx.set::<TestItem>();
+
+        ctx.ensure_created().await.expect("ensure_created");
+        ctx.set::<TestItem>().add(TestItem {
+            id: 0,
+            name: "Created".into(),
+            value: 1.0,
+        });
+        let result = ctx.save_changes().await.expect("save");
+        assert_eq!(result.added, 1);
+
+        let items = ctx.set::<TestItem>().query().to_list().await.unwrap();
+        assert_eq!(items.len(), 1);
+
+        ctx.ensure_deleted().await.expect("ensure_deleted");
+        ctx.ensure_created().await.expect("recreate after delete");
+        let items = ctx.set::<TestItem>().query().to_list().await.unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_has_data_seed_on_ensure_created() {
+        use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+        use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
+
+        let mut builder = DbContextOptionsBuilder::new();
+        builder.use_sqlite_in_memory();
+        let mut ctx = DbContext::from_options(&builder.build()).expect("create context");
+
+        ctx.model().entity::<TestItem>().has_data(&[TestItem {
+            id: 1,
+            name: "Seed".into(),
+            value: 9.0,
+        }]);
+        ctx.set::<TestItem>();
+        ctx.ensure_created().await.expect("ensure_created");
+
+        let items = ctx.set::<TestItem>().query().to_list().await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Seed");
+        assert!((items[0].value - 9.0).abs() < f64::EPSILON);
     }
 }

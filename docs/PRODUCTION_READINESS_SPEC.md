@@ -1,367 +1,347 @@
-# lref 生产就绪技术规格说明书
+# rust-ef 生产就绪技术规格说明书
 
-> 版本: v0.2 - 基于 2026-06-11 审计结果  
+> 版本: v0.3.5 — 基于 2026-06-25 审计结果  
+> 包名: `rust-ef`（workspace: `crates/core`）  
 > 目标: 逐步推进至 v1.0 生产就绪状态  
-> 当前阶段: Alpha 2 (35-40% 就绪度)
+> **当前阶段: RC 1 进行中（约 78% 就绪度）**
+
+---
+
+## 执行摘要
+
+rust-ef v0.3.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API、DI 集成。在 **SQLite** 上有完整的 CRUD 集成测试（46 个测试全绿）。
+
+**尚不具备通用生产条件**，主要缺口：CLI 工具、PostgreSQL/MySQL 集成验证、乐观并发、完整迁移 history 工作流、CI 流水线。
+
+| 场景 | 建议 |
+|------|------|
+| SQLite 原型 / 内部工具 | 可用，需了解限制 |
+| PostgreSQL / MySQL 生产 | 需自行集成测试后再用 |
+| 多写并发 + 乐观锁 | 不可用 |
+| 团队迁移 CLI 工作流 | 不可用 |
 
 ---
 
 ## 里程碑总览
 
 ```
-Alpha 2 ──► Beta 1 ──► RC 1 ──► 1.0
- (当前)     (6周)     (4周)    (2周)
+Alpha 2 (35%) ──► 当前 v0.3.5 (~60%) ──► Beta 1 ──► RC 1 ──► 1.0
+                      ↑
+              Beta1 核心项大部分完成
+              RC1 部分完成；运维项仍缺
 ```
+
+---
+
+## 当前已实现能力清单
+
+### 架构（v0.3+）
+
+| 能力 | 状态 | 位置 |
+|------|:----:|------|
+| 类型映射 `DbContext`（`ctx.set::<T>()`） | ✅ | `crates/core/src/db_context.rs` |
+| `Arc<dyn IDbContext>` DI | ✅ | `crates/core/src/di.rs` |
+| Keyed 多库注册 | ✅ | `add_dbcontext_keyed` |
+| Provider 工厂注入 | ✅ | `DbContextOptions::provider_factory` |
+| `SetOps<T>` 类型擦除 SaveChanges | ✅ | `db_context.rs` |
+| SaveChanges 拦截器 | ✅ | `crates/core/src/interceptor.rs` |
+
+### 实体与持久化
+
+| 能力 | 状态 | 说明 |
+|------|:----:|------|
+| `#[derive(EntityType)]` | ✅ | 12+ 属性 |
+| `IGetKeyValues` / `IEntitySnapshot` | ✅ | derive 自动生成 |
+| `ChangeExecutor` INSERT/UPDATE/DELETE | ✅ | 参数化 + 事务 |
+| INSERT 主键回填（RETURNING） | ✅ | SQLite 已测 |
+| `ensure_created` / `ensure_deleted` | ✅ | 集成测试覆盖 |
+| `remove_range` / `load_all` | ✅ | `db_set.rs` |
+| 乐观并发 `#[concurrency_check]` | ✅ | UPDATE/DELETE WHERE 含 token |
+
+### 查询
+
+| 能力 | 状态 | 说明 |
+|------|:----:|------|
+| `BoolExpr`（AND/OR/NOT/Raw） | ✅ | `query.rs` |
+| `linq!` 表达式树 | ✅ | `crates/macros/src/linq.rs` |
+| IN / BETWEEN / IS NULL / contains | ✅ | linq + QueryBuilder |
+| join / group_by / having / 分页 | ✅ | QueryBuilder |
+| 全局 Query Filter 自动注入 | ✅ | `ModelBuilder::has_query_filter` |
+| 子查询 / 关联过滤 | ❌ | 未规划 |
+
+### 关系
+
+| 能力 | 状态 | 说明 |
+|------|:----:|------|
+| BelongsTo / HasMany / HasOne | ✅ | |
+| Many-to-Many（Join 实体） | ✅ | `m2m_tests.rs` |
+| Include / ThenInclude 物化 | ✅ | `navigation_loader.rs` |
+| Lazy Loading | ❌ | 未实现 |
+
+### 迁移
+
+| 能力 | 状态 | 说明 |
+|------|:----:|------|
+| 模型快照 diff | ✅ | 建/删表、增/删/改列 |
+| Up/Down SQL 三方言 | ✅ | PG / MySQL / SQLite |
+| `MigrationEngine::apply()` | ✅ | 单迁移执行 |
+| `__ef_migrations_history` 表 DDL | ✅ | |
+| 读取 history 跳过已应用迁移 | ✅ | `apply_pending` / `is_applied` |
+| Revert 工作流 | ✅ | `revert` / `revert_last` |
+| FK/索引 diff | ✅ | `AddForeignKey` / `DropForeignKey` 已接入 diff |
+
+### Provider
+
+| Provider | 实现 | 集成测试 |
+|----------|:----:|:--------:|
+| SQLite (`rust-ef-sqlite`) | ✅ | ✅ 9 CRUD + 导航/M2M |
+| PostgreSQL (`rust-ef-postgres`) | ✅ | ✅ 可选（`RUST_EF_PG_URL` / CI） |
+| MySQL (`rust-ef-mysql`) | ✅ | ✅ 可选（`RUST_EF_MYSQL_URL` / CI） |
+
+### 工程化
+
+| 能力 | 状态 |
+|------|:----:|
+| 单元 + 集成测试（62） | ✅ |
+| GitHub Actions CI | ✅ |
+| CLI（migration / scaffold） | ✅ |
+| mdBook 用户文档 | ❌ |
+| 性能基准 | ❌ |
 
 ---
 
 # 里程碑一：Beta 1 — CRUD 完整链路 + 查询完备性
 
-**目标**: 用户可以用 lref 完成任意实体的增删改查，无需手写 SQL
+**目标**: 用户可用 rust-ef 完成任意实体的增删改查，无需手写 SQL  
+**整体进度: ~85%（SQLite）；~40%（PG/MySQL）**
 
 ## 1.1 通用 SaveChanges 实现
 
-### 现状
-- `DbContext::save_changes()` 有 trait 定义，但 **无默认实现**
-- Blog 示例中手动为 Blog/Post 写了 INSERT，完全不通用
-- 每新增一个实体类型，用户必须手动实现 `save_changes_impl()`
+### 现状（v0.3.5）
 
-### 需求规格
-
-**1.1.1 为 `DbContext` 提供默认 `save_changes()` 实现**
-
-文件: `lref/src/db_context.rs`
-
-```rust
-#[async_trait::async_trait]
-pub trait DbContext: Send + Sync + Sized {
-    // ... 现有方法 ...
-
-    /// 默认实现：自动为所有 DbSet 中的变更生成并执行 INSERT/UPDATE/DELETE
-    async fn save_changes(&mut self) -> LrefResult<SaveChangesResult> {
-        self.save_changes_with_strategy(SaveStrategy::Transactional).await
-    }
-}
-```
-
-**1.1.2 引入 `DbSetCollection` — 注册所有 DbSet 的容器**
-
-文件: `lref/src/db_context.rs` (新增模块)
-
-```rust
-/// 用户通过宏或 builder 将所有 DbSet 注册到此容器
-pub struct DbSetCollection {
-    sets: Vec<Box<dyn AnyDbSet>>,
-}
-
-impl DbSetCollection {
-    pub fn register<T: EntityType + FromRow + GetKeyValues>(
-        &mut self,
-        db_set: &DbSet<T>,
-    ) { /* ... */ }
-}
-```
-
-**1.1.3 引入 `GetKeyValues` trait（derive 宏自动生成）**
-
-文件: `lref/src/entity.rs`
-
-```rust
-/// 提取实体的主键值，供 SaveChanges 生成 WHERE 条件
-pub trait GetKeyValues: EntityType {
-    /// 返回 HashMap<column_name, DbValue>
-    fn key_values(&self) -> HashMap<String, DbValue>;
-}
-```
-
-**1.1.4 引入 `EntitySnapshot` trait — 提取所有标量属性值**
-
-```rust
-pub trait EntitySnapshot: EntityType {
-    /// 返回所有标量属性的当前值
-    fn snapshot(&self) -> HashMap<String, DbValue>;
-}
-```
-
-**1.1.5 实现 `ChangeExecutor` — 自动生成并执行 DML**
-
-文件: `lref/src/change_executor.rs` (重写)
-
-功能:
-- 遍历 `DbSetCollection` 中的所有 DbSet
-- 对 `EntityState::Added` 的实体 → 生成参数化 INSERT，执行后通过 RETURNING 获取生成的主键
-- 对 `EntityState::Modified` 的实体 → 生成 UPDATE SET ... WHERE pk=?
-- 对 `EntityState::Deleted` 的实体 → 生成 DELETE WHERE pk=?
-- 全部在 Provider 事务中完成
+- ✅ `DbContext` 通过 `SetOps<T>` + `ChangeExecutor` 实现通用 `save_changes()`
+- ✅ 事务内遍历所有已注册实体类型
+- ✅ 拦截器 `on_saving` / `on_saved` / `on_save_failed`
+- ⚠️ `examples/blog` 仍使用旧式手写 `save_one_set`（示例未更新）
 
 ### 验收标准
-- [ ] 用户定义新实体类型后，`ctx.save_changes()` 能自动持久化所有变更
-- [ ] INSERT 后实体主键（如 `blog_id`）被正确回填
-- [ ] 事务回滚场景正确（任一步骤失败，全部回滚）
-- [ ] 集成测试：SQLite 内存数据库中 CRUD 整个实体生命周期
+
+- [x] 用户定义新实体后，`ctx.save_changes()` 自动持久化所有变更
+- [x] INSERT 后自增主键正确回填（SQLite）
+- [x] 任一步骤失败时事务回滚（代码路径已实现）
+- [ ] **事务回滚集成测试**（insert → rollback → 验证不存在）
+- [x] SQLite 内存库 CRUD 生命周期集成测试
 
 ---
 
-## 1.2 条件表达式完善
+## 1.2 条件表达式完备性
 
-### 现状
-- 仅支持单一 `AND` 连接的条件
-- 无 `OR`、`IN`、`NOT`、`BETWEEN`、`IS NULL`（独立语法）
+### 现状（v0.3.5）
 
-### 需求规格
-
-**1.2.1 表达式树代替线性过滤器列表**
-
-文件: `lref/src/query.rs`
-
-```rust
-/// 布尔表达式 AST
-#[derive(Debug, Clone)]
-pub enum BoolExpr {
-    /// 单个条件
-    Filter(FilterCondition),
-    /// AND 组合
-    And(Box<BoolExpr>, Box<BoolExpr>),
-    /// OR 组合
-    Or(Box<BoolExpr>, Box<BoolExpr>),
-    /// NOT 取反
-    Not(Box<BoolExpr>),
-}
-```
-
-**1.2.2 新增 QueryBuilder 方法**
-
-```rust
-// OR 条件
-pub fn or(mut self, f: impl FnOnce(QueryBuilder<T>) -> QueryBuilder<T>) -> Self;
-
-// IN 查询
-pub fn filter_in(mut self, column: &str, values: Vec<impl Into<DbValue>>) -> Self;
-
-// NOT 条件
-pub fn filter_not(mut self, column: &str, operator: &str, value: impl Into<DbValue>) -> Self;
-
-// IS NULL / IS NOT NULL
-pub fn filter_is_null(mut self, column: &str) -> Self;
-pub fn filter_is_not_null(mut self, column: &str) -> Self;
-
-// BETWEEN
-pub fn filter_between(mut self, column: &str, low: impl Into<DbValue>, high: impl Into<DbValue>) -> Self;
-```
+- ✅ `BoolExpr` AST（Filter / Raw / And / Or / Not）
+- ✅ `linq!` 宏：闭包表达式树 + 直接查询 + 可复用 expr
+- ✅ `DbSet::filter(linq!(…))` / `QueryBuilder::filter(linq!(…))`
+- ✅ LINQ 风格 IN：`ids.contains(b.field)`（非 `in_()`）
 
 ### 验收标准
-- [ ] `WHERE (a = 1 OR a = 2) AND b > 3` 正确生成 SQL
-- [ ] `WHERE id IN (1, 2, 3)` 使用正确的参数化占位符
-- [ ] 15+ 个表达式组合的单元测试全部通过
+
+- [x] `WHERE (a = 1 OR a = 2) AND b > 3` 正确生成 SQL
+- [x] `WHERE id IN (1, 2, 3)` 参数化占位符
+- [x] 表达式组合单元测试（`bool_expr_tests` + `linq_tests`，12+ 场景）
+- [ ] `linq!` 省略闭包类型标注（类型推断）
 
 ---
 
-## 1.3 缺失的 DDL / 辅助操作
+## 1.3 DDL / 辅助操作
 
-### 需求规格
+### 现状（v0.3.5）
 
-**1.3.1 DbSet 级方法**
-
-```rust
-// 批量删除
-pub async fn remove_range(&mut self, entities: &[T]) -> LrefResult<()>;
-
-// 从数据库加载（替换 DbSet 内容）
-pub async fn load_all(&mut self) -> LrefResult<()>;
-
-// 检查是否存在（不返回实体）
-pub async fn exists_by_id(&self, id_values: HashMap<String, DbValue>) -> LrefResult<bool>;
-```
-
-**1.3.2 DbContext 级 DDL 方法**
-
-```rust
-// 创建表
-async fn ensure_created(&self) -> LrefResult<()>;
-// 删除表
-async fn ensure_deleted(&self) -> LrefResult<()>;
-```
+- ✅ `DbSet::remove_range` / `load_all`
+- ✅ `DbContext::ensure_created` / `ensure_deleted`
+- ✅ `ModelBuilder::has_data` 种子数据
+- [ ] `exists_by_id`（按 PK 检查存在，不返回实体）
 
 ### 验收标准
-- [ ] 集成测试验证 `ensure_created` → CRUD → `ensure_deleted` 完整流程
+
+- [x] 集成测试：`ensure_created` → CRUD → `ensure_deleted`
+- [ ] 复合主键实体完整 CRUD 集成测试（仅有 migration 单测）
 
 ---
 
-## 1.4 测试：SQLite 集成测试套件
+## 1.4 SQLite 集成测试套件
 
-### 需求规格
+文件: `crates/core/tests/sqlite_crud_tests.rs`
 
-文件: `lref/tests/sqlite_crud_tests.rs`
-
-测试场景:
-1. **CRUD 生命周期**: define entity → create table → insert → query → update → query → delete → query → drop table
-2. **事务回滚**: insert → rollback → query 验证不存在
-3. **并发**: 多个实体同时变更的 save_changes
-4. **复合主键**: UserRole 实体的完整 CRUD
-5. **空表查询**: to_list 返回空 Vec
-6. **类型映射**: i32/i64/String/Option/f64/bool 读写一致
+| 场景 | 状态 |
+|------|:----:|
+| CRUD 生命周期 | ✅ |
+| 空表查询 | ✅ |
+| IN / 聚合 / 分页 | ✅ |
+| 种子数据 | ✅ |
+| 事务回滚 | ❌ |
+| 多实体同时 save_changes | ❌ |
+| 复合主键 CRUD | ❌ |
+| 全类型映射（bool/Option 等） | ⚠️ 部分 |
 
 ### 验收标准
-- [ ] 6 个集成测试全部通过
-- [ ] 测试不依赖外部数据库（使用 SQLite `:memory:`）
+
+- [x] 核心 CRUD 测试通过（9 个）
+- [x] 不依赖外部数据库（`:memory:`）
+- [ ] 6 项 spec 场景全部覆盖
+
+---
+
+## 1.5 Beta 1 新增：多 Provider 集成测试
+
+文件:
+- `crates/core/tests/postgres_crud_tests.rs`
+- `crates/core/tests/mysql_crud_tests.rs`
+- `crates/core/tests/common/mod.rs`（共享 CRUD 生命周期）
+
+本地运行:
+```bash
+RUST_EF_PG_URL=postgres://user:pass@localhost/db cargo test -p rust-ef --test postgres_crud_tests
+RUST_EF_MYSQL_URL=mysql://root:pass@localhost/db cargo test -p rust-ef --test mysql_crud_tests
+```
+
+CI 使用 GitHub Actions service containers 自动注入连接字符串。
+
+### 验收标准
+
+- [x] PostgreSQL CRUD 生命周期测试
+- [x] MySQL CRUD 生命周期测试
+- [x] CI matrix 含 PG + MySQL service
 
 ---
 
 # 里程碑二：RC 1 — 导航/高级特性全功能就绪
 
+**整体进度: ~70%**
+
 ## 2.1 Eager Loading 导航物化
 
-### 现状
-- `include_with_join()` 只生成 JOIN SQL
-- 查询结果中的导航属性（`blog.posts`, `post.blog`）永远是默认值
+### 现状（v0.3.5）
 
-### 需求规格
-
-**2.1.1 双查询策略（避免 Cartesian Product）**
-
-```rust
-/// 执行查询并自动填充 Include 指定的导航属性
-pub async fn to_list_with_includes(self) -> LrefResult<Vec<T>>
-```
-
-实现步骤:
-1. 执行主查询，获取主实体集合
-2. 收集所有主实体的主键值
-3. 对每个 `IncludePath`，执行 `SELECT * FROM related_table WHERE fk IN (...)` 查询
-4. 将子实体按外键分组，填充到主实体的导航属性中
-
-**2.1.2 导航属性写入 trait**
-
-```rust
-/// Trait for setting navigation property values after lazy/eager loading.
-pub trait Navigable<T: EntityType>: EntityType {
-    fn set_navigation(&mut self, field_name: &str, value: Box<dyn Any + Send>);
-}
-```
-
-由 derive 宏自动生成，按字段名匹配到正确的导航属性（`HasMany<T>`/`BelongsTo<T>`/`HasOne<T>`）。
+- ✅ 双查询策略（`navigation_loader.rs`）
+- ✅ `INavigationSetter` derive 自动生成
+- ✅ Include / ThenInclude 嵌套
+- ✅ M2M 通过 Join 表加载
 
 ### 验收标准
-- [ ] `ctx.blogs.query().include_named("posts").to_list()` 返回的 Blog 中 `posts` 非空
-- [ ] `ctx.posts.query().include_named("blog").to_list()` 返回的 Post 中 `blog` 非空
-- [ ] 嵌套 Include 支持：`include("posts").then_include("comments")`
+
+- [x] HasMany Include 物化（`navigation_tests.rs`）
+- [x] BelongsTo Include 物化
+- [x] ThenInclude 嵌套
+- [x] M2M 物化（`m2m_tests.rs`）
 
 ---
 
 ## 2.2 全局查询过滤器自动注入
 
-### 现状
-- `ModelBuilder::has_query_filter()` 注册成功
-- `QueryBuilder` 完全不知道过滤器的存在
+### 现状（v0.3.5）
 
-### 需求规格
-
-**2.2.1 查询时自动注入**
-
-```rust
-// QueryBuilder 构造时（via DbSet::query()）自动检查 ModelBuilder
-pub fn query(&self) -> QueryBuilder<T> {
-    let mut qb = match &self.provider {
-        Some(p) => QueryBuilder::with_provider(&self.table_name, p.clone()),
-        None => QueryBuilder::new(&self.table_name),
-    };
-    // 自动注入全局过滤器
-    if let Some(filter) = self.model_builder.get_query_filter(&TypeId::of::<T>()) {
-        qb.state.filters.push(FilterCondition::raw(filter));
-    }
-    qb
-}
-```
-
-**2.2.2 FilterCondition 支持原始 SQL**
-
-```rust
-impl FilterCondition {
-    /// 创建原始 SQL 条件（无参数占位符）
-    pub fn raw(expression: impl Into<String>) -> Self { /* ... */ }
-}
-```
+- ✅ `ModelBuilder::has_query_filter::<T>(sql)`
+- ✅ `DbContext::set::<T>()` 创建 DbSet 时注入 `query_filter`
+- ✅ `BoolExpr::Raw` 支持原始 SQL 片段
 
 ### 验收标准
-- [ ] 注册 `has_query_filter::<Blog>("is_deleted = false")` 后
-- [ ] 所有 `ctx.blogs.query().to_list()` 自动包含 `WHERE is_deleted = false`
+
+- [x] 注册过滤器后所有 `query()` 自动附加 WHERE 条件
+- [ ] 全局过滤器 + `linq!` 组合的集成测试
 
 ---
 
 ## 2.3 乐观并发控制生效
 
-### 现状
-- `#[concurrency_check]` 属性收集到元数据
-- UPDATE 语句未做原始值检查
+### 现状（v0.3.5）
+
+- ✅ `#[concurrency_check]` → `PropertyMeta.is_concurrency_token`
+- ❌ `ChangeExecutor::execute_updates` WHERE 仅用主键
+- ❌ `EfError::ConcurrencyConflict` 从未触发
 
 ### 需求规格
 
-**2.3.1 SaveChanges 时检查并发令牌**
-
-```rust
-// 对于 Modified 状态的实体：
-// 1. 读取当前数据库中的行版本/时间戳
-// 2. 与 ChangeTracker 中的原始快照比较
-// 3. 如果不一致 → 返回 LrefError::ConcurrencyConflict
-// 4. 一致 → 执行 UPDATE + 更新令牌值
-```
-
-**2.3.2 ChangeTracker 快照扩展**
-
-```rust
-struct TrackerEntry {
-    // ... 现有字段 ...
-    /// 用于并发检查的令牌快照
-    concurrency_tokens: HashMap<String, String>,
-}
-```
+1. Modified 实体 UPDATE 时，WHERE 追加 `AND token_col = @original`
+2. `rows_affected == 0` → 返回 `ConcurrencyConflict`
+3. 成功时可选更新 token 值
 
 ### 验收标准
-- [ ] 两个并发连接修改同一实体，第二个收到 `ConcurrencyConflict` 错误
-- [ ] 乐观并发检查在 Update 时使用 `WHERE token_column = @original_value`
+
+- [ ] 两并发连接修改同一实体，后者收到 `ConcurrencyConflict`
+- [ ] UPDATE 使用原始 token 快照
 
 ---
 
 ## 2.4 CLI Migration 连接数据库
 
-### 现状
-- `lref migration apply` 只维护 `.history` 文件
-- 不能连接数据库执行 SQL
+### 现状（v0.3.5）
+
+- ❌ **无 CLI crate**（README 宣称存在，与实际不符）
+- ✅ 库级 `MigrationEngine::apply()` 可执行单迁移
+- ⚠️ 无读取 history 跳过已应用迁移的逻辑
+- ⚠️ 无 revert 命令
 
 ### 需求规格
 
-```rust
-// CLI apply 接受 --connection 参数
-// 连接数据库 → 读取 __ef_migrations_history 表 → 执行未应用的迁移
-lref migration apply --connection "postgres://localhost/blogging"
+新建 `crates/cli/`（或独立 binary crate `rust-ef-cli`）：
+
+```bash
+rust-ef migration add InitialCreate --output ./Migrations
+rust-ef migration list --connection "postgres://localhost/app"
+rust-ef migration apply --connection "postgres://localhost/app"
+rust-ef migration revert --connection "..." --target PreviousMigration
+rust-ef migration script --from X --to Y
+rust-ef scaffold dbcontext --connection "..." --output ./Entities
 ```
 
-实现:
-1. 使用 Provider 连接数据库
-2. 创建 `__ef_migrations_history` 表（如果不存在）
-3. 读取已应用的迁移列表
-4. 按顺序执行未应用迁移的 `up.sql`
-5. 记录到 `__ef_migrations_history`
+实现要点：
+
+1. Provider 连接 + `ensure_history_table`
+2. 读取 `__ef_migrations_history` 获取已应用列表
+3. 按序执行未应用迁移 Up SQL + 写入 history
+4. Revert 执行 Down SQL + 删除 history 记录
 
 ### 验收标准
-- [ ] `lref migration init` 在数据库中创建历史表
-- [ ] `lref migration apply` 在 PostgreSQL 中成功执行迁移 SQL
+
+- [ ] `migration apply` 在 PostgreSQL 中成功执行并记录 history
+- [ ] `migration revert` 回滚最近一次迁移
+- [ ] SQLite / MySQL 同等验证
+
+---
+
+## 2.5 RC 1 新增：迁移 FK/索引 diff
+
+### 现状
+
+- `SchemaChange::AddForeignKey` / `DropForeignKey` 已定义但未接入 `diff()`
+- 增量迁移无法处理外键变更
+
+### 验收标准
+
+- [ ] 新增 FK 列时生成 `ALTER TABLE ... ADD CONSTRAINT`
+- [ ] 删除 FK 时生成对应 DROP
 
 ---
 
 # 里程碑三：1.0 — 文档 / CI / 性能 / 安全
 
+**整体进度: ~30%**
+
 ## 3.1 完整用户文档
 
-### 需求
-- **快速入门**: 5 分钟从零到第一个 CRUD 应用
-- **实体建模指南**: 所有属性的详细说明 + 复合主键 + 并发令牌
-- **查询参考**: 每个 QueryBuilder 方法的独立文档 + 示例
-- **Provider 配置**: PostgreSQL/MySQL/SQLite 连接字符串格式
-- **迁移指南**: CLI 命令完整参考
-- **最佳实践**: 性能优化 / 事务使用 / 连接池配置
+### 现状
 
-产出: `docs/book/` 目录下的 mdBook 项目
+- ✅ 根目录 `README.md`（架构、Quick Start）
+- ⚠️ Provider README 仍引用旧名 `lref` / `lref-provider-*`
+- ⚠️ `examples/blog` 未展示现代 type-map DbContext
+- ❌ mdBook / API 参考 / 迁移指南
+
+### 需求
+
+- [ ] 更新所有 crate README 为 `rust-ef-*` 命名
+- [ ] 重写 blog 示例使用 `add_dbcontext` + `ctx.set::<T>()`
+- [ ] `docs/book/` mdBook 项目
+- [ ] 修正 README 中 CLI 声明（实现前标注「计划中」）
 
 ---
 
@@ -375,82 +355,119 @@ jobs:
     strategy:
       matrix:
         db: [sqlite, postgres, mysql]
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: test
     steps:
-      - cargo test --all-features
-      - cargo clippy -- -D warnings
+      - cargo test --workspace
+      - cargo clippy --workspace -- -D warnings
       - cargo fmt --check
 ```
 
----
+### 验收标准
 
-## 3.3 查询结果缓存层
-
-### 需求
-
-```rust
-// 可选的二级缓存
-impl<T: EntityType> DbSet<T> {
-    /// 尝试从 Identity Map 获取实体，未命中时查询数据库
-    pub async fn find_cached(
-        &self,
-        key: &HashMap<String, DbValue>,
-    ) -> LrefResult<Option<T>> { /* ... */ }
-}
-```
+- [ ] PR 触发 CI，三库 matrix（PG/MySQL 用 service container）
+- [ ] Clippy 零 warning（当前 lib 有 3 个 warning）
 
 ---
 
-## 3.4 性能基准
+## 3.3 类型扩展
+
+### 现状
+
+`DbValue` 仅支持: Null / 数值 / bool / String / Bytes
 
 ### 需求
+
+- [ ] `chrono` feature：DateTime / NaiveDate 映射
+- [ ] UUID 类型
+- [ ] Decimal（rust_decimal 可选）
+
+---
+
+## 3.4 性能基准（可选）
 
 文件: `benches/crud_benchmark.rs`
 
-- 批量插入 1000 条实体的吞吐量
-- QueryBuilder `to_list()` 延迟
-- Eager Loading 的 N+1 避免验证
-- 与 `diesel` / `sqlx` 的对比数据
+- 批量插入 1000 条吞吐量
+- Include vs N+1 对比
+- 与 sqlx 裸写对比基线
 
 ---
 
-# 验收矩阵
+## 3.5 已移除 / 不再规划
 
-| 能力 | Alpha 2 状态 | Beta 1 目标 | RC 1 目标 | 1.0 目标 |
-|------|:-----------:|:----------:|:--------:|:-------:|
-| 通用 SaveChanges | 手写 | 自动 | 自动+主键回填 | 自动+并发检查 |
-| WHERE 表达式 | AND only | AND/OR/IN/NOT/IS NULL/BETWEEN | 子查询 | — |
-| 导航 Eager Loading | SQL only | SQL only | 物化+嵌套 | 缓存 |
-| 全局过滤器 | 注册 | 注册 | 自动注入 | — |
-| 乐观并发 | 元数据 | 元数据 | 生效 | 测试覆盖 |
-| CLI Migration | 本地文件 | 本地文件 | 连接数据库 | SQLite/PG/MySQL |
-| 测试覆盖 | 19 tests | 25+ tests | 30+ tests | 50+ tests |
-| 文档 | 计划文档 | API 文档 | 用户指南 | 完整 mdBook |
+| 项 | 说明 |
+|----|------|
+| `DbSetCollection` | 已被 type-map + `SetOps` 取代 |
+| `DbCache` / Identity Map | 已从 core 移除 |
+| `filter!` 宏 | 已移除，统一 `linq!` |
+| `save_changes_all!` | 已移除 |
 
 ---
 
-# 实现优先级（按顺序）
+# 验收矩阵（v0.3.5 快照）
+
+| 能力 | v0.2 Alpha | v0.3.5 当前 | Beta 1 | RC 1 | 1.0 |
+|------|:----------:|:-----------:|:------:|:----:|:---:|
+| 通用 SaveChanges | 手写 | ✅ 自动 | ✅ | ✅ | ✅+并发 |
+| WHERE 表达式 | AND only | ✅ linq! | ✅ | 子查询 | — |
+| 导航 Eager Loading | SQL only | ✅ 物化 | — | ✅ | 缓存 |
+| M2M | ❌ | ✅ | — | ✅ | ✅ |
+| 全局过滤器 | 注册 | ✅ 注入 | — | ✅ | ✅ |
+| 乐观并发 | 元数据 | 元数据 | 元数据 | 生效 | 测试 |
+| CLI Migration | ❌ | ❌ | 本地生成 | 连接 DB | 三库 |
+| Provider 集成测试 | SQLite | SQLite | 三库 | 三库 | 三库 |
+| 测试数量 | 19 | **46** | 50+ | 60+ | 80+ |
+| CI | ❌ | ❌ | SQLite | 三库 | 三库 |
+| 文档 | 计划 | README | API | 指南 | mdBook |
+
+---
+
+# 实现优先级（2026-06-25 起）
 
 ```
-Beta 1:
-  1.1 通用 SaveChanges          ← 最高优先级，解锁所有后续工作
-  1.2 表达式完善 (OR/IN/NOT)     ← 查询可用性的基本要求
-  1.3 DDL 辅助方法               ← 配合集成测试
-  1.4 SQLite 集成测试            ← 验证 1.1-1.3 的正确性
+P0 — 生产 blocker（建议 4–6 周）:
+  1.5 PostgreSQL + MySQL 集成测试
+  2.4 CLI crate（migration add/apply/list/revert）
+  3.2 GitHub Actions CI
 
-RC 1:
-  2.1 Eager Loading 物化         ← 关系 ORM 的核心价值
-  2.2 全局过滤器自动注入         ← 多租户/软删除的前提
-  2.3 乐观并发生效               ← 并发场景安全
-  2.4 CLI Migration 连接DB       ← 生产部署的前提
+P1 — RC 必备（建议 2–4 周）:
+  2.3 乐观并发生效
+  1.4  事务回滚 + 复合主键集成测试
+  2.5 迁移 FK diff
+  3.1 文档与示例对齐（去 lref 旧名、更新 blog 示例）
 
-1.0:
-  3.1 文档                       ← 用户采纳的关键
-  3.2 CI/CD                      ← 持续质量保障
-  3.3 缓存层                     ← 性能优化
-  3.4 性能基准                   ← 竞争分析
+P2 — 1.0  polish:
+  1.2  linq! 类型推断
+  1.3  exists_by_id
+  3.3  DateTime / UUID 类型
+  3.4  性能基准
 ```
+
+---
+
+# 已知限制（v0.3.5 使用者须知）
+
+1. **`linq!` 需显式类型**：`|b: Blog|`，暂不支持省略
+2. **无 Lazy Loading**：必须显式 `include`
+3. **无子查询 / 关联过滤**：不能写 `b.posts.any(p => p.title.contains("x"))`
+4. **`from_row` 基于 `Vec<String>`**：大结果集性能与类型安全有限
+5. **DbContext DI 为 Transient**：长生命周期场景需自行管理 scope
+6. **迁移 apply 不查 history**：重复 apply 可能失败，需 CLI 补齐
+7. **README CLI 声明超前于实现**：以本文档为准
+
+---
+
+# 附录：测试清单（当前 46 个）
+
+| 文件 | 数量 | 覆盖 |
+|------|:----:|------|
+| `integration_tests.rs` | 16 | 元数据、迁移方言、QueryState SQL |
+| `sqlite_crud_tests.rs` | 9 | 端到端 CRUD |
+| `linq_tests.rs` | 7 | linq! 宏 |
+| `bool_expr_tests.rs` | 5 | BoolExpr SQL |
+| `advanced_tests.rs` | 5 | ChangeTracker、迁移生成 |
+| `navigation_tests.rs` | 2 | Include / ThenInclude |
+| `m2m_tests.rs` | 2 | Many-to-Many |
+
+---
+
+*下次审计建议触发条件：CLI 合并、PG/MySQL 集成测试落地、或版本升至 0.4.0。*

@@ -7,8 +7,8 @@ Procedural macros for [Rust Entity Framework (lref)](https://crates.io/crates/lr
 
 Provides:
 
-- `#[derive(EntityType)]` — generates `EntityType`, `FromRow`, `GetKeyValues`, and `EntitySnapshot` trait implementations
-- `column!()` — resolves entity fields to database column names at compile time
+- `#[derive(EntityType)]` �?generates `EntityType`, `FromRow`, `GetKeyValues`, and `EntitySnapshot` trait implementations
+- `column!()` �?resolves entity fields to database column names at compile time
 
 ---
 
@@ -33,7 +33,7 @@ pub struct Blog {
 }
 
 // Type-safe column reference
-let col = column!(Blog::url);  // expands to Blog::COLUMN_URL → "url"
+let col = column!(Blog::url);  // expands to Blog::COLUMN_URL �?"url"
 ```
 
 ---
@@ -42,11 +42,11 @@ let col = column!(Blog::url);  // expands to Blog::COLUMN_URL → "url"
 
 For each struct, `#[derive(EntityType)]` generates:
 
-1. **`EntityType`** impl — returns `EntityTypeMeta` with table name, columns, keys, navigations
-2. **`FromRow`** impl — materializes entities from `&[String]` database row data
-3. **`GetKeyValues`** impl — returns primary key values for SaveChanges WHERE clauses
-4. **`EntitySnapshot`** impl — returns all scalar property values for INSERT/UPDATE
-5. **`COLUMN_*`** constants — type-safe column name references (used by `column!()`)
+1. **`EntityType`** impl �?returns `EntityTypeMeta` with table name, columns, keys, navigations
+2. **`FromRow`** impl �?materializes entities from `&[String]` database row data
+3. **`GetKeyValues`** impl �?returns primary key values for SaveChanges WHERE clauses
+4. **`EntitySnapshot`** impl �?returns all scalar property values for INSERT/UPDATE
+5. **`COLUMN_*`** constants �?type-safe column name references (used by `column!()`)
 
 ## Supported Field Attributes
 
@@ -66,4 +66,4 @@ For each struct, `#[derive(EntityType)]` generates:
 
 ## License
 
-MIT — see [LICENSE](../../LICENSE)
+MIT �?see [LICENSE](../../LICENSE)

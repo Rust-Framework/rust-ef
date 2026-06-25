@@ -4,7 +4,7 @@
 //! analogous to how EFCore represents navigation properties in the model.
 //!
 //! They are pure marker/container types and do NOT impose entity trait
-//! bounds — the constraint belongs at the usage site (DbContext, builders),
+//! bounds  - ?the constraint belongs at the usage site (DbContext, builders),
 //! not on the container itself.
 
 use std::marker::PhantomData;
@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 // BelongsTo<T>
 // ---------------------------------------------------------------------------
 
-/// Represents a "belongs-to" navigation — the dependent side of a one-to-many
+/// Represents a "belongs-to" navigation  - ?the dependent side of a one-to-many
 /// or one-to-one relationship where the foreign key lives on this entity.
 ///
 /// Corresponds to EFCore's reference navigation property.
@@ -71,7 +71,7 @@ impl<T> std::fmt::Debug for BelongsTo<T> {
 // HasMany<T>
 // ---------------------------------------------------------------------------
 
-/// Represents a "has-many" navigation — a collection of related entities.
+/// Represents a "has-many" navigation  - ?a collection of related entities.
 ///
 /// Corresponds to EFCore's collection navigation property
 /// (e.g., `ICollection<Post>`).
@@ -152,7 +152,7 @@ pub type Through<Join> = Join;
 // HasOne<T>
 // ---------------------------------------------------------------------------
 
-/// Represents a "has-one" navigation — a single related entity
+/// Represents a "has-one" navigation  - ?a single related entity
 /// where the foreign key lives on the other side.
 pub struct HasOne<T> {
     _inner: Option<Box<T>>,

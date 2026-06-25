@@ -1,4 +1,4 @@
-//! DI integration — `AddDbContext<T>` on `rust-dicore`, interface-oriented.
+//! DI integration  - ?`AddDbContext<T>` on `rust-dicore`, interface-oriented.
 //!
 //! Supports single-context (default) and multi-context (keyed) registration.
 //!
@@ -127,11 +127,11 @@ impl DbContextServiceCollectionExt for ::rust_dicore::ServiceCollection {
 
 /// Trait for types that can be constructed from `DbContextOptions`.
 pub trait FromDbContextOptions: IDbContext + Sized {
-    fn from_options(options: &DbContextOptions) -> crate::error::LrefResult<Self>;
+    fn from_options(options: &DbContextOptions) -> crate::error::EfResult<Self>;
 }
 
 impl FromDbContextOptions for DbContext {
-    fn from_options(options: &DbContextOptions) -> crate::error::LrefResult<Self> {
+    fn from_options(options: &DbContextOptions) -> crate::error::EfResult<Self> {
         DbContext::from_options(options)
     }
 }
