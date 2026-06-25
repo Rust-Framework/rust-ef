@@ -8,7 +8,7 @@
 use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use crate::error::EfResult;
 use crate::provider::{DbValue, IDatabaseProvider};
-use crate::query::{IQueryable, QueryBuilder};
+use crate::query::{BoolExpr, IQueryable, QueryBuilder};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -63,7 +63,7 @@ pub struct DbSet<T: IEntityType> {
     pub(crate) entries: Vec<TrackedEntry<T>>,
     table_name: String,
     provider: Option<Arc<dyn IDatabaseProvider>>,
-    query_filter: Option<String>,
+    query_filter: Option<BoolExpr>,
 }
 
 pub struct TrackedEntry<T: IEntityType> {
@@ -95,8 +95,8 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
         }
     }
 
-    pub fn set_query_filter(&mut self, filter: impl Into<String>) {
-        self.query_filter = Some(filter.into());
+    pub fn set_query_filter(&mut self, filter: BoolExpr) {
+        self.query_filter = Some(filter);
     }
 
     pub fn set_provider(&mut self, provider: Arc<dyn IDatabaseProvider>) {
@@ -224,9 +224,13 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     }
     pub async fn exists_by_id(&self, key_values: HashMap<String, DbValue>) -> EfResult<bool>
     where
-        T: IFromRow,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
-        self.query().find_by_key(&key_values).any().await
+        let pairs: Vec<(&str, DbValue)> = key_values
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect();
+        Ok(self.query().find_by_key(&pairs).await?.is_some())
     }
 
     /// Starts a query filtered by a compile-time LINQ expression tree (`linq!(�?`).
@@ -249,7 +253,7 @@ impl<T: IEntityType> IQueryable<T> for DbSet<T> {
             None => QueryBuilder::new(&self.table_name),
         };
         if let Some(ref filter) = self.query_filter {
-            qb = qb.filter_raw(filter);
+            qb = qb.apply_query_filter(filter.clone());
         }
         qb
     }

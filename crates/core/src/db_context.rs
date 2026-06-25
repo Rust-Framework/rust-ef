@@ -250,7 +250,7 @@ impl DbContext {
                 Arc::clone(&self.provider),
             );
             if let Some(filter) = self.model_builder.get_query_filter(&type_id) {
-                db_set.set_query_filter(filter);
+                db_set.set_query_filter(filter.clone());
             }
             Box::new(db_set)
         });

@@ -364,6 +364,26 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         }
     }
 
+    // Generate navigation field name constants (`FIELD_*`) so that `linq!` can
+    // reference navigation members type-safely, e.g. `include b.posts` expands to
+    // `Blog::FIELD_POSTS` which is `&'static str = "posts"` passed to
+    // `find_navigation(...)`. Mirrors the `COLUMN_*` convention above.
+    let mut nav_field_consts: Vec<proc_macro2::TokenStream> = Vec::new();
+    for field in fields {
+        let field_name = field.ident.as_ref().unwrap();
+        let field_ty = &field.ty;
+        if is_navigation_field(field_ty) {
+            let name_str = field_name.to_string();
+            let const_name = syn::Ident::new(
+                &format!("FIELD_{}", name_str.to_uppercase()),
+                field_name.span(),
+            );
+            nav_field_consts.push(quote! {
+                pub const #const_name: &'static str = #name_str;
+            });
+        }
+    }
+
     // Add default values for navigation fields
     for field_name in &nav_field_names {
         from_row_assignments.push(quote! {
@@ -409,6 +429,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         impl #struct_name {
             pub const TABLE: &'static str = #table_name;
             #(#column_consts)*
+            #(#nav_field_consts)*
             #(#fk_const_decls)*
 
             pub fn pk_column_name() -> &'static str {
@@ -616,15 +637,22 @@ fn extract_through_type(attrs: &[syn::Attribute]) -> Option<syn::Type> {
     None
 }
 
-fn extract_foreign_key_field_name(attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {
-    for attr in attrs {
-        if attr.path().is_ident("foreign_key") {
-            if let syn::Meta::List(list) = &attr.meta {
-                let target = list.tokens.to_string().trim().to_string();
-                return quote! { Some(std::borrow::Cow::Borrowed(#target)) };
-            }
-        }
-    }
+/// Resolves the `foreign_key_field` metadata for a *navigation* property.
+///
+/// Historically this read `#[foreign_key(X)]` on navigation fields and stored `X`
+/// (the target type name, e.g. `"Post"`) into `NavigationMeta.foreign_key_field` —
+/// a bug, since that field's documented semantics is the FK *property name* on the
+/// dependent entity (e.g. `"post_id"`), not a type name.
+///
+/// The `#[foreign_key(Target)]` attribute belongs on *scalar* FK columns (where it
+/// generates the `FK_<Target>` constant via `extract_foreign_key_target`). Navigation
+/// properties derive their FK column from the relationship kind at runtime
+/// (`navigation_loader` uses `fk_column` / `referenced_key_column`, not this field).
+///
+/// We therefore no longer consult `#[foreign_key]` on navigation fields and return
+/// `None`. A dedicated `#[fk_field(name)]` attribute can be introduced later should
+/// explicit override become necessary. `_attrs` is retained for signature stability.
+fn extract_foreign_key_field_name(_attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {
     quote! { None }
 }
 

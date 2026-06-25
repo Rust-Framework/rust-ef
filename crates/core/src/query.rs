@@ -24,6 +24,11 @@ pub struct FilterCondition {
     operator: String,
     /// Number of bound parameters consumed by this condition.
     param_count: usize,
+    /// Inline parameter values (for self-contained `BoolExpr` used outside
+    /// `QueryBuilder` state, e.g. global query filters produced by
+    /// `linq!(filter |b: T| ...)`). Empty for in-builder conditions where
+    /// values are tracked in `QueryState::parameters`.
+    pub(crate) values: Vec<DbValue>,
 }
 
 impl FilterCondition {
@@ -36,7 +41,31 @@ impl FilterCondition {
             column: column.into(),
             operator: operator.into(),
             param_count,
+            values: Vec::new(),
         }
+    }
+
+    /// Creates a condition carrying its own parameter values. Used by
+    /// `linq!(filter |b: T| ...)` (Form C) to produce self-contained
+    /// `BoolExpr` values for global query filters.
+    pub fn with_values(
+        column: impl Into<String>,
+        operator: impl Into<String>,
+        values: Vec<DbValue>,
+    ) -> Self {
+        let count = values.len();
+        Self {
+            column: column.into(),
+            operator: operator.into(),
+            param_count: count,
+            values,
+        }
+    }
+
+    /// Returns the inline values carried by this condition (empty for
+    /// in-builder conditions).
+    pub fn values(&self) -> &[DbValue] {
+        &self.values
     }
 
     /// Convert to a SQL WHERE fragment using dialect-specific placeholders.
@@ -248,6 +277,8 @@ pub struct QueryState {
     pub parameters: Vec<DbValue>,
     /// Boolean WHERE expression (preferred over `filters`).
     pub where_expr: Option<BoolExpr>,
+    /// Whether to emit `SELECT DISTINCT`.
+    pub distinct: bool,
 }
 
 impl QueryState {
@@ -269,6 +300,7 @@ impl QueryState {
             aggregate_column: None,
             parameters: Vec::new(),
             where_expr: None,
+            distinct: false,
         }
     }
 
@@ -286,17 +318,26 @@ impl QueryState {
 
     /// Compile the state into a SQL string using the provider's placeholder style.
     pub fn to_sql_with(&self, gen: &dyn crate::provider::ISqlGenerator) -> String {
+        let distinct_kw = if self.distinct { "DISTINCT " } else { "" };
         let select = if self.is_count {
-            "SELECT COUNT(*)".to_string()
+            if self.distinct {
+                "SELECT COUNT(DISTINCT *)".to_string()
+            } else {
+                "SELECT COUNT(*)".to_string()
+            }
         } else if self.is_exists {
             "SELECT 1".to_string()
         } else if let Some(ref agg) = self.aggregate {
             let col = self.aggregate_column.as_deref().unwrap_or("*");
-            format!("SELECT {}({})", agg, col)
+            if self.distinct {
+                format!("SELECT {}(DISTINCT {})", agg, col)
+            } else {
+                format!("SELECT {}({})", agg, col)
+            }
         } else if let Some(ref cols) = self.projected_columns {
-            format!("SELECT {}", cols.join(", "))
+            format!("SELECT {}{}", distinct_kw, cols.join(", "))
         } else {
-            "SELECT *".to_string()
+            format!("SELECT {}*", distinct_kw)
         };
 
         let mut sql = format!("{} FROM {}", select, self.from);
@@ -552,9 +593,19 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
-    /// Global query filter SQL (used by `ModelBuilder::has_query_filter`).
-    pub(crate) fn filter_raw(mut self, sql: &str) -> Self {
-        self.state.append_bool_expr(BoolExpr::Raw(sql.to_string()));
+    /// Applies a global query filter `BoolExpr` (produced by `linq!(filter |b: T| ...)`).
+    /// Inline values carried by the expression are collected and appended to
+    /// the query parameters in the correct position.
+    pub(crate) fn apply_query_filter(mut self, filter: BoolExpr) -> Self {
+        let values = collect_bool_expr_values(&filter);
+        self.state.parameters.extend(values);
+        self.state.append_bool_expr(filter);
+        self
+    }
+
+    /// Marks this query as `SELECT DISTINCT`.
+    pub fn distinct(mut self) -> Self {
+        self.state.distinct = true;
         self
     }
 
@@ -590,32 +641,43 @@ impl<T: IEntityType> QueryBuilder<T> {
     // Chainable methods (each returns Self with accumulated state)
     // -------------------------------------------------------------------
 
-    /// Finds an entity by its primary key.
-    /// For composite keys, use `find_by_key`.
-    pub fn find_by_id(mut self, id: i32) -> Self {
-        let val = DbValue::I32(id);
-        self.state.parameters.push(val);
-        self.state.append_filter(FilterCondition::new("id", "=", 1));
-        self
+    /// Finds an entity by its single primary key. Uses the entity's PK
+    /// metadata — no longer hardcodes `"id"`.
+    pub async fn find(self, id: impl Into<DbValue>) -> EfResult<Option<T>>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        let meta = T::entity_meta();
+        let pk_col = meta
+            .primary_keys
+            .first()
+            .map(|s| s.as_ref())
+            .or_else(|| {
+                meta.properties
+                    .iter()
+                    .find(|p| p.is_primary_key)
+                    .map(|p| p.column_name.as_ref())
+            })
+            .ok_or_else(|| {
+                crate::error::EfError::Query(format!(
+                    "entity {} has no primary key defined",
+                    std::any::type_name::<T>()
+                ))
+            })?;
+        let col_const = pk_col.to_string();
+        self.filter_column(&col_const, "=", id).first_or_default().await
     }
 
-    /// Finds an entity by composite primary key values.
-    pub fn find_by_key(mut self, key_values: &std::collections::HashMap<String, DbValue>) -> Self {
-        for (col, val) in key_values {
-            self.state.parameters.push(val.clone());
-            self.state.append_filter(FilterCondition::new(col.as_str(), "=", 1));
+    /// Finds an entity by composite primary key. Keys are column-name
+    /// constants paired with values, e.g. `&[(BlogTag::COLUMN_BLOG_ID, DbValue::I32(1))]`.
+    pub async fn find_by_key(mut self, keys: &[(&str, DbValue)]) -> EfResult<Option<T>>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        for (col, val) in keys {
+            self = self.filter_column(col, "=", val.clone());
         }
-        self
-    }
-
-    /// Adds a named ascending order-by (public API for non-linq ordering).
-    pub fn order_by(self, column: &str) -> Self {
-        self.order_by_column(column)
-    }
-
-    /// Adds a named descending order-by (public API for non-linq ordering).
-    pub fn order_by_desc(self, column: &str) -> Self {
-        self.order_by_desc_column(column)
+        self.first_or_default().await
     }
 
     /// Skips the specified number of rows.
@@ -631,7 +693,11 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Eagerly loads a named navigation (resolves FK/table from entity metadata).
-    pub fn include_named(mut self, navigation: &str) -> Self {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(include b.posts)` expansion. Users
+    /// should use the `linq!` macro instead of calling this directly.
+    #[doc(hidden)]
+    pub fn include_internal(mut self, navigation: &'static str) -> Self {
         let meta = T::entity_meta();
         let nav_meta = meta.find_navigation(navigation);
         let (related_table, fk_col, ref_col) = nav_meta
@@ -654,8 +720,13 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
-    /// Eagerly loads a nested navigation on the last `include_named` path.
-    pub fn then_include_named(mut self, navigation: &str) -> Self {
+    /// Eagerly loads a nested navigation on the last `include_internal` path.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(include b.posts then b.comments)`
+    /// expansion. The nested navigation field name is a string literal because
+    /// the entity type transition is runtime knowledge (resolved via metadata).
+    #[doc(hidden)]
+    pub fn then_include_internal(mut self, navigation: &'static str) -> Self {
         if let Some(last) = self.state.includes.last_mut() {
             let parent_meta = T::entity_meta();
             if let Some(parent_nav) = parent_meta.find_navigation(&last.navigation) {
@@ -686,7 +757,16 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Adds an INNER JOIN.
-    pub fn inner_join(mut self, table: &str, left_column: &str, right_column: &str) -> Self {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(inner_join |a: T1, b: T2| a.col == b.col)`
+    /// expansion.
+    #[doc(hidden)]
+    pub fn inner_join_internal(
+        mut self,
+        table: &'static str,
+        left_column: &'static str,
+        right_column: &'static str,
+    ) -> Self {
         let on_clause = format!(
             "{}.{} = {}.{}",
             self.state.from, left_column, table, right_column
@@ -700,7 +780,16 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Adds a LEFT JOIN.
-    pub fn left_join(mut self, table: &str, left_column: &str, right_column: &str) -> Self {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(left_join |a: T1, b: T2| a.col == b.col)`
+    /// expansion.
+    #[doc(hidden)]
+    pub fn left_join_internal(
+        mut self,
+        table: &'static str,
+        left_column: &'static str,
+        right_column: &'static str,
+    ) -> Self {
         let on_clause = format!(
             "{}.{} = {}.{}",
             self.state.from, left_column, table, right_column
@@ -714,14 +803,31 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Adds a GROUP BY clause.
-    pub fn group_by(mut self, columns: &[&str]) -> Self {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(group_by (b.cat, b.author))` expansion.
+    #[doc(hidden)]
+    pub fn group_by_internal(mut self, columns: &'static [&'static str]) -> Self {
         self.state.group_bys = columns.iter().map(|s| s.to_string()).collect();
         self
     }
 
     /// Adds a HAVING condition.
-    pub fn having(mut self, expression: &str) -> Self {
-        self.state.havings.push(expression.to_string());
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(having count(b.id) > 1)` expansion.
+    /// Constructs `agg(column) op ?` with the value pushed to parameters.
+    #[doc(hidden)]
+    pub fn having_internal(
+        mut self,
+        agg: &str,
+        column: &str,
+        op: &str,
+        value: impl Into<DbValue>,
+    ) -> Self {
+        let db_val = value.into();
+        self.state.parameters.push(db_val);
+        self.state
+            .havings
+            .push(format!("{}({}) {} ?", agg, column, op));
         self
     }
 
@@ -730,7 +836,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     // -------------------------------------------------------------------
 
     /// Executes a SUM aggregation query.
-    pub async fn sum(self, column: &str) -> EfResult<f64> {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(sum b.views)` expansion.
+    #[doc(hidden)]
+    pub async fn sum_internal(self, column: &'static str) -> EfResult<f64> {
         let mut state = self.state.clone();
         state.aggregate = Some("SUM".to_string());
         state.aggregate_column = Some(column.to_string());
@@ -753,7 +862,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes an AVG aggregation query.
-    pub async fn avg(self, column: &str) -> EfResult<f64> {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(avg b.rating)` expansion.
+    #[doc(hidden)]
+    pub async fn avg_internal(self, column: &'static str) -> EfResult<f64> {
         let mut state = self.state.clone();
         state.aggregate = Some("AVG".to_string());
         state.aggregate_column = Some(column.to_string());
@@ -776,7 +888,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes a MIN aggregation query.
-    pub async fn min<V>(self, column: &str) -> EfResult<Option<String>> {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(min b.rating)` expansion.
+    #[doc(hidden)]
+    pub async fn min_internal(self, column: &'static str) -> EfResult<Option<String>> {
         let mut state = self.state.clone();
         state.aggregate = Some("MIN".to_string());
         state.aggregate_column = Some(column.to_string());
@@ -793,7 +908,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes a MAX aggregation query.
-    pub async fn max<V>(self, column: &str) -> EfResult<Option<String>> {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(max b.rating)` expansion.
+    #[doc(hidden)]
+    pub async fn max_internal(self, column: &'static str) -> EfResult<Option<String>> {
         let mut state = self.state.clone();
         state.aggregate = Some("MAX".to_string());
         state.aggregate_column = Some(column.to_string());
@@ -814,7 +932,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     // -------------------------------------------------------------------
 
     /// Projects to named columns and returns raw row values.
-    pub fn select_columns(self, columns: &[&str]) -> SelectQueryBuilder<T> {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(select (b.id, b.title))` expansion.
+    #[doc(hidden)]
+    pub fn select_internal(self, columns: &'static [&'static str]) -> SelectQueryBuilder<T> {
         let mut state = self.state.clone();
         state.projected_columns = Some(columns.iter().map(|s| s.to_string()).collect());
         SelectQueryBuilder {
@@ -997,14 +1118,16 @@ pub struct ExecuteUpdateBuilder<T: IEntityType> {
 }
 
 impl<T: IEntityType> ExecuteUpdateBuilder<T> {
-    /// Sets a property to a new value.
-    pub fn set_property(mut self, _accessor: fn(&T) -> &str, value: impl Into<DbValue>) -> Self {
-        self.updates.push(("__column__".to_string(), value.into()));
-        self
-    }
-
     /// Sets a named column to a DbValue.
-    pub fn set_column(mut self, column: &str, value: impl Into<DbValue>) -> Self {
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(set b.views, 10; execute_update)`
+    /// expansion.
+    #[doc(hidden)]
+    pub fn set_column_internal(
+        mut self,
+        column: &'static str,
+        value: impl Into<DbValue>,
+    ) -> Self {
         self.updates.push((column.to_string(), value.into()));
         self
     }
@@ -1140,6 +1263,23 @@ fn compile_bool_expr(
             compile_bool_expr(b, gen, param_idx)
         ),
         BoolExpr::Not(inner) => format!("NOT ({})", compile_bool_expr(inner, gen, param_idx)),
+    }
+}
+
+/// Walks a `BoolExpr` tree and collects inline parameter values carried by
+/// self-contained `FilterCondition`s (those produced by `linq!(filter |b: T| ...)`
+/// Form C). Returns an empty vec for expressions whose values are already
+/// tracked in `QueryState::parameters` (in-builder conditions).
+fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
+    match expr {
+        BoolExpr::Filter(f) => f.values().to_vec(),
+        BoolExpr::Raw(_) => Vec::new(),
+        BoolExpr::And(a, b) | BoolExpr::Or(a, b) => {
+            let mut v = collect_bool_expr_values(a);
+            v.extend(collect_bool_expr_values(b));
+            v
+        }
+        BoolExpr::Not(inner) => collect_bool_expr_values(inner),
     }
 }
 

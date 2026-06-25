@@ -8,6 +8,7 @@
 use crate::entity::{IEntitySnapshot, IEntityType};
 use crate::metadata::EntityTypeMeta;
 use crate::provider::DbValue;
+use crate::query::BoolExpr;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -21,7 +22,7 @@ struct EntityConfig {
     table_name: Option<String>,
     primary_key_fields: Option<Vec<String>>,
     property_overrides: HashMap<String, PropertyConfigOverride>,
-    query_filter: Option<String>,
+    query_filter: Option<BoolExpr>,
     seed_rows: Vec<HashMap<String, DbValue>>,
 }
 
@@ -136,10 +137,13 @@ impl ModelBuilder {
         self.entity_metas.iter().find(|m| m.type_id == type_id)
     }
 
-    pub fn has_query_filter<T: IEntityType>(&mut self, filter_sql: &str) -> &mut Self {
+    /// Registers a global query filter for entity type `T`.
+    ///
+    /// Accepts a `BoolExpr` produced by `linq!(filter |b: T| ...)`.
+    pub fn has_query_filter<T: IEntityType>(&mut self, filter: BoolExpr) -> &mut Self {
         let type_id = TypeId::of::<T>();
         let config = self.configs.entry(type_id).or_default();
-        config.query_filter = Some(filter_sql.to_string());
+        config.query_filter = Some(filter);
 
         let meta = T::entity_meta();
         if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
@@ -149,10 +153,10 @@ impl ModelBuilder {
         self
     }
 
-    pub fn get_query_filter(&self, type_id: &TypeId) -> Option<&str> {
+    pub fn get_query_filter(&self, type_id: &TypeId) -> Option<&BoolExpr> {
         self.configs
             .get(type_id)
-            .and_then(|c| c.query_filter.as_deref())
+            .and_then(|c| c.query_filter.as_ref())
     }
 
     /// Returns seed rows configured via `EntityTypeBuilder::has_data`.
@@ -216,6 +220,37 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     pub fn has_keys(&mut self, field_names: &[&str]) -> &mut Self {
         if let Some(config) = self.model.configs.get_mut(&self.type_id) {
             config.primary_key_fields = Some(field_names.iter().map(|s| s.to_string()).collect());
+        }
+        self
+    }
+
+    /// Configures the primary key from column constants.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(key |b: T| b.id)` expansion (Form C).
+    #[doc(hidden)]
+    pub fn has_key(&mut self, columns: &'static [&'static str]) -> &mut Self {
+        if let Some(config) = self.model.configs.get_mut(&self.type_id) {
+            config.primary_key_fields = Some(columns.iter().map(|s| s.to_string()).collect());
+        }
+        self
+    }
+
+    /// Configures a multi-column index from column constants.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(index |b: T| (b.author_id, b.created_at))`
+    /// expansion (Form C). Currently marks the first column as indexed; full
+    /// composite index support will be added in a future iteration.
+    #[doc(hidden)]
+    pub fn has_index(&mut self, columns: &'static [&'static str]) -> &mut Self {
+        if let Some(config) = self.model.configs.get_mut(&self.type_id) {
+            // Mark each column as indexed (single-column indexes).
+            for col in columns {
+                let override_cfg = config
+                    .property_overrides
+                    .entry(col.to_string())
+                    .or_default();
+                override_cfg.has_index = Some(true);
+            }
         }
         self
     }
