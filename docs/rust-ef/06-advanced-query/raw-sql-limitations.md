@@ -1,0 +1,45 @@
+# 原始 SQL 与已知限制
+
+## 原始 SQL 片段
+
+当 `linq!` 无法表达需求时，可注入原始 SQL：
+
+```rust
+use rust_ef::query::BoolExpr;
+
+let set = ctx.set::<Blog>();
+let query = set.query().filter(|qb| {
+    // 无法直接用 linq! 表达时，退回到原始条件
+    qb // 链式继续...
+});
+```
+
+更直接的方式是通过全局过滤器或 `BoolExpr::Raw`（高级用法，需谨慎处理参数化）。
+
+## 已知限制（v0.3）
+
+| 限制 | 说明 | 回避策略 |
+|------|------|----------|
+| **无子查询** | 不能写 `b.posts.any(p => p.title.contains("x"))` | 拆分为两次查询：先查 Posts，再查 Blogs |
+| **无关联过滤** | `linq!` 只支持当前实体的字段 | 用手动 JOIN 或内存过滤 |
+| **无 CTE / Window 函数** | 不支持 `WITH` 和 `ROW_NUMBER()` | 使用原始 SQL 或存储过程 |
+| **linq! 需显式类型** | `|b: Blog|` 不能省略 | 必须标注实体类型 |
+| **日期/UUID 类型** | `chrono` / `uuid` 未内置 | 用字符串中转，或等待 feature 发布 |
+
+## 何时退回原始 SQL
+
+```rust
+// 当 ORM 无法表达时，直接使用 provider 的原始连接
+let mut conn = ctx.provider().get_connection().await?;
+let rows = conn.query("SELECT * FROM complex_view WHERE ...", &[]).await?;
+```
+
+## 设计要点
+
+| 实践 | 说明 |
+|------|------|
+| 80% 场景用 `linq!` | 保持类型安全和可维护性 |
+| 20% 复杂场景用原始 SQL | 不强行用 ORM 表达一切 |
+| 原始 SQL 集中管理 | 放入 `repositories/` 或 `sql/` 目录，便于审查 |
+
+下一章：[变更跟踪](../07-change-tracking/INDEX.md)

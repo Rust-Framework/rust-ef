@@ -1,0 +1,390 @@
+{
+  "meta": {
+    "title": "Rust Entity Framework",
+    "subtitle": "接口导向 · EF Core 风格 · DI 集成 ORM",
+    "docTitle": "Rust Entity Framework 开发者手册",
+    "description": "面向 Rust 开发者的 EF Core 风格 ORM 最佳实践指南，涵盖实体设计、LINQ 查询、变更跟踪、批量操作、事务迁移与 DI 集成。",
+    "category": "orm",
+    "tags": ["rust","orm","ef-core","database","linq"],
+    "repoUrl": "https://gitcode.com/rf2026/rust-ef",
+    "demoUrl": "",
+    "featured": true,
+    "sortOrder": 1,
+    "version": "0.3",
+    "language": "zh-CN",
+    "author": "RF Team",
+    "foreword": "FOREWORD.md",
+    "pathRules": {
+      "chapterIndex": "{chapterId}/INDEX.md",
+      "sectionFile": "{chapterId}/{sectionId}.md"
+    }
+  },
+  "parts": [
+    {
+      "id": "part-1-start",
+      "title": "第一部分 · 入门与基础",
+      "chapters": [
+        {
+          "id": "01-introduction",
+          "title": "认识 rust-ef",
+          "subtitle": "框架定位、适用场景与生态全景",
+          "sections": [
+            {
+              "id": "what-is-rust-ef",
+              "title": "什么是 rust-ef",
+              "summary": "框架定义、核心能力与设计目标",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "who-should-use",
+              "title": "适用场景与边界",
+              "summary": "适合谁用、不适合什么场景",
+              "readingTime": 6,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "ecosystem-overview",
+              "title": "生态与 Crate 全景",
+              "summary": "core / macros / sqlite / postgres / mysql 分层",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            }
+          ]
+        },
+        {
+          "id": "02-quickstart",
+          "title": "快速上手",
+          "subtitle": "从零搭建第一个可运行的 DbContext",
+          "sections": [
+            {
+              "id": "setup-dependencies",
+              "title": "环境准备与依赖",
+              "summary": "Cargo.toml 配置与 feature 选择",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "first-entity",
+              "title": "定义第一个实体",
+              "summary": "#[derive(EntityType)] 与表映射",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "dbcontext-and-di",
+              "title": "DbContext 与 DI 注册",
+              "summary": "add_dbcontext、类型映射与 Arc<dyn IDbContext>",
+              "readingTime": 12,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "first-crud",
+              "title": "第一个 CRUD 流程",
+              "summary": "增删改查完整链路",
+              "readingTime": 15,
+              "difficulty": "beginner"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-2-entity",
+      "title": "第二部分 · 实体与关系",
+      "chapters": [
+        {
+          "id": "03-entity-design",
+          "title": "实体设计",
+          "subtitle": "派生宏、属性配置与约束",
+          "sections": [
+            {
+              "id": "derive-attributes",
+              "title": "EntityType 派生与属性配置",
+              "summary": "#[table]、#[column]、#[required] 等 12+ 属性",
+              "readingTime": 12,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "keys-constraints",
+              "title": "主键、自增与必填约束",
+              "summary": "#[primary_key]、#[auto_increment]、复合主键",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "indexes-concurrency",
+              "title": "索引、唯一性与并发标记",
+              "summary": "#[index]、#[unique]、#[concurrency_check]",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "04-relationships",
+          "title": "关系与导航",
+          "subtitle": "一对多、多对多与 Eager Loading",
+          "sections": [
+            {
+              "id": "one-to-many",
+              "title": "一对多与 BelongsTo / HasMany",
+              "summary": "外键定义与导航属性",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "many-to-many",
+              "title": "多对多与 Join 实体",
+              "summary": "HasMany<T, Through> 与 #[through]",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "eager-loading",
+              "title": "Eager Loading：Include 与 ThenInclude",
+              "summary": "双查询策略与嵌套加载",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-3-query",
+      "title": "第三部分 · 查询最佳实践",
+      "chapters": [
+        {
+          "id": "05-query-patterns",
+          "title": "查询模式",
+          "subtitle": "DbSet、linq! 与链式 API",
+          "sections": [
+            {
+              "id": "dbset-and-queryable",
+              "title": "DbSet 与 IQueryable 入门",
+              "summary": "ctx.set::<T>() 与 QueryBuilder 生命周期",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "linq-macro",
+              "title": "linq! 宏：推荐写法与可读性",
+              "summary": "可复用表达式、类型标注与 AND/OR",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "filter-sort-page",
+              "title": "过滤、排序与分页",
+              "summary": "WHERE、ORDER BY、LIMIT/OFFSET",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "count-any",
+              "title": "计数与存在性检查",
+              "summary": "count()、any()、first()、first_or_default()",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            }
+          ]
+        },
+        {
+          "id": "06-advanced-query",
+          "title": "高级查询",
+          "subtitle": "聚合、分组、JOIN 与全局过滤器",
+          "sections": [
+            {
+              "id": "aggregation",
+              "title": "聚合函数：SUM / AVG / MIN / MAX",
+              "summary": "聚合终端方法与性能注意",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "group-by-having",
+              "title": "GROUP BY 与 HAVING",
+              "summary": "分组查询与条件过滤",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "join-queries",
+              "title": "JOIN 查询",
+              "summary": "inner_join、left_join 与手动关联",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "global-query-filters",
+              "title": "全局查询过滤器",
+              "summary": "ModelBuilder::has_query_filter 与软删除",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "raw-sql-limitations",
+              "title": "原始 SQL 与已知限制",
+              "summary": "BoolExpr::Raw、子查询限制与回避策略",
+              "readingTime": 12,
+              "difficulty": "advanced"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-4-persistence",
+      "title": "第四部分 · 变更与持久化",
+      "chapters": [
+        {
+          "id": "07-change-tracking",
+          "title": "变更跟踪",
+          "subtitle": "状态管理、SaveChanges 与事务边界",
+          "sections": [
+            {
+              "id": "crud-states",
+              "title": "Add / Attach / Update / Remove",
+              "summary": "实体状态机与显式/隐式跟踪",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "save-changes",
+              "title": "SaveChanges 与事务边界",
+              "summary": "Unit of Work、拦截器与回滚行为",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "change-tracker",
+              "title": "ChangeTracker 与 DetectChanges",
+              "summary": "快照对比与手动状态检测",
+              "readingTime": 10,
+              "difficulty": "advanced"
+            }
+          ]
+        },
+        {
+          "id": "08-bulk-operations",
+          "title": "批量操作",
+          "subtitle": "批量更新、删除与范围操作",
+          "sections": [
+            {
+              "id": "execute-update",
+              "title": "批量更新 ExecuteUpdate",
+              "summary": "execute_update().set_column().execute()",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "execute-delete",
+              "title": "批量删除 ExecuteDelete",
+              "summary": "execute_delete() 与 WHERE 条件",
+              "readingTime": 8,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "remove-range-load-all",
+              "title": "RemoveRange 与 LoadAll",
+              "summary": "标记删除与全表加载跟踪",
+              "readingTime": 8,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-5-production",
+      "title": "第五部分 · 生产与工程化",
+      "chapters": [
+        {
+          "id": "09-transactions-migrations",
+          "title": "事务与迁移",
+          "subtitle": "手动事务、EnsureCreated 与 MigrationEngine",
+          "sections": [
+            {
+              "id": "manual-transactions",
+              "title": "手动事务与 use_transaction",
+              "summary": "IDbContextExt::use_transaction 与显式控制",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "ensure-created-deleted",
+              "title": "EnsureCreated 与 EnsureDeleted",
+              "summary": "快速原型与测试环境数据库管理",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "migrations-seed",
+              "title": "迁移引擎与种子数据",
+              "summary": "MigrationEngine、has_data 与 Up/Down SQL",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "10-di-interceptors",
+          "title": "DI 与拦截器",
+          "subtitle": "rust-dicore 集成、多数据库与横切关注点",
+          "sections": [
+            {
+              "id": "di-registration",
+              "title": "rust-dicore 集成与注册模式",
+              "summary": "add_dbcontext、provider 解析与生命周期",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "keyed-databases",
+              "title": "多数据库 Keyed 注册",
+              "summary": "add_dbcontext_keyed 与读写分离",
+              "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "save-changes-interceptors",
+              "title": "SaveChanges 拦截器",
+              "summary": "审计、软删除与验证钩子",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "11-best-practices",
+          "title": "最佳实践与避坑",
+          "subtitle": "常见陷阱、性能优化与审查清单",
+          "sections": [
+            {
+              "id": "common-pitfalls",
+              "title": "常见陷阱与排查",
+              "summary": "高频错误与调试思路",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "performance-tips",
+              "title": "性能优化技巧",
+              "summary": "查询策略、批量操作与连接管理",
+              "readingTime": 10,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "code-review-checklist",
+              "title": "代码审查清单",
+              "summary": "上线前必查项",
+              "readingTime": 8,
+              "difficulty": "intermediate"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -109,6 +109,132 @@ impl ISaveChangesInterceptor for AuditInterceptor {
 
 ---
 
+## Best Practices Guide
+
+The following patterns are recommended for production use. They emphasize **readability** and **clarity**: split complex operations into named `let` bindings rather than squeezing everything into one chain.
+
+### Recommended Query Style
+
+```rust
+let set = ctx.set::<Blog>();
+
+let expr = linq!(|b: Blog| b.rating > 0.5);
+
+return set.filter(expr).to_list().await?;
+```
+
+This is clearer than all-in-one chaining because each step has a name: the data source (`set`), the filter logic (`expr`), and the execution (`to_list`).
+
+### Filtering & Sorting
+
+```rust
+let set = ctx.set::<Post>();
+let expr = linq!(|p: Post| p.blog_id == target_id && p.title.contains("Rust"));
+
+let posts = set
+    .filter(expr)
+    .order_by_desc("created_at")
+    .skip(offset)
+    .take(page_size)
+    .to_list()
+    .await?;
+```
+
+### Reusable LINQ Expressions
+
+```rust
+let min_rating = 4;
+let high_rated = linq!(|b: Blog| b.rating > min_rating);
+
+let blogs = ctx.set::<Blog>().filter(high_rated).to_list().await?;
+let count = ctx.set::<Blog>().filter(high_rated).count().await?;
+```
+
+### Navigation (Eager Loading)
+
+```rust
+let blogs = ctx
+    .set::<Blog>()
+    .query()
+    .include_named("posts")
+    .then_include_named("comments")
+    .to_list()
+    .await?;
+```
+
+> There is **no Lazy Loading**. Always call `include_named` when you need related data.
+
+### Bulk Update
+
+```rust
+let affected = ctx
+    .set::<Blog>()
+    .query()
+    .filter(linq!(|b: Blog| b.rating < 3))
+    .execute_update()
+    .set_column("rating", 3)
+    .execute()
+    .await?;
+```
+
+### Bulk Delete
+
+```rust
+let affected = ctx
+    .set::<Blog>()
+    .query()
+    .filter(linq!(|b: Blog| b.rating < 1))
+    .execute_delete()
+    .await?;
+```
+
+### Attach → Modify → SaveChanges
+
+```rust
+let mut blog = ctx.set::<Blog>().query().find_by_id(1).first().await?;
+blog.rating = 10;
+
+ctx.set::<Blog>().update(blog);
+ctx.save_changes().await?;
+```
+
+### Global Query Filter (Soft Delete)
+
+```rust
+ctx.model().entity::<Blog>().has_query_filter("deleted_at IS NULL");
+ctx.set::<Blog>();
+// All subsequent queries automatically append: AND deleted_at IS NULL
+```
+
+### Multi-DB (Keyed)
+
+```rust
+let provider = ServiceCollection::new()
+    .add_dbcontext_keyed::<DbContext>("read", |o| o.use_postgres("host=replica/db"))
+    .add_dbcontext_keyed::<DbContext>("write", |o| o.use_postgres("host=primary/db"))
+    .build()
+    .unwrap();
+
+let read: Arc<dyn IDbContext> = provider.get_keyed("read");
+let write: Arc<dyn IDbContext> = provider.get_keyed("write");
+```
+
+---
+
+## Full Documentation
+
+See [`docs/rust-ef/INDEX.md`](docs/rust-ef/INDEX.md) for the complete best-practices book covering:
+
+- Entity design with `#[derive(EntityType)]`
+- One-to-many and many-to-many relationships
+- Advanced queries: aggregation, GROUP BY, JOIN, raw SQL
+- Change tracking: Add / Attach / Update / Remove
+- Bulk operations, transactions, and migrations
+- DI integration, interceptors, and multi-database patterns
+- Common pitfalls, performance tips, and code-review checklist
+
+---
+
 ## Architecture
 
 ```
