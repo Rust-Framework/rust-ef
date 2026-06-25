@@ -161,9 +161,17 @@ Read `templates/di-setup.rs` for the complete pattern.
 
 ## 4. QueryBuilder
 
-Use `ctx.set::<T>().query()` or `ctx.set::<T>().filter(linq!(?))`.
+`linq!` is the **single DSL entry point** for all database operations. Three
+forms are supported:
 
-**LINQ expression trees** (compile-time, like C# `Where`):
+- **Form A** — filter closure (reusable expression tree or direct query)
+- **Form B** — multi-clause query (`;`-separated clauses: `include`,
+  `order_by`, `group_by`, `having`, `select`, `inner_join`, `left_join`,
+  `sum`/`avg`/`min`/`max`/`count`, `set` + `execute_update`, `take`/`skip`, ...)
+- **Form C** — value-producing (for `ModelBuilder`: `filter`, `index`, `key`)
+
+### Form A — filter closure
+
 ```rust
 use rust_ef::linq;
 
@@ -178,18 +186,65 @@ ctx.set::<Blog>().filter(expr).to_list().await?;
 linq!(ctx.set::<Blog>(), |b: Blog| ids.contains(b.blog_id));
 ```
 
-**Ordering/pagination:** `order_by`, `order_by_desc`, `skip(n)`, `take(n)`
+### Form B — multi-clause query
 
-**JOIN:** `inner_join("table", "left_col", "right_col")`, `left_join(...)`
+```rust
+// Eager loading (replaces include_named / then_include_named)
+linq!(ctx.set::<Blog>(); include b.posts then b.comments)
+    .to_list().await?;
 
-**Grouping:** `group_by(&["col"])`, `having("COUNT(*) > 1")`
+// Ordering + pagination
+linq!(ctx.set::<Blog>(), |b: Blog| b.rating > 0 => -b.rating)
+    .skip(10).take(20).to_list().await?;
 
-**Eager loading:** `include_named("navigation_field")`
+// JOIN (replaces inner_join("table", "left_col", "right_col"))
+linq!(ctx.set::<Post>(); inner_join |p: Post, b: Blog| p.blog_id == b.blog_id)
+    .to_list().await?;
 
-**Terminals:** `to_list()`, `first()`, `first_or_default()`, `count()`,
-`any()`, `sum("col")`, `avg("col")`
+// Grouping + having (replaces group_by(&["col"]) / having("COUNT(*) > 1"))
+linq!(ctx.set::<Post>(); group_by b.blog_id; having count(b.post_id) > 1)
+    .to_list().await?;
 
-**Bulk:** `execute_update().set_column("col", val).execute()`, `execute_delete()`
+// Aggregates (replaces sum("col") / avg("col"))
+let total: f64 = linq!(ctx.set::<Blog>(); sum b.rating).await?;
+let avg: f64   = linq!(ctx.set::<Blog>(); avg b.rating).await?;
+```
+
+### Form C — ModelBuilder configuration
+
+```rust
+// Global query filter (soft delete)
+ctx.model().entity::<Blog>()
+    .has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
+
+// Index / key (replaces string-based has_index / has_key)
+ctx.model().entity::<Blog>()
+    .has_index(linq!(index |b: Blog| (b.author_id, b.created_at)));
+ctx.model().entity::<Blog>()
+    .has_key(linq!(key |b: Blog| b.blog_id));
+```
+
+### Terminals
+
+`to_list()`, `first()`, `first_or_default()`, `last()`, `last_or_default()`,
+`single()`, `single_or_default()`, `count()`, `long_count()`, `any()`,
+`all(|t| ...)`, `contains(val)`, `to_dictionary(|t| ...)`, plus `linq!` aggregate
+terminals (`sum`/`avg`/`min`/`max`/`count`).
+
+### Bulk operations
+
+```rust
+// Bulk update (replaces execute_update().set_column("col", val).execute())
+let affected = linq!(
+    ctx.set::<Blog>(), |b: Blog| b.rating < 3;
+    set b.rating, 3;
+    execute_update
+).await?;
+
+// Bulk delete
+let deleted = linq!(ctx.set::<Post>(), |p: Post| p.blog_id == 0)
+    .execute_delete().await?;
+```
 
 Read `templates/query-patterns.rs` for examples.
 

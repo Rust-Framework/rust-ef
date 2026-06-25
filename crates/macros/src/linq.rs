@@ -332,14 +332,29 @@ fn is_source_expr(expr: &Expr) -> bool {
 }
 
 /// Tries to extract the entity type from a source expression.
-/// For `ctx.set::<Blog>()`, extracts `Blog`. Falls back to treating as entity type.
+/// Handles `ctx.set::<Blog>()`, `ctx.set::<Blog>().query()`, and bare type paths.
 fn source_entity_type(expr: &Expr) -> syn::Result<Type> {
-    // For source expressions like `ctx.set::<Blog>()`, we can't easily extract
-    // the entity type at parse time. We require the user to use typed closures
-    // for Form B with a where clause. For pure-clause Form B, we extract from
-    // the first clause's field access at expansion time.
-    //
-    // As a fallback, if the source is a simple path (entity type), use it.
+    // Walk method-call chains to find a turbofish `::<Type>` argument.
+    let mut current = expr;
+    loop {
+        match current {
+            Expr::MethodCall(call) => {
+                if let Some(turbofish) = &call.turbofish {
+                    if let Some(arg) = turbofish.args.first() {
+                        if let syn::GenericArgument::Type(ty) = arg {
+                            return Ok(ty.clone());
+                        }
+                    }
+                }
+                current = &call.receiver;
+            }
+            Expr::Call(call) => {
+                current = &call.func;
+            }
+            _ => break,
+        }
+    }
+    // Fallback: treat as entity type path (e.g. `Blog`).
     expr_as_entity_type(expr)
 }
 
@@ -733,16 +748,14 @@ fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
     }
 
     // Build the base builder expression (source + optional filter).
+    // Always wrap in .filter() to normalize DbSet → QueryBuilder, even when
+    // the where chain is empty (identity closure).
     let base = match &input.source {
         Some(source) => {
-            if where_chain.is_empty() && order_chain.is_empty() {
-                quote! { (#source) }
-            } else {
-                quote! {
-                    (#source).filter(|__qb: rust_ef::query::QueryBuilder<#entity>| {
-                        __qb #where_chain #order_chain
-                    })
-                }
+            quote! {
+                (#source).filter(|__qb: rust_ef::query::QueryBuilder<#entity>| {
+                    __qb #where_chain #order_chain
+                })
             }
         }
         None => {
@@ -929,7 +942,8 @@ fn extract_field_array(ctx: &LinqCtx<'_>, fields: &[Expr]) -> syn::Result<TokenS
     Ok(quote! { &[#(#cols),*] })
 }
 
-/// Extracts just the field name as a string literal (for `then` include nested paths).
+/// Extracts just the field name as a `String` (for `then` include nested paths).
+/// The caller interpolates this into `quote!` which produces a string literal.
 fn extract_field_name_only(expr: &Expr) -> syn::Result<String> {
     match expr {
         Expr::Field(ExprField { member, .. }) => match member {
@@ -944,7 +958,6 @@ fn extract_field_name_only(expr: &Expr) -> syn::Result<String> {
             "expected field access like `b.comments`",
         )),
     }
-    .map(|s| quote! { #s }.to_string())
 }
 
 // ---------------------------------------------------------------------------

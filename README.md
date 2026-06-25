@@ -153,28 +153,21 @@ let count = ctx.set::<Blog>().filter(high_rated).count().await?;
 ### Navigation (Eager Loading)
 
 ```rust
-let blogs = ctx
-    .set::<Blog>()
-    .query()
-    .include_named("posts")
-    .then_include_named("comments")
+let blogs = linq!(ctx.set::<Blog>(); include b.posts then b.comments)
     .to_list()
     .await?;
 ```
 
-> There is **no Lazy Loading**. Always call `include_named` when you need related data.
+> There is **no Lazy Loading**. Always use `linq!(...; include ...)` when you need related data.
 
 ### Bulk Update
 
 ```rust
-let affected = ctx
-    .set::<Blog>()
-    .query()
-    .filter(linq!(|b: Blog| b.rating < 3))
-    .execute_update()
-    .set_column("rating", 3)
-    .execute()
-    .await?;
+let affected = linq!(
+    ctx.set::<Blog>(), |b: Blog| b.rating < 3;
+    set b.rating, 3;
+    execute_update
+).await?;
 ```
 
 ### Bulk Delete
@@ -191,7 +184,7 @@ let affected = ctx
 ### Attach → Modify → SaveChanges
 
 ```rust
-let mut blog = ctx.set::<Blog>().query().find_by_id(1).first().await?;
+let mut blog = ctx.set::<Blog>().query().find(1).await?.unwrap();
 blog.rating = 10;
 
 ctx.set::<Blog>().update(blog);
@@ -201,9 +194,9 @@ ctx.save_changes().await?;
 ### Global Query Filter (Soft Delete)
 
 ```rust
-ctx.model().entity::<Blog>().has_query_filter("deleted_at IS NULL");
+ctx.model().entity::<Blog>().has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
 ctx.set::<Blog>();
-// All subsequent queries automatically append: AND deleted_at IS NULL
+// All subsequent queries automatically append the filter expression
 ```
 
 ### Multi-DB (Keyed)

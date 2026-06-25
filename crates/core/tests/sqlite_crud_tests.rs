@@ -397,10 +397,10 @@ mod sqlite_crud {
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
-        let sum = db_set.query().sum("value").await.unwrap();
+        let sum = linq!(db_set.query(), |b: TestItem| true; sum b.value).await.unwrap();
         assert!((sum - 15.0).abs() < 0.01, "sum should be 15.0, got {}", sum);
 
-        let avg = db_set.query().avg("value").await.unwrap();
+        let avg = linq!(db_set.query(), |b: TestItem| true; avg b.value).await.unwrap();
         assert!((avg - 3.0).abs() < 0.01, "avg should be 3.0, got {}", avg);
     }
 

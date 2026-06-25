@@ -54,10 +54,7 @@ async fn main() -> Result<(), EfError> {
     println!("    Found {} blog(s) with rating > 3.", filtered.len());
 
     println!("[5] Eager load posts...");
-    let _with_posts = ctx
-        .set::<Blog>()
-        .query()
-        .include_named("posts")
+    let _with_posts = linq!(ctx.set::<Blog>(); include b.posts)
         .to_list()
         .await?;
     println!("    Include executed.");

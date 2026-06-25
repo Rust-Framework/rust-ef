@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod m2m_tests {
     use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+    use rust_ef::linq;
     use rust_ef::prelude::*;
     use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
@@ -149,10 +150,7 @@ mod m2m_tests {
         let mut ctx = make_ctx();
         seed_m2m(&mut ctx, false).await;
 
-        let students = ctx
-            .set::<Student>()
-            .query()
-            .include_named("courses")
+        let students = linq!(ctx.set::<Student>(); include b.courses)
             .to_list()
             .await
             .unwrap();
@@ -166,10 +164,7 @@ mod m2m_tests {
         let mut ctx = make_ctx();
         seed_m2m(&mut ctx, true).await;
 
-        let students = ctx
-            .set::<StudentThrough>()
-            .query()
-            .include_named("courses")
+        let students = linq!(ctx.set::<StudentThrough>(); include b.courses)
             .to_list()
             .await
             .unwrap();

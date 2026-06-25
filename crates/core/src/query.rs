@@ -1067,6 +1067,116 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     // -------------------------------------------------------------------
+    // Additional LINQ terminal methods
+    // -------------------------------------------------------------------
+
+    /// Executes the query and returns the last matching entity (reverses
+    /// ordering, then takes 1). Errors if no rows match.
+    pub async fn last(self) -> EfResult<T>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        let mut results = self.last_or_default().await?;
+        results
+            .take()
+            .ok_or_else(|| crate::error::EfError::NotFound("Entity not found".to_string()))
+    }
+
+    /// Executes the query and returns the last matching entity or `None`
+    /// (reverses ordering, then takes 1).
+    pub async fn last_or_default(mut self) -> EfResult<Option<T>>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        // Reverse all orderings to get the "last" row.
+        for o in &mut self.state.orderings {
+            o.direction = match o.direction {
+                OrderDirection::Ascending => OrderDirection::Descending,
+                OrderDirection::Descending => OrderDirection::Ascending,
+            };
+        }
+        let mut results = self.take(1).to_list().await?;
+        Ok(results.pop())
+    }
+
+    /// Executes the query and returns the only matching entity. Errors if
+    /// there are 0 or 2+ results.
+    pub async fn single(self) -> EfResult<T>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        let mut results = self.take(2).to_list().await?;
+        if results.len() > 1 {
+            return Err(crate::error::EfError::Query(
+                "Sequence contains more than one element".to_string(),
+            ));
+        }
+        results
+            .pop()
+            .ok_or_else(|| crate::error::EfError::NotFound("Sequence contains no elements".to_string()))
+    }
+
+    /// Executes the query and returns the only matching entity, or `None` if
+    /// empty. Errors if there are 2+ results.
+    pub async fn single_or_default(self) -> EfResult<Option<T>>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        let mut results = self.take(2).to_list().await?;
+        if results.len() > 1 {
+            return Err(crate::error::EfError::Query(
+                "Sequence contains more than one element".to_string(),
+            ));
+        }
+        Ok(results.pop())
+    }
+
+    /// Executes a COUNT query and returns the result as `i64`. Alias for
+    /// `count()` — in .NET LINQ, `LongCount` returns `long` while `Count`
+    /// returns `int`; in Rust both are `i64`.
+    pub async fn long_count(self) -> EfResult<i64> {
+        self.count().await
+    }
+
+    /// Determines whether all elements in the sequence satisfy a predicate.
+    /// The predicate is applied in Rust after loading the entities.
+    pub async fn all<F>(self, predicate: F) -> EfResult<bool>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        F: Fn(&T) -> bool,
+    {
+        let items = self.to_list().await?;
+        Ok(items.iter().all(predicate))
+    }
+
+    /// Determines whether the sequence contains an entity with the given
+    /// primary key value.
+    pub async fn contains(self, id: impl Into<DbValue>) -> EfResult<bool>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    {
+        self.find(id).await.map(|opt| opt.is_some())
+    }
+
+    /// Projects each entity into a key-value pair and collects into a
+    /// `HashMap<K, T>`. The key selector closure extracts the key from each
+    /// entity.
+    pub async fn to_dictionary<K, F>(self, key_selector: F) -> EfResult<std::collections::HashMap<K, T>>
+    where
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        K: std::hash::Hash + Eq,
+        F: Fn(&T) -> K,
+    {
+        let items = self.to_list().await?;
+        let mut map = std::collections::HashMap::with_capacity(items.len());
+        for item in items {
+            let key = key_selector(&item);
+            map.insert(key, item);
+        }
+        Ok(map)
+    }
+
+    // -------------------------------------------------------------------
     // Bulk operations (ExecuteUpdate / ExecuteDelete)
     // -------------------------------------------------------------------
 

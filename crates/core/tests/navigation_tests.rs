@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod navigation_tests {
     use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+    use rust_ef::linq;
     use rust_ef::prelude::*;
     use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
@@ -81,20 +82,14 @@ mod navigation_tests {
         });
         ctx.save_changes().await.unwrap();
 
-        let blogs = ctx
-            .set::<NavBlog>()
-            .query()
-            .include_named("posts")
+        let blogs = linq!(ctx.set::<NavBlog>(); include b.posts)
             .to_list()
             .await
             .unwrap();
         assert_eq!(blogs.len(), 1);
         assert_eq!(blogs[0].posts.len(), 2);
 
-        let posts = ctx
-            .set::<NavPost>()
-            .query()
-            .include_named("blog")
+        let posts = linq!(ctx.set::<NavPost>(); include b.blog)
             .to_list()
             .await
             .unwrap();
@@ -145,11 +140,7 @@ mod navigation_tests {
         });
         ctx.save_changes().await.unwrap();
 
-        let blogs = ctx
-            .set::<NavBlog>()
-            .query()
-            .include_named("posts")
-            .then_include_named("comments")
+        let blogs = linq!(ctx.set::<NavBlog>(); include b.posts then b.comments)
             .to_list()
             .await
             .unwrap();

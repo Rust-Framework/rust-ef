@@ -33,8 +33,7 @@ async fn query_examples(ctx: &mut DbContext) -> EfResult<()> {
         .to_list()
         .await?;
 
-    let joined = ctx.set::<Post>().query()
-        .inner_join("blogs", "blog_id", "blog_id")
+    let joined = linq!(ctx.set::<Post>(); inner_join |p: Post, b: Blog| p.blog_id == b.blog_id)
         .to_list()
         .await?;
 
@@ -42,8 +41,8 @@ async fn query_examples(ctx: &mut DbContext) -> EfResult<()> {
     let has_any = linq!(ctx.set::<Post>(), |p: Post| p.title == "Hello")
         .any()
         .await?;
-    let sum_ratings = ctx.set::<Blog>().query().sum("rating").await?;
-    let avg_rating = ctx.set::<Blog>().query().avg("rating").await?;
+    let sum_ratings = linq!(ctx.set::<Blog>(); sum b.rating).await?;
+    let avg_rating = linq!(ctx.set::<Blog>(); avg b.rating).await?;
 
     let first = linq!(ctx.set::<Blog>(), |b: Blog| b.url == "https://example.com")
         .first()
@@ -53,11 +52,11 @@ async fn query_examples(ctx: &mut DbContext) -> EfResult<()> {
         .first_or_default()
         .await?;
 
-    let updated = linq!(ctx.set::<Blog>(), |b: Blog| b.rating < 1)
-        .execute_update()
-        .set_column("rating", 1)
-        .execute()
-        .await?;
+    let updated = linq!(
+        ctx.set::<Blog>(), |b: Blog| b.rating < 1;
+        set b.rating, 1;
+        execute_update
+    ).await?;
 
     let deleted = linq!(ctx.set::<Post>(), |p: Post| p.blog_id == 0)
         .execute_delete()
