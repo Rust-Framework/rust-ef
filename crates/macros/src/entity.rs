@@ -791,7 +791,10 @@ fn generate_scalar_parse(type_str: &str, _ty: &Type, idx: syn::Index) -> proc_ma
             values[#idx].parse::<f32>().unwrap_or(0.0)
         },
         "bool" => quote! {
-            values[#idx].parse::<bool>().unwrap_or(false)
+            match values[#idx].as_str() {
+                "true" | "1" => true,
+                _ => false,
+            }
         },
         "String" => quote! {
             values[#idx].clone()

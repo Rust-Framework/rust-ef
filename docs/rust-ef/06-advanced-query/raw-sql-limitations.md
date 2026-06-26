@@ -16,15 +16,17 @@ let query = set.query().filter(|qb| {
 
 更直接的方式是通过全局过滤器或 `BoolExpr::Raw`（高级用法，需谨慎处理参数化）。
 
-## 已知限制（v0.3）
+## 已知限制（v0.5）
 
 | 限制 | 说明 | 回避策略 |
 |------|------|----------|
-| **无子查询** | 不能写 `b.posts.any(p => p.title.contains("x"))` | 拆分为两次查询：先查 Posts，再查 Blogs |
-| **无关联过滤** | `linq!` 只支持当前实体的字段 | 用手动 JOIN 或内存过滤 |
+| ~~无子查询~~ | ✅ v0.5 已实现 `any`/`none`/`all`（EXISTS/NOT EXISTS） | — |
+| ~~无关联过滤~~ | ✅ v0.5 已支持基于导航元数据的子查询过滤 | — |
 | **无 CTE / Window 函数** | 不支持 `WITH` 和 `ROW_NUMBER()` | 使用原始 SQL 或存储过程 |
 | **linq! 需显式类型** | `|b: Blog|` 不能省略 | 必须标注实体类型 |
-| **日期/UUID 类型** | `chrono` / `uuid` 未内置 | 用字符串中转，或等待 feature 发布 |
+| **日期/UUID 类型** | `chrono` / `uuid` 未内置 | 用 `i64`（epoch）/ `String` 中转，或等待 feature 发布 |
+| **无 Lazy Loading** | 必须显式 `include` | — |
+| **拦截器只读** | `SaveChangesContext` 不含实体引用，无法在拦截器中改字段 | 手动标记 + 拦截器审计（见软删除/审计示例） |
 
 ## 何时退回原始 SQL
 

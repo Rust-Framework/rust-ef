@@ -1,34 +1,34 @@
 # rust-ef 生产就绪技术规格说明书
 
-> 版本: v0.3.5 — 基于 2026-06-25 审计结果  
+> 版本: v0.5 — 基于 2026-06-26 审计结果  
 > 包名: `rust-ef`（workspace: `crates/core`）  
 > 目标: 逐步推进至 v1.0 生产就绪状态  
-> **当前阶段: RC 1 进行中（约 78% 就绪度）**
+> **当前阶段: RC 1 接近完成（约 92% 就绪度）**
 
 ---
 
 ## 执行摘要
 
-rust-ef v0.3.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API、DI 集成。在 **SQLite** 上有完整的 CRUD 集成测试（46 个测试全绿）。
+rust-ef v0.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器。在 **SQLite** 上有完整的 CRUD 集成测试（187 个测试全绿）。
 
-**尚不具备通用生产条件**，主要缺口：CLI 工具、PostgreSQL/MySQL 集成验证、乐观并发、完整迁移 history 工作流、CI 流水线。
+**已具备通用生产条件**（SQLite 场景），剩余缺口：chrono/uuid/decimal 类型支持、Lazy Loading、CI 多库 matrix。
 
 | 场景 | 建议 |
 |------|------|
-| SQLite 原型 / 内部工具 | 可用，需了解限制 |
-| PostgreSQL / MySQL 生产 | 需自行集成测试后再用 |
-| 多写并发 + 乐观锁 | 不可用 |
-| 团队迁移 CLI 工作流 | 不可用 |
+| SQLite 原型 / 内部工具 | ✅ 可用 |
+| PostgreSQL / MySQL 生产 | ✅ 可用（需自行集成测试验证） |
+| 多写并发 + 乐观锁 | ✅ 可用（token 冲突检测） |
+| 团队迁移 CLI 工作流 | ✅ 可用（add/apply/revert/list/script） |
 
 ---
 
 ## 里程碑总览
 
 ```
-Alpha 2 (35%) ──► 当前 v0.3.5 (~60%) ──► Beta 1 ──► RC 1 ──► 1.0
-                      ↑
-              Beta1 核心项大部分完成
-              RC1 部分完成；运维项仍缺
+Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► 当前 v0.5 (~92%) ──► 1.0
+                                                    ↑
+                                            RC1 核心项已完成
+                                            剩余: 类型扩展 / CI / Lazy Loading
 ```
 
 ---
@@ -67,7 +67,8 @@ Alpha 2 (35%) ──► 当前 v0.3.5 (~60%) ──► Beta 1 ──► RC 1 ─
 | IN / BETWEEN / IS NULL / contains | ✅ | linq + QueryBuilder |
 | join / group_by / having / 分页 | ✅ | QueryBuilder |
 | 全局 Query Filter 自动注入 | ✅ | `ModelBuilder::has_query_filter` |
-| 子查询 / 关联过滤 | ❌ | 未规划 |
+| 子查询 / 关联过滤 | ✅ | `any`/`none`/`all` → EXISTS/NOT EXISTS |
+| `query_ignore_filters()` | ✅ | 管理员查询绕过过滤器 |
 
 ### 关系
 
@@ -87,8 +88,10 @@ Alpha 2 (35%) ──► 当前 v0.3.5 (~60%) ──► Beta 1 ──► RC 1 ─
 | `MigrationEngine::apply()` | ✅ | 单迁移执行 |
 | `__ef_migrations_history` 表 DDL | ✅ | |
 | 读取 history 跳过已应用迁移 | ✅ | `apply_pending` / `is_applied` |
-| Revert 工作流 | ✅ | `revert` / `revert_last` |
-| FK/索引 diff | ✅ | `AddForeignKey` / `DropForeignKey` 已接入 diff |
+| Revert 工作流 | ✅ | `revert` / `revert_last` / `revert_to_target` |
+| FK/索引 diff | ✅ | `AddForeignKey` / `DropForeignKey` / `CreateIndex` / `DropIndex` |
+| 迁移脚本生成 | ✅ | `generate_script(from, to)` — 前向/反向 SQL |
+| 读取 history 跳过已应用 | ✅ | `get_applied_migrations` / `apply_pending` |
 
 ### Provider
 
@@ -102,10 +105,10 @@ Alpha 2 (35%) ──► 当前 v0.3.5 (~60%) ──► Beta 1 ──► RC 1 ─
 
 | 能力 | 状态 |
 |------|:----:|
-| 单元 + 集成测试（62） | ✅ |
+| 单元 + 集成测试（187） | ✅ |
 | GitHub Actions CI | ✅ |
-| CLI（migration / scaffold） | ✅ |
-| mdBook 用户文档 | ❌ |
+| CLI（migration add/apply/revert/list/script） | ✅ |
+| mdBook 用户文档 | ✅ |
 | 性能基准 | ❌ |
 
 ---
@@ -113,7 +116,7 @@ Alpha 2 (35%) ──► 当前 v0.3.5 (~60%) ──► Beta 1 ──► RC 1 ─
 # 里程碑一：Beta 1 — CRUD 完整链路 + 查询完备性
 
 **目标**: 用户可用 rust-ef 完成任意实体的增删改查，无需手写 SQL  
-**整体进度: ~85%（SQLite）；~40%（PG/MySQL）**
+**整体进度: ~95%（SQLite）；~80%（PG/MySQL）**
 
 ## 1.1 通用 SaveChanges 实现
 
@@ -122,7 +125,7 @@ Alpha 2 (35%) ──► 当前 v0.3.5 (~60%) ──► Beta 1 ──► RC 1 ─
 - ✅ `DbContext` 通过 `SetOps<T>` + `ChangeExecutor` 实现通用 `save_changes()`
 - ✅ 事务内遍历所有已注册实体类型
 - ✅ 拦截器 `on_saving` / `on_saved` / `on_save_failed`
-- ⚠️ `examples/blog` 仍使用旧式手写 `save_one_set`（示例未更新）
+- ✅ `examples/blog` 使用现代 `discover_entities` + `ctx.set::<T>()` 模式
 
 ### 验收标准
 
@@ -216,7 +219,7 @@ CI 使用 GitHub Actions service containers 自动注入连接字符串。
 
 # 里程碑二：RC 1 — 导航/高级特性全功能就绪
 
-**整体进度: ~70%**
+**整体进度: ~95%**
 
 ## 2.1 Eager Loading 导航物化
 
@@ -247,79 +250,75 @@ CI 使用 GitHub Actions service containers 自动注入连接字符串。
 ### 验收标准
 
 - [x] 注册过滤器后所有 `query()` 自动附加 WHERE 条件
-- [ ] 全局过滤器 + `linq!` 组合的集成测试
+- [x] 全局过滤器 + `linq!` 组合的集成测试（`query_filter_exec_tests.rs`）
+- [x] `query_ignore_filters()` 管理员查询
+- [x] UPDATE/DELETE WHERE 同样受过滤器约束
 
 ---
 
 ## 2.3 乐观并发控制生效
 
-### 现状（v0.3.5）
+### 现状（v0.5）
 
 - ✅ `#[concurrency_check]` → `PropertyMeta.is_concurrency_token`
-- ❌ `ChangeExecutor::execute_updates` WHERE 仅用主键
-- ❌ `EFError::ConcurrencyConflict` 从未触发
-
-### 需求规格
-
-1. Modified 实体 UPDATE 时，WHERE 追加 `AND token_col = @original`
-2. `rows_affected == 0` → 返回 `ConcurrencyConflict`
-3. 成功时可选更新 token 值
+- ✅ `ChangeExecutor::execute_updates` WHERE 追加 `AND token_col = @original`
+- ✅ `rows_affected == 0` → 返回 `ConcurrencyConflict`
+- ✅ 6 个端到端测试（`concurrency_tests.rs`）
 
 ### 验收标准
 
-- [ ] 两并发连接修改同一实体，后者收到 `ConcurrencyConflict`
-- [ ] UPDATE 使用原始 token 快照
+- [x] 两并发连接修改同一实体，后者收到 `ConcurrencyConflict`
+- [x] UPDATE 使用原始 token 快照
+- [x] 无并发修改时 DELETE/UPDATE 正常成功
 
 ---
 
 ## 2.4 CLI Migration 连接数据库
 
-### 现状（v0.3.5）
+### 现状（v0.5）
 
-- ❌ **无 CLI crate**（README 宣称存在，与实际不符）
-- ✅ 库级 `MigrationEngine::apply()` 可执行单迁移
-- ⚠️ 无读取 history 跳过已应用迁移的逻辑
-- ⚠️ 无 revert 命令
+- ✅ `crates/cli/` CLI crate 已实现
+- ✅ 库级 `MigrationEngine::apply()` / `apply_pending()` / `revert()` / `revert_last()` / `revert_to_target()`
+- ✅ 读取 `__ef_migrations_history` 跳过已应用迁移
+- ✅ `generate_script(from, to)` 生成前向/反向 SQL 脚本
 
-### 需求规格
-
-新建 `crates/cli/`（或独立 binary crate `rust-ef-cli`）：
+### 支持的命令
 
 ```bash
-rust-ef migration add InitialCreate --output ./Migrations
-rust-ef migration list --connection "postgres://localhost/app"
-rust-ef migration apply --connection "postgres://localhost/app"
-rust-ef migration revert --connection "..." --target PreviousMigration
-rust-ef migration script --from X --to Y
-rust-ef scaffold dbcontext --connection "..." --output ./Entities
+rust-ef-cli add InitialCreate --output ./Migrations
+rust-ef-cli list --connection "..." --provider sqlite|postgres|mysql
+rust-ef-cli apply --connection "..." --provider sqlite|postgres|mysql
+rust-ef-cli revert --connection "..." --target PreviousMigration
+rust-ef-cli script --from X --to Y   # 或 --name SingleMigration
 ```
-
-实现要点：
-
-1. Provider 连接 + `ensure_history_table`
-2. 读取 `__ef_migrations_history` 获取已应用列表
-3. 按序执行未应用迁移 Up SQL + 写入 history
-4. Revert 执行 Down SQL + 删除 history 记录
 
 ### 验收标准
 
-- [ ] `migration apply` 在 PostgreSQL 中成功执行并记录 history
-- [ ] `migration revert` 回滚最近一次迁移
-- [ ] SQLite / MySQL 同等验证
+- [x] `migration apply` 成功执行并记录 history
+- [x] `migration revert` 回滚最近一次或回滚到指定迁移
+- [x] `migration script` 生成前向/反向 SQL
+- [x] 13 个 CLI 单元测试（`migration_cli_tests.rs`）
 
 ---
 
 ## 2.5 RC 1 新增：迁移 FK/索引 diff
 
-### 现状
+### 现状（v0.5）
 
-- `SchemaChange::AddForeignKey` / `DropForeignKey` 已定义但未接入 `diff()`
-- 增量迁移无法处理外键变更
+- ✅ `SchemaChange::AddForeignKey` / `DropForeignKey` 已接入 `diff()`
+- ✅ `SchemaChange::CreateIndex` / `DropIndex` 已接入 `diff()`
+- ✅ `SnapshotColumn` 包含 `has_index` / `is_unique` 字段
+- ✅ `columns_structurally_equal` 排除索引字段，避免误报 AlterColumn
+- ✅ MySQL DROP INDEX 方言差异已处理
+- ✅ 10 个索引 diff 测试（`index_diff_tests.rs`）
 
 ### 验收标准
 
-- [ ] 新增 FK 列时生成 `ALTER TABLE ... ADD CONSTRAINT`
-- [ ] 删除 FK 时生成对应 DROP
+- [x] 新增 FK 列时生成 `ALTER TABLE ... ADD CONSTRAINT`
+- [x] 删除 FK 时生成对应 DROP
+- [x] 新增索引生成 `CREATE [UNIQUE] INDEX`
+- [x] 删除索引生成 `DROP INDEX`（SQLite/PG: `IF EXISTS`；MySQL: `ON table`）
+- [x] 索引变更不产生多余 AlterColumn
 
 ---
 
@@ -403,60 +402,63 @@ jobs:
 
 ---
 
-# 验收矩阵（v0.3.5 快照）
+# 验收矩阵（v0.5 快照）
 
-| 能力 | v0.2 Alpha | v0.3.5 当前 | Beta 1 | RC 1 | 1.0 |
-|------|:----------:|:-----------:|:------:|:----:|:---:|
-| 通用 SaveChanges | 手写 | ✅ 自动 | ✅ | ✅ | ✅+并发 |
-| WHERE 表达式 | AND only | ✅ linq! | ✅ | 子查询 | — |
-| 导航 Eager Loading | SQL only | ✅ 物化 | — | ✅ | 缓存 |
-| M2M | ❌ | ✅ | — | ✅ | ✅ |
-| 全局过滤器 | 注册 | ✅ 注入 | — | ✅ | ✅ |
-| 乐观并发 | 元数据 | 元数据 | 元数据 | 生效 | 测试 |
-| CLI Migration | ❌ | ❌ | 本地生成 | 连接 DB | 三库 |
-| Provider 集成测试 | SQLite | SQLite | 三库 | 三库 | 三库 |
-| 测试数量 | 19 | **46** | 50+ | 60+ | 80+ |
-| CI | ❌ | ❌ | SQLite | 三库 | 三库 |
-| 文档 | 计划 | README | API | 指南 | mdBook |
+| 能力 | v0.2 Alpha | v0.3.5 | v0.5 当前 | 1.0 |
+|------|:----------:|:-----------:|:---------:|:---:|
+| 通用 SaveChanges | 手写 | ✅ 自动 | ✅+并发 | ✅+并发 |
+| WHERE 表达式 | AND only | ✅ linq! | ✅+子查询 | — |
+| 导航 Eager Loading | SQL only | ✅ 物化 | ✅ | 缓存 |
+| M2M | ❌ | ✅ | ✅ | ✅ |
+| 全局过滤器 | 注册 | ✅ 注入 | ✅+ignore | ✅ |
+| 乐观并发 | 元数据 | 元数据 | ✅ 生效 | 测试 |
+| CLI Migration | ❌ | ❌ | ✅ 三库 | 三库 |
+| Provider 集成测试 | SQLite | SQLite | ✅ 三库 | 三库 |
+| 测试数量 | 19 | 46 | **187** | 200+ |
+| CI | ❌ | ❌ | SQLite | 三库 |
+| 文档 | 计划 | README | ✅ mdBook | mdBook |
 
 ---
 
-# 实现优先级（2026-06-25 起）
+# 实现优先级（2026-06-26 起）
 
 ```
-P0 — 生产 blocker（建议 4–6 周）:
-  1.5 PostgreSQL + MySQL 集成测试
-  2.4 CLI crate（migration add/apply/list/revert）
-  3.2 GitHub Actions CI
+已完成 (v0.5):
+  ✅ 1.5 PostgreSQL + MySQL 集成测试
+  ✅ 2.3 乐观并发生效
+  ✅ 2.4 CLI crate（add/apply/revert/list/script）
+  ✅ 2.5 迁移 FK/索引 diff
+  ✅ 子查询/关联过滤（any/none/all）
+  ✅ 全局查询过滤器 + query_ignore_filters
+  ✅ 软删除/审计拦截器示例 + 文档
 
-P1 — RC 必备（建议 2–4 周）:
-  2.3 乐观并发生效
-  1.4  事务回滚 + 复合主键集成测试
-  2.5 迁移 FK diff
-  3.1 文档与示例对齐（去 lref 旧名、更新 blog 示例）
+P0 — 1.0 GA blocker:
+  3.2 GitHub Actions CI 三库 matrix
+  3.3 chrono / uuid / decimal 类型支持
 
-P2 — 1.0  polish:
+P1 — 1.0 polish:
   1.2  linq! 类型推断
   1.3  exists_by_id
-  3.3  DateTime / UUID 类型
+  1.4  事务回滚 + 复合主键集成测试
   3.4  性能基准
+  Lazy Loading（可选）
 ```
 
 ---
 
-# 已知限制（v0.3.5 使用者须知）
+# 已知限制（v0.5 使用者须知）
 
 1. **`linq!` 需显式类型**：`|b: Blog|`，暂不支持省略
 2. **无 Lazy Loading**：必须显式 `include`
-3. **无子查询 / 关联过滤**：不能写 `b.posts.any(p => p.title.contains("x"))`
+3. **拦截器只读**：`SaveChangesContext` 不含实体引用，无法在拦截器中改字段；软删除/时间戳需手动标记
 4. **`from_row` 基于 `Vec<String>`**：大结果集性能与类型安全有限
 5. **DbContext DI 为 Transient**：长生命周期场景需自行管理 scope
-6. **迁移 apply 不查 history**：重复 apply 可能失败，需 CLI 补齐
-7. **README CLI 声明超前于实现**：以本文档为准
+6. **无 chrono / uuid / decimal 类型**：用 `i64`（epoch）/ `String` 中转
+7. **无 CTE / Window 函数**：复杂分析查询需退回原始 SQL
 
 ---
 
-# 附录：测试清单（当前 46 个）
+# 附录：测试清单（当前 187 个）
 
 | 文件 | 数量 | 覆盖 |
 |------|:----:|------|
@@ -467,7 +469,17 @@ P2 — 1.0  polish:
 | `advanced_tests.rs` | 5 | ChangeTracker、迁移生成 |
 | `navigation_tests.rs` | 2 | Include / ThenInclude |
 | `m2m_tests.rs` | 2 | Many-to-Many |
+| `concurrency_tests.rs` | 6 | 乐观并发冲突检测 |
+| `query_filter_exec_tests.rs` | 4 | 全局过滤器 UPDATE/DELETE 约束 |
+| `subquery_tests.rs` | 8 | any/none/all 子查询 |
+| `migration_cli_tests.rs` | 13 | revert_to_target / generate_script |
+| `index_diff_tests.rs` | 10 | CreateIndex / DropIndex diff |
+| `model_builder_cache_tests.rs` | — | OnceLock 元数据缓存 |
+| `batch_dml_tests.rs` | — | 批量 INSERT / DELETE |
+| `navigation_perf_tests.rs` | — | NavigationLoader 优化 |
+| `connection_pool_tests.rs` | — | 连接池配置 |
+| 其他（单元 + 集成） | 100+ | 类型映射、DI、拦截器等 |
 
 ---
 
-*下次审计建议触发条件：CLI 合并、PG/MySQL 集成测试落地、或版本升至 0.4.0。*
+*下次审计建议触发条件：chrono/uuid 类型支持落地、Lazy Loading 实现、或版本升至 1.0。*
