@@ -36,6 +36,7 @@
 - [EntityType 派生与属性配置](03-entity-design/derive-attributes.md)
 - [主键、自增与必填约束](03-entity-design/keys-constraints.md)
 - [索引、唯一性与并发标记](03-entity-design/indexes-concurrency.md)
+- [类型映射参考](03-entity-design/type-mapping.md)
 
 ### [第四章 关系与导航](04-relationships/INDEX.md)
 
@@ -98,4 +99,5 @@
 
 - [常见陷阱与排查](11-best-practices/common-pitfalls.md)
 - [性能优化技巧](11-best-practices/performance-tips.md)
+- [安全最佳实践](11-best-practices/security.md)
 - [代码审查清单](11-best-practices/code-review-checklist.md)

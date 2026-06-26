@@ -56,11 +56,3 @@ pub enum EFError {
 
 /// Result type alias for rust-ef operations.
 pub type EFResult<T> = Result<T, EFError>;
-
-/// Deprecated alias ? use [`EFError`].
-#[deprecated(note = "renamed to EFError")]
-pub type LrefError = EFError;
-
-/// Deprecated alias ? use [`EFResult`].
-#[deprecated(note = "renamed to EFResult")]
-pub type LrefResult<T> = EFResult<T>;

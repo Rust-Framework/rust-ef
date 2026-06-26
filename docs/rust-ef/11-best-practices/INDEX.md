@@ -6,6 +6,7 @@
 |------|------|
 | [常见陷阱与排查](common-pitfalls.md) | 高频错误与调试思路 |
 | [性能优化技巧](performance-tips.md) | 查询策略、批量操作与连接管理 |
+| [安全最佳实践](security.md) | SQL 注入防护、连接字符串安全、敏感字段处理 |
 | [代码审查清单](code-review-checklist.md) | 上线前必查项 |
 
 ## 下一步

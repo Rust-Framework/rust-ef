@@ -2,8 +2,11 @@
 
 [![Crates.io](https://img.shields.io/crates/v/rust-ef)](https://crates.io/crates/rust-ef)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://rf2026.github.io/rust-ef/)
 
 Interface-oriented, EFCore-inspired ORM for Rust ??`IDbContext` / `IDbSet<T>` / `IEntityType` with rust-dicore DI integration.
+
+**[在线文档](https://rf2026.github.io/rust-ef/)** ?? mdBook 构建的完整开发者手册
 
 ---
 
@@ -11,8 +14,8 @@ Interface-oriented, EFCore-inspired ORM for Rust ??`IDbContext` / `IDbSet<T>` / 
 
 ```toml
 [dependencies]
-rust-ef = "0.3"
-rust-ef-sqlite = "0.3"
+rust-ef = "1.0"
+rust-ef-sqlite = "1.0"
 rust-dicore = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
