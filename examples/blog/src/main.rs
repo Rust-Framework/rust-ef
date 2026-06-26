@@ -10,7 +10,7 @@ use rust_ef::linq;
 use rust_ef::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), EfError> {
+async fn main() -> Result<(), EFError> {
     println!("=== Rust Entity Framework (rust-ef) Blog Example ===\n");
 
     let mut ctx = create_blog_context().await?;

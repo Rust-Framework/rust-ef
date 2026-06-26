@@ -66,15 +66,32 @@ pub struct Student {
 ## 查询多对多
 
 ```rust
-let students = ctx
-    .set::<Student>()
-    .query()
-    .include_named("courses")
+// 通过 linq! 的 include 子句预加载多对多导航
+let students = linq!(ctx.set::<Student>(); include s.courses)
     .to_list()
     .await?;
 
 // courses 已通过双查询策略自动物化
 assert!(students[0].courses.len() > 0);
+```
+
+## 按主键查找
+
+```rust
+// 单主键：find 使用实体 PK 元数据，不再硬编码 "id"
+let student = ctx.set::<Student>().query().find(1).await?;
+
+// 复合主键：find_by_key 接收列名常量 + 值数组
+use rust_ef::provider::DbValue;
+
+let enrollment = ctx
+    .set::<Enrollment>()
+    .query()
+    .find_by_key(&[
+        (Enrollment::COLUMN_STUDENT_ID, DbValue::I32(1)),
+        (Enrollment::COLUMN_COURSE_ID, DbValue::I32(2)),
+    ])
+    .await?;
 ```
 
 ## 设计要点

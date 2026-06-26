@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use rust_ef::error::{EfError, EfResult};
+use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -16,7 +16,7 @@ impl SqliteConnection {
 
 #[async_trait]
 impl IAsyncConnection for SqliteConnection {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64> {
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64> {
         let conn = self.conn.lock().await;
         let rp = crate::type_conversion::to_rusqlite_params(params);
         let refs: Vec<&dyn rusqlite::types::ToSql> = rp
@@ -25,10 +25,10 @@ impl IAsyncConnection for SqliteConnection {
             .collect();
         conn.execute(sql, refs.as_slice())
             .map(|c| c as u64)
-            .map_err(|e| EfError::Query(format!("Execution error: {}", e)))
+            .map_err(|e| EFError::Query(format!("Execution error: {}", e)))
     }
 
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>> {
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>> {
         let conn = self.conn.lock().await;
         let rp = crate::type_conversion::to_rusqlite_params(params);
         let refs: Vec<&dyn rusqlite::types::ToSql> = rp
@@ -37,7 +37,7 @@ impl IAsyncConnection for SqliteConnection {
             .collect();
         let mut stmt = conn
             .prepare(sql)
-            .map_err(|e| EfError::Query(format!("Prepare error: {}", e)))?;
+            .map_err(|e| EFError::Query(format!("Prepare error: {}", e)))?;
         let cc = stmt.column_count();
         let rows = stmt
             .query_map(refs.as_slice(), |row| {
@@ -52,23 +52,23 @@ impl IAsyncConnection for SqliteConnection {
                 }
                 Ok(vals)
             })
-            .map_err(|e| EfError::Query(format!("Query error: {}", e)))?;
+            .map_err(|e| EFError::Query(format!("Query error: {}", e)))?;
         let mut result = Vec::new();
         for row in rows {
-            result.push(row.map_err(|e| EfError::Query(format!("Row read error: {}", e)))?);
+            result.push(row.map_err(|e| EFError::Query(format!("Row read error: {}", e)))?);
         }
         Ok(result)
     }
 
-    async fn begin_transaction(&mut self) -> EfResult<()> {
+    async fn begin_transaction(&mut self) -> EFResult<()> {
         self.execute("BEGIN TRANSACTION", &[]).await.map(|_| ())
     }
 
-    async fn commit_transaction(&mut self) -> EfResult<()> {
+    async fn commit_transaction(&mut self) -> EFResult<()> {
         self.execute("COMMIT", &[]).await.map(|_| ())
     }
 
-    async fn rollback_transaction(&mut self) -> EfResult<()> {
+    async fn rollback_transaction(&mut self) -> EFResult<()> {
         self.execute("ROLLBACK", &[]).await.map(|_| ())
     }
 }

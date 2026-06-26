@@ -14,7 +14,9 @@
 - [ ] 复杂查询是否拆分为独立的 `let` 绑定？
 - [ ] 是否优先用 `any()` 替代 `count() > 0`？
 - [ ] 分页查询是否先过滤再 `skip`/`take`？
-- [ ] 导航属性使用前是否调用了 `include_named`？
+- [ ] 导航属性使用前是否用 `linq!(...; include b.x)` 预加载？
+- [ ] 形式 B 的 source 是否含 turbofish `::<Type>`（不能用裸变量）？
+- [ ] 是否已移除所有字符串 API（`include_named`/`order_by("col")`/`sum("col")`/`find_by_id` 等）？
 
 ## 变更层
 

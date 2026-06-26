@@ -3,7 +3,7 @@
 use rust_ef::linq;
 use rust_ef::prelude::*;
 
-async fn query_examples(ctx: &mut DbContext) -> EfResult<()> {
+async fn query_examples(ctx: &mut DbContext) -> EFResult<()> {
     let min_rating = 3;
 
     let active = linq!(ctx.set::<Blog>(), |b: Blog| b.rating > min_rating)

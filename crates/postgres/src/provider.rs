@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use deadpool_postgres::{Config, Pool, Runtime};
-use rust_ef::error::{EfError, EfResult};
+use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 use crate::sql_generator::PostgresSqlGenerator;
 use tokio_postgres::NoTls;
@@ -10,10 +10,10 @@ pub struct PostgresProvider {
 }
 
 impl PostgresProvider {
-    pub fn new(connection_string: &str, _pool_size: usize) -> EfResult<Self> {
+    pub fn new(connection_string: &str, _pool_size: usize) -> EFResult<Self> {
         let config: tokio_postgres::Config = connection_string
             .parse()
-            .map_err(|e| EfError::Connection(format!("Invalid connection string: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("Invalid connection string: {}", e)))?;
         let mut cfg = Config::new();
         if let Some(tokio_postgres::config::Host::Tcp(h)) = config.get_hosts().first() {
             cfg.host = Some(h.clone());
@@ -26,7 +26,7 @@ impl PostgresProvider {
             .map(|p| String::from_utf8_lossy(p).to_string());
         let pool = cfg
             .create_pool(Some(Runtime::Tokio1), NoTls)
-            .map_err(|e| EfError::Connection(format!("Failed to create pool: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("Failed to create pool: {}", e)))?;
         Ok(Self { pool })
     }
 }
@@ -37,25 +37,25 @@ impl IDatabaseProvider for PostgresProvider {
         Box::new(PostgresSqlGenerator::new())
     }
 
-    async fn get_connection(&self) -> EfResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
+    async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
         let client = self
             .pool
             .get()
             .await
-            .map_err(|e| EfError::Connection(format!("Pool error: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("Pool error: {}", e)))?;
         Ok(Box::new(crate::connection::PostgresConnection { client }))
     }
 
-    async fn execute_migration_command(&self, sql: &str) -> EfResult<()> {
+    async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {
         let client = self
             .pool
             .get()
             .await
-            .map_err(|e| EfError::Connection(format!("Pool error: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("Pool error: {}", e)))?;
         client
             .batch_execute(sql)
             .await
-            .map_err(|e| EfError::Migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| EFError::Migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
 

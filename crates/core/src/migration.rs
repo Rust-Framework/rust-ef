@@ -6,7 +6,7 @@
 //!   - Generate Up/Down SQL with dialect-specific type mappings
 //!   - Maintain `__ef_migrations_history` tracking table
 
-use crate::error::EfResult;
+use crate::error::EFResult;
 use crate::metadata::{EntityTypeMeta, NavigationKind};
 use std::collections::{HashMap, HashSet};
 
@@ -158,7 +158,7 @@ impl MigrationEngine {
         name: &str,
         current: &[EntityTypeMeta],
         previous_snapshot: &Option<ModelSnapshot>,
-    ) -> EfResult<Migration> {
+    ) -> EFResult<Migration> {
         let current_snapshot = self.create_snapshot("__current__", current);
 
         let changes = match previous_snapshot {
@@ -722,7 +722,7 @@ impl MigrationEngine {
     pub async fn ensure_history_table(
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
-    ) -> EfResult<()> {
+    ) -> EFResult<()> {
         let sql = create_migration_history_table_sql(self.dialect);
         provider.execute_migration_command(&sql).await
     }
@@ -732,7 +732,7 @@ impl MigrationEngine {
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
         migration: &Migration,
-    ) -> EfResult<()> {
+    ) -> EFResult<()> {
         if self.is_applied(provider, &migration.id).await? {
             return Ok(());
         }
@@ -753,9 +753,9 @@ impl MigrationEngine {
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
         migration: &Migration,
-    ) -> EfResult<()> {
+    ) -> EFResult<()> {
         if !self.is_applied(provider, &migration.id).await? {
-            return Err(crate::error::EfError::Migration(format!(
+            return Err(crate::error::EFError::Migration(format!(
                 "migration '{}' is not applied",
                 migration.id
             )));
@@ -775,7 +775,7 @@ impl MigrationEngine {
     pub async fn get_applied_migrations(
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
-    ) -> EfResult<Vec<MigrationHistoryEntry>> {
+    ) -> EFResult<Vec<MigrationHistoryEntry>> {
         self.ensure_history_table(provider).await?;
         let q = |s: &str| self.dialect.quote(s);
         let table = q(MIGRATION_HISTORY_TABLE);
@@ -802,7 +802,7 @@ impl MigrationEngine {
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
         migration_id: &str,
-    ) -> EfResult<bool> {
+    ) -> EFResult<bool> {
         let applied = self.get_applied_migrations(provider).await?;
         Ok(applied.iter().any(|e| e.migration_id == migration_id))
     }
@@ -812,7 +812,7 @@ impl MigrationEngine {
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
         migrations: &[Migration],
-    ) -> EfResult<usize> {
+    ) -> EFResult<usize> {
         let applied: std::collections::HashSet<String> = self
             .get_applied_migrations(provider)
             .await?
@@ -835,7 +835,7 @@ impl MigrationEngine {
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
         migrations: &[Migration],
-    ) -> EfResult<Option<String>> {
+    ) -> EFResult<Option<String>> {
         let applied = self.get_applied_migrations(provider).await?;
         let last = applied.last().map(|e| e.migration_id.clone());
         let Some(last_id) = last else {
@@ -845,7 +845,7 @@ impl MigrationEngine {
             .iter()
             .find(|m| m.id == last_id)
             .ok_or_else(|| {
-                crate::error::EfError::Migration(format!(
+                crate::error::EFError::Migration(format!(
                     "applied migration '{}' not found in local migration set",
                     last_id
                 ))
@@ -861,7 +861,7 @@ impl MigrationEngine {
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
         entity_types: &[EntityTypeMeta],
-    ) -> EfResult<()> {
+    ) -> EFResult<()> {
         let snapshot = self.create_snapshot("__ensure_created__", entity_types);
         let changes = self.initial_create(&snapshot);
         let sql = self.generate_ddl_sql(&changes);
@@ -879,7 +879,7 @@ impl MigrationEngine {
         &self,
         provider: &dyn crate::provider::IDatabaseProvider,
         entity_types: &[EntityTypeMeta],
-    ) -> EfResult<()> {
+    ) -> EFResult<()> {
         let q = |s: &str| self.dialect.quote(s);
         for meta in entity_types {
             let sql = format!("DROP TABLE IF EXISTS {};", q(meta.table_name.as_ref()));
@@ -894,7 +894,7 @@ impl MigrationEngine {
         provider: &dyn crate::provider::IDatabaseProvider,
         meta: &EntityTypeMeta,
         rows: &[std::collections::HashMap<String, crate::provider::DbValue>],
-    ) -> EfResult<()> {
+    ) -> EFResult<()> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -1052,7 +1052,7 @@ impl MigrationStore {
     }
 
     /// Saves a migration as `{id}/up.sql` and `{id}/down.sql`.
-    pub fn save(&self, migration: &Migration) -> EfResult<()> {
+    pub fn save(&self, migration: &Migration) -> EFResult<()> {
         fs::create_dir_all(&self.root).map_err(migration_io_err)?;
         let dir = self.root.join(&migration.id);
         fs::create_dir_all(&dir).map_err(migration_io_err)?;
@@ -1062,7 +1062,7 @@ impl MigrationStore {
     }
 
     /// Loads all migrations sorted by id (timestamp prefix recommended).
-    pub fn load_all(&self) -> EfResult<Vec<Migration>> {
+    pub fn load_all(&self) -> EFResult<Vec<Migration>> {
         if !self.root.exists() {
             return Ok(Vec::new());
         }
@@ -1076,7 +1076,7 @@ impl MigrationStore {
         ids.into_iter().map(|id| self.load(&id)).collect()
     }
 
-    pub fn load(&self, id: &str) -> EfResult<Migration> {
+    pub fn load(&self, id: &str) -> EFResult<Migration> {
         let dir = self.root.join(id);
         let up_sql = fs::read_to_string(dir.join("up.sql")).map_err(migration_io_err)?;
         let down_sql = fs::read_to_string(dir.join("down.sql")).map_err(migration_io_err)?;
@@ -1089,13 +1089,13 @@ impl MigrationStore {
     }
 
     /// Writes a model snapshot JSON file for the next diff baseline.
-    pub fn save_snapshot(&self, snapshot: &ModelSnapshot) -> EfResult<()> {
+    pub fn save_snapshot(&self, snapshot: &ModelSnapshot) -> EFResult<()> {
         fs::create_dir_all(&self.root).map_err(migration_io_err)?;
         let json = snapshot_to_json(snapshot);
         fs::write(self.root.join("model_snapshot.json"), json).map_err(migration_io_err)
     }
 
-    pub fn load_snapshot(&self) -> EfResult<Option<ModelSnapshot>> {
+    pub fn load_snapshot(&self) -> EFResult<Option<ModelSnapshot>> {
         let path = self.root.join("model_snapshot.json");
         if !path.exists() {
             return Ok(None);
@@ -1106,12 +1106,12 @@ impl MigrationStore {
 }
 
 /// Parses a model snapshot JSON file (same format as [`MigrationStore::save_snapshot`]).
-pub fn parse_model_snapshot_json(text: &str) -> EfResult<Option<ModelSnapshot>> {
+pub fn parse_model_snapshot_json(text: &str) -> EFResult<Option<ModelSnapshot>> {
     snapshot_from_json(text)
 }
 
-fn migration_io_err(e: std::io::Error) -> crate::error::EfError {
-    crate::error::EfError::Migration(e.to_string())
+fn migration_io_err(e: std::io::Error) -> crate::error::EFError {
+    crate::error::EFError::Migration(e.to_string())
 }
 
 fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
@@ -1162,7 +1162,7 @@ fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
     out
 }
 
-fn snapshot_from_json(text: &str) -> EfResult<Option<ModelSnapshot>> {
+fn snapshot_from_json(text: &str) -> EFResult<Option<ModelSnapshot>> {
     // Minimal JSON parser for snapshot files written by save_snapshot.
     let migration_id = extract_json_string(text, "migration_id")
         .unwrap_or_else(|| "__snapshot__".to_string());

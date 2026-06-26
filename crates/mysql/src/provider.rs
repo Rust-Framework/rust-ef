@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use rust_ef::error::{EfError, EfResult};
+use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 use crate::sql_generator::MySqlSqlGenerator;
 
@@ -8,10 +8,10 @@ pub struct MySqlProvider {
 }
 
 impl MySqlProvider {
-    pub async fn new(connection_string: &str) -> EfResult<Self> {
+    pub async fn new(connection_string: &str) -> EFResult<Self> {
         let pool = sqlx::MySqlPool::connect(connection_string)
             .await
-            .map_err(|e| EfError::Connection(format!("MySQL connection failed: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("MySQL connection failed: {}", e)))?;
         Ok(Self { pool })
     }
 
@@ -19,9 +19,9 @@ impl MySqlProvider {
         Self { pool }
     }
 
-    pub fn new_lazy(connection_string: &str) -> EfResult<Self> {
+    pub fn new_lazy(connection_string: &str) -> EFResult<Self> {
         let pool = sqlx::MySqlPool::connect_lazy(connection_string)
-            .map_err(|e| EfError::Connection(format!("MySQL pool failed: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("MySQL pool failed: {}", e)))?;
         Ok(Self { pool })
     }
 }
@@ -32,20 +32,20 @@ impl IDatabaseProvider for MySqlProvider {
         Box::new(MySqlSqlGenerator::new())
     }
 
-    async fn get_connection(&self) -> EfResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
+    async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
         let conn = self
             .pool
             .acquire()
             .await
-            .map_err(|e| EfError::Connection(format!("Pool acquire failed: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("Pool acquire failed: {}", e)))?;
         Ok(Box::new(crate::connection::MySqlConnection::new(conn)))
     }
 
-    async fn execute_migration_command(&self, sql: &str) -> EfResult<()> {
+    async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {
         sqlx::query(sql)
             .execute(&self.pool)
             .await
-            .map_err(|e| EfError::Migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| EFError::Migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
 

@@ -2,7 +2,7 @@
 
 mod scaffold;
 
-use clap::{Parser, Subcommand};use rust_ef::error::{EfError, EfResult};
+use clap::{Parser, Subcommand};use rust_ef::error::{EFError, EFResult};
 use rust_ef::metadata::EntityTypeMeta;
 use rust_ef::migration::{
     parse_model_snapshot_json, MigrationDialect, MigrationEngine, MigrationStore, ModelSnapshot,
@@ -129,7 +129,7 @@ impl DialectArg {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), EfError> {
+async fn main() -> Result<(), EFError> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Migration { command } => match command {
@@ -169,7 +169,7 @@ async fn main() -> Result<(), EfError> {
     }
 }
 
-async fn cmd_init(connection: &str, provider: ProviderArg) -> EfResult<()> {
+async fn cmd_init(connection: &str, provider: ProviderArg) -> EFResult<()> {
     let p = create_provider(connection, provider)?;
     let dialect = p.migration_dialect();
     MigrationEngine::new(dialect)
@@ -179,11 +179,11 @@ async fn cmd_init(connection: &str, provider: ProviderArg) -> EfResult<()> {
     Ok(())
 }
 
-fn cmd_add(name: &str, dir: &PathBuf, snapshot_path: &PathBuf, dialect: DialectArg) -> EfResult<()> {
+fn cmd_add(name: &str, dir: &PathBuf, snapshot_path: &PathBuf, dialect: DialectArg) -> EFResult<()> {
     let text = std::fs::read_to_string(snapshot_path)
-        .map_err(|e| EfError::Migration(e.to_string()))?;
+        .map_err(|e| EFError::Migration(e.to_string()))?;
     let target_snapshot = parse_model_snapshot_json(&text)?.ok_or_else(|| {
-        EfError::Migration("snapshot must describe at least one entity type".into())
+        EFError::Migration("snapshot must describe at least one entity type".into())
     })?;
     let store = MigrationStore::new(dir);
     let previous = store.load_snapshot()?;
@@ -196,7 +196,7 @@ fn cmd_add(name: &str, dir: &PathBuf, snapshot_path: &PathBuf, dialect: DialectA
     Ok(())
 }
 
-async fn cmd_apply(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EfResult<()> {
+async fn cmd_apply(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EFResult<()> {
     let p = create_provider(connection, provider)?;
     let dialect = p.migration_dialect();
     let store = MigrationStore::new(dir);
@@ -207,7 +207,7 @@ async fn cmd_apply(connection: &str, provider: ProviderArg, dir: &PathBuf) -> Ef
     Ok(())
 }
 
-async fn cmd_list(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EfResult<()> {
+async fn cmd_list(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EFResult<()> {
     let p = create_provider(connection, provider)?;
     let dialect = p.migration_dialect();
     let store = MigrationStore::new(dir);
@@ -237,7 +237,7 @@ async fn cmd_list(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EfR
     Ok(())
 }
 
-async fn cmd_revert(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EfResult<()> {
+async fn cmd_revert(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EFResult<()> {
     let p = create_provider(connection, provider)?;
     let dialect = p.migration_dialect();
     let store = MigrationStore::new(dir);
@@ -255,7 +255,7 @@ async fn cmd_revert(connection: &str, provider: ProviderArg, dir: &PathBuf) -> E
     }
 }
 
-fn cmd_script(name: &str, dir: &PathBuf) -> EfResult<()> {
+fn cmd_script(name: &str, dir: &PathBuf) -> EFResult<()> {
     let store = MigrationStore::new(dir);
     let migration = store.load(name)?;
     println!("-- Up: {}", migration.id);
@@ -269,7 +269,7 @@ async fn cmd_scaffold_dbcontext(
     connection: &str,
     provider: ProviderArg,
     output: &PathBuf,
-) -> EfResult<()> {
+) -> EFResult<()> {
     let kind = match provider {
         ProviderArg::Auto => detect_provider(connection),
         other => other,
@@ -316,7 +316,7 @@ async fn cmd_scaffold_dbcontext(
                 .collect()
         }
         ProviderArg::Sqlite => {
-            return Err(EfError::Configuration(
+            return Err(EFError::Configuration(
                 "SQLite scaffold is not supported yet; use PostgreSQL or MySQL".into(),
             ));
         }
@@ -337,7 +337,7 @@ async fn cmd_scaffold_dbcontext(
     Ok(())
 }
 
-fn create_provider(connection: &str, provider: ProviderArg) -> EfResult<Arc<dyn IDatabaseProvider>> {
+fn create_provider(connection: &str, provider: ProviderArg) -> EFResult<Arc<dyn IDatabaseProvider>> {
     let kind = match provider {
         ProviderArg::Auto => detect_provider(connection),
         other => other,

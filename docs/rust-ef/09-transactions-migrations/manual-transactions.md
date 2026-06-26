@@ -19,7 +19,7 @@ let result = ctx.use_transaction(|conn| async move {
         DbValue::I32(to_id),
     ]).await?;
 
-    Ok::<_, EfError>(())
+    Ok::<_, EFError>(())
 }).await?;
 ```
 

@@ -8,7 +8,7 @@ mod sqlite_crud {
     use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
     use rust_ef::linq;
     use rust_ef::prelude::*;
-    use rust_ef::error::EfResult;
+    use rust_ef::error::EFResult;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
     use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
@@ -93,7 +93,7 @@ mod sqlite_crud {
     }
 
     impl IFromRow for TestItem {
-        fn from_row(values: &[String]) -> EfResult<Self> {
+        fn from_row(values: &[String]) -> EFResult<Self> {
             Ok(TestItem {
                 id: values.get(0).and_then(|s| s.parse().ok()).unwrap_or(0),
                 name: values.get(1).cloned().unwrap_or_default(),
@@ -126,7 +126,7 @@ mod sqlite_crud {
     // Helper: create table via migration engine
     // -----------------------------------------------------------------------
 
-    async fn create_table(provider: &SqliteProvider, _table_name: &str) -> EfResult<()> {
+    async fn create_table(provider: &SqliteProvider, _table_name: &str) -> EFResult<()> {
         let engine = MigrationEngine::new(MigrationDialect::Sqlite);
         let meta = TestItem::entity_meta();
         let migration = engine.generate("init", &[meta], &None)?;

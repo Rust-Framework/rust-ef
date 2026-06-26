@@ -56,7 +56,7 @@ pub struct Product {
 
 | 实践 | 说明 |
 |------|------|
-| 始终标注 `#[primary_key]` | 没有主键的实体无法执行 `find_by_id` 和 UPDATE/DELETE |
+| 始终标注 `#[primary_key]` | 没有主键的实体无法执行 `find(id)` 和 UPDATE/DELETE |
 | `Clone` 必须手动派生 | `#[derive(Clone)]` 是 `EntityType` 的前置条件 |
 | `Debug` 建议派生 | 便于日志和测试输出 |
 

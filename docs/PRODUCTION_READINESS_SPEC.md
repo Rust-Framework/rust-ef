@@ -257,7 +257,7 @@ CI 使用 GitHub Actions service containers 自动注入连接字符串。
 
 - ✅ `#[concurrency_check]` → `PropertyMeta.is_concurrency_token`
 - ❌ `ChangeExecutor::execute_updates` WHERE 仅用主键
-- ❌ `EfError::ConcurrencyConflict` 从未触发
+- ❌ `EFError::ConcurrencyConflict` 从未触发
 
 ### 需求规格
 

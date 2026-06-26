@@ -51,7 +51,7 @@ pub struct BlogRepository {
 }
 
 impl BlogRepository {
-    pub async fn list_high_rated(&mut self) -> EfResult<Vec<Blog>> {
+    pub async fn list_high_rated(&mut self) -> EFResult<Vec<Blog>> {
         let set = self.ctx.set::<Blog>();
         let expr = linq!(|b: Blog| b.rating > 4);
         set.filter(expr).to_list().await

@@ -67,7 +67,7 @@ use lref_provider_sqlite::SqliteProvider;
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> Result<(), EfError> {
+async fn main() -> Result<(), EFError> {
     let provider = Arc::new(SqliteProvider::new_in_memory()?);
 
     // Create table

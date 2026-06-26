@@ -1,7 +1,7 @@
 //! Eager-loading of navigation properties via secondary queries.
 
 use crate::entity::{IEntitySnapshot, IFromRow, INavigationSetter, IEntityType, IGetKeyValues};
-use crate::error::EfResult;
+use crate::error::EFResult;
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
 use crate::provider::{DbValue, IDatabaseProvider};
 use crate::query::IncludePath;
@@ -36,7 +36,7 @@ pub async fn load_includes<T>(
     entities: &mut [T],
     includes: &[IncludePath],
     provider: &dyn IDatabaseProvider,
-) -> EfResult<()>
+) -> EFResult<()>
 where
     T: IEntityType + IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
 {
@@ -74,7 +74,7 @@ async fn load_scalar_navigation<T>(
     nav: &NavigationMeta,
     meta: &EntityTypeMeta,
     provider: &dyn IDatabaseProvider,
-) -> EfResult<()>
+) -> EFResult<()>
 where
     T: IEntitySnapshot + INavigationSetter + IGetKeyValues,
 {
@@ -177,7 +177,7 @@ async fn load_many_to_many<T>(
     navigation: &str,
     nav: &NavigationMeta,
     provider: &dyn IDatabaseProvider,
-) -> EfResult<()>
+) -> EFResult<()>
 where
     T: IEntityType + INavigationSetter + IGetKeyValues,
 {

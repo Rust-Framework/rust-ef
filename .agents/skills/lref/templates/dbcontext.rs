@@ -10,7 +10,7 @@ use rust_ef_sqlite::SqliteProvider; // or postgres / mysql
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> Result<(), EfError> {
+async fn main() -> Result<(), EFError> {
     // --- 1. Create provider and options ---
     let provider = Arc::new(SqliteProvider::new("data source=app.db")?);
 

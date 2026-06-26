@@ -4,7 +4,7 @@
 mod production_tests {
     use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
     use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
-    use rust_ef::error::EfError;
+    use rust_ef::error::EFError;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
     use rust_ef::provider::{DbValue, IDatabaseProvider};
@@ -81,7 +81,7 @@ mod production_tests {
     impl INavigationSetter for VersionedItem {}
 
     impl IFromRow for VersionedItem {
-        fn from_row(values: &[String]) -> rust_ef::error::EfResult<Self> {
+        fn from_row(values: &[String]) -> rust_ef::error::EFResult<Self> {
             Ok(Self {
                 id: values.first().and_then(|v| v.parse().ok()).unwrap_or(0),
                 name: values.get(1).cloned().unwrap_or_default(),
@@ -118,7 +118,7 @@ mod production_tests {
             .unwrap();
 
         let factory: Arc<
-            dyn Fn(&str) -> rust_ef::error::EfResult<Arc<dyn IDatabaseProvider>> + Send + Sync,
+            dyn Fn(&str) -> rust_ef::error::EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync,
         > = {
             let p = provider.clone();
             Arc::new(move |_| Ok(p.clone() as Arc<dyn IDatabaseProvider>))
@@ -168,7 +168,7 @@ mod production_tests {
 
         ctx.set::<VersionedItem>().detect_changes();
         let result = ctx.save_changes().await;
-        assert!(matches!(result, Err(EfError::ConcurrencyConflict(_))));
+        assert!(matches!(result, Err(EFError::ConcurrencyConflict(_))));
     }
 
     #[tokio::test]
@@ -215,7 +215,7 @@ mod production_tests {
         .unwrap();
 
         let err = ctx.save_changes().await;
-        assert!(matches!(err, Err(EfError::ConcurrencyConflict(_))));
+        assert!(matches!(err, Err(EFError::ConcurrencyConflict(_))));
 
         let row = ctx
             .set::<VersionedItem>()
@@ -320,7 +320,7 @@ mod production_tests {
         }
 
         impl IFromRow for UserRole {
-            fn from_row(values: &[String]) -> rust_ef::error::EfResult<Self> {
+            fn from_row(values: &[String]) -> rust_ef::error::EFResult<Self> {
                 Ok(Self {
                     user_id: values.first().and_then(|v| v.parse().ok()).unwrap_or(0),
                     role_id: values.get(1).and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -356,7 +356,7 @@ mod production_tests {
             .unwrap();
 
         let factory: Arc<
-            dyn Fn(&str) -> rust_ef::error::EfResult<Arc<dyn IDatabaseProvider>> + Send + Sync,
+            dyn Fn(&str) -> rust_ef::error::EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync,
         > = {
             let p = provider.clone();
             Arc::new(move |_| Ok(p.clone() as Arc<dyn IDatabaseProvider>))

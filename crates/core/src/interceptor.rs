@@ -13,14 +13,14 @@
 //!
 //! #[async_trait::async_trait]
 //! impl ISaveChangesInterceptor for AuditInterceptor {
-//!     async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
+//!     async fn on_saving(&self, ctx: &SaveChangesContext) -> EFResult<()> {
 //!         println!("Saving {} entries", ctx.entries().len());
 //!         Ok(())
 //!     }
 //! }
 //! ```
 
-use crate::error::{EfError, EfResult};
+use crate::error::{EFError, EFResult};
 use crate::tracking::{ChangeTracker, EntityEntry};
 use std::sync::Arc;
 
@@ -131,7 +131,7 @@ pub trait ISaveChangesInterceptor: Send + Sync {
     /// Return `Err(...)` to abort the save. The transaction will be
     /// rolled back and `on_save_failed` will NOT be called (this is
     /// a pre-commit rejection, not a database failure).
-    async fn on_saving(&self, _ctx: &SaveChangesContext) -> EfResult<()> {
+    async fn on_saving(&self, _ctx: &SaveChangesContext) -> EFResult<()> {
         Ok(())
     }
 
@@ -140,7 +140,7 @@ pub trait ISaveChangesInterceptor: Send + Sync {
         &self,
         _ctx: &SaveChangesContext,
         _result: &SaveChangesResultContext,
-    ) -> EfResult<()> {
+    ) -> EFResult<()> {
         Ok(())
     }
 
@@ -149,7 +149,7 @@ pub trait ISaveChangesInterceptor: Send + Sync {
     /// The transaction has already been rolled back at this point.
     /// The error is passed by reference for inspection; the interceptor
     /// cannot suppress it.
-    async fn on_save_failed(&self, _ctx: &SaveChangesContext, _error: &EfError) {
+    async fn on_save_failed(&self, _ctx: &SaveChangesContext, _error: &EFError) {
         // default: no-op
     }
 }
@@ -172,7 +172,7 @@ impl InterceptorPipeline {
 
     /// Runs all `on_saving` hooks in registration order.
     /// Aborts early if any interceptor returns an error.
-    pub async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
+    pub async fn on_saving(&self, ctx: &SaveChangesContext) -> EFResult<()> {
         for interceptor in &self.interceptors {
             interceptor.on_saving(ctx).await?;
         }
@@ -184,7 +184,7 @@ impl InterceptorPipeline {
         &self,
         ctx: &SaveChangesContext,
         result: &SaveChangesResultContext,
-    ) -> EfResult<()> {
+    ) -> EFResult<()> {
         for interceptor in &self.interceptors {
             interceptor.on_saved(ctx, result).await?;
         }
@@ -193,7 +193,7 @@ impl InterceptorPipeline {
 
     /// Runs all `on_save_failed` hooks. Errors from these hooks are
     /// intentionally swallowed �?they must not mask the original error.
-    pub async fn on_save_failed(&self, ctx: &SaveChangesContext, error: &EfError) {
+    pub async fn on_save_failed(&self, ctx: &SaveChangesContext, error: &EFError) {
         for interceptor in &self.interceptors {
             interceptor.on_save_failed(ctx, error).await;
         }

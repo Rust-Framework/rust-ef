@@ -201,7 +201,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 NavigationDiscriminant::HasMany | NavigationDiscriminant::ManyToMany => {
                     has_many_setter_arms.push(quote! {
                         if field == #field_name_str {
-                            let items: rust_ef::error::EfResult<Vec<#inner_type>> = rows
+                            let items: rust_ef::error::EFResult<Vec<#inner_type>> = rows
                                 .iter()
                                 .map(|r| <#inner_type as rust_ef::entity::IFromRow>::from_row(r))
                                 .collect();
@@ -476,9 +476,9 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         }
 
         impl rust_ef::entity::IFromRow for #struct_name {
-            fn from_row(values: &[String]) -> rust_ef::error::EfResult<Self> {
+            fn from_row(values: &[String]) -> rust_ef::error::EFResult<Self> {
                 if values.len() < #field_count {
-                    return Err(rust_ef::error::EfError::TypeConversion(
+                    return Err(rust_ef::error::EFError::TypeConversion(
                         format!("Expected {} columns, got {}", #field_count, values.len())
                     ));
                 }
@@ -494,7 +494,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 &mut self,
                 field: &str,
                 rows: &[Vec<String>],
-            ) -> rust_ef::error::EfResult<()> {
+            ) -> rust_ef::error::EFResult<()> {
                 #( #has_many_setter_arms )*
                 Ok(())
             }
@@ -503,7 +503,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 &mut self,
                 field: &str,
                 row: &[String],
-            ) -> rust_ef::error::EfResult<()> {
+            ) -> rust_ef::error::EFResult<()> {
                 #( #reference_setter_arms )*
                 Ok(())
             }
@@ -513,7 +513,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 parent_navigation: &str,
                 nested: &[rust_ef::query::IncludePath],
                 provider: &dyn rust_ef::provider::IDatabaseProvider,
-            ) -> rust_ef::error::EfResult<()> {
+            ) -> rust_ef::error::EFResult<()> {
                 #( #nested_loader_arms )*
                 Ok(())
             }

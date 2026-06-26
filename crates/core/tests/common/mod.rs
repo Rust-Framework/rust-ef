@@ -2,7 +2,7 @@
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
 use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
-use rust_ef::error::EfResult;
+use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
 use rust_ef::migration::{MigrationDialect, MigrationEngine};
 use rust_ef::provider::{DbValue, IDatabaseProvider};
@@ -76,7 +76,7 @@ impl IEntityType for TestItem {
 }
 
 impl IFromRow for TestItem {
-    fn from_row(values: &[String]) -> EfResult<Self> {
+    fn from_row(values: &[String]) -> EFResult<Self> {
         Ok(TestItem {
             id: values.first().and_then(|s| s.parse().ok()).unwrap_or(0),
             name: values.get(1).cloned().unwrap_or_default(),
@@ -107,7 +107,7 @@ impl INavigationSetter for TestItem {}
 
 pub fn db_context_with_provider(provider: Arc<dyn IDatabaseProvider>) -> DbContext {
     let p = provider.clone();
-    let factory: Arc<dyn Fn(&str) -> EfResult<Arc<dyn IDatabaseProvider>> + Send + Sync> =
+    let factory: Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync> =
         Arc::new(move |_| Ok(p.clone()));
     let mut builder = DbContextOptionsBuilder::new();
     builder.connection_string("integration-test");
@@ -118,7 +118,7 @@ pub fn db_context_with_provider(provider: Arc<dyn IDatabaseProvider>) -> DbConte
 pub async fn reset_schema(
     provider: &dyn IDatabaseProvider,
     dialect: MigrationDialect,
-) -> EfResult<()> {
+) -> EFResult<()> {
     let meta = TestItem::entity_meta();
     let engine = MigrationEngine::new(dialect);
     let _ = engine.ensure_deleted(provider, &[meta.clone()]).await;
@@ -129,7 +129,7 @@ pub async fn reset_schema(
 pub async fn run_crud_lifecycle(
     provider: Arc<dyn IDatabaseProvider>,
     dialect: MigrationDialect,
-) -> EfResult<()> {
+) -> EFResult<()> {
     reset_schema(&*provider, dialect).await?;
 
     let mut ctx = db_context_with_provider(provider);

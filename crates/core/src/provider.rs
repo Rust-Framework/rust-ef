@@ -3,7 +3,7 @@
 //! Corresponds to EFCore's database provider model, allowing multiple
 //! database backends (PostgreSQL, MySQL, SQLite, etc.) to be plugged in.
 
-use crate::error::EfResult;
+use crate::error::EFResult;
 use async_trait::async_trait;
 use std::fmt;
 
@@ -110,6 +110,200 @@ where
     }
 }
 
+/// Error returned when a [`DbValue`] cannot be converted to the requested type.
+///
+/// Used by `TryFrom<DbValue>` impls for `i32`/`i64`/`f64`/`String`/`bool`/...
+/// and by `QueryBuilder::min_internal` / `max_internal` to surface type
+/// mismatches when reading aggregation results.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DbValueConvertError {
+    /// The [`DbValue`] that could not be converted.
+    pub source: DbValue,
+    /// The target Rust type name (e.g. `"i32"`).
+    pub target_type: &'static str,
+}
+
+impl fmt::Display for DbValueConvertError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "cannot convert {:?} to {}", self.source, self.target_type)
+    }
+}
+
+impl std::error::Error for DbValueConvertError {}
+
+impl From<DbValueConvertError> for crate::error::EFError {
+    fn from(e: DbValueConvertError) -> Self {
+        crate::error::EFError::TypeConversion(e.to_string())
+    }
+}
+
+impl TryFrom<DbValue> for i32 {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::I32(n) => Ok(n),
+            DbValue::I16(n) => Ok(n as i32),
+            DbValue::I64(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I64(n),
+                target_type: "i32",
+            }),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "i32",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "i32",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for i64 {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::I64(n) => Ok(n),
+            DbValue::I32(n) => Ok(n as i64),
+            DbValue::I16(n) => Ok(n as i64),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "i64",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "i64",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for f64 {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::F64(x) => Ok(x),
+            DbValue::F32(x) => Ok(x as f64),
+            DbValue::I32(n) => Ok(n as f64),
+            DbValue::I64(n) => Ok(n as f64),
+            DbValue::I16(n) => Ok(n as f64),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "f64",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "f64",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for f32 {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::F32(x) => Ok(x),
+            DbValue::F64(x) => Ok(x as f32),
+            DbValue::I32(n) => Ok(n as f32),
+            DbValue::I64(n) => Ok(n as f32),
+            DbValue::I16(n) => Ok(n as f32),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "f32",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "f32",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for String {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::String(s) => Ok(s),
+            DbValue::Bool(b) => Ok(b.to_string()),
+            DbValue::I16(n) => Ok(n.to_string()),
+            DbValue::I32(n) => Ok(n.to_string()),
+            DbValue::I64(n) => Ok(n.to_string()),
+            DbValue::F32(x) => Ok(x.to_string()),
+            DbValue::F64(x) => Ok(x.to_string()),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "String",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for bool {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::Bool(b) => Ok(b),
+            DbValue::I64(n) => Ok(n != 0),
+            DbValue::I32(n) => Ok(n != 0),
+            DbValue::I16(n) => Ok(n != 0),
+            DbValue::String(s) => {
+                let lower = s.to_ascii_lowercase();
+                match lower.as_str() {
+                    "true" | "t" | "1" => Ok(true),
+                    "false" | "f" | "0" => Ok(false),
+                    _ => Err(DbValueConvertError {
+                        source: DbValue::String(s),
+                        target_type: "bool",
+                    }),
+                }
+            }
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "bool",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for Vec<u8> {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::Bytes(b) => Ok(b),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "Vec<u8>",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for i16 {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::I16(n) => Ok(n),
+            DbValue::I32(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I32(n),
+                target_type: "i16",
+            }),
+            DbValue::I64(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I64(n),
+                target_type: "i16",
+            }),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "i16",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "i16",
+            }),
+        }
+    }
+}
+
 /// Represents a SQL dialect with specific syntax for common operations.
 pub trait ISqlGenerator: Send + Sync {
     /// Generates a SELECT statement.
@@ -138,15 +332,15 @@ pub trait ISqlGenerator: Send + Sync {
 #[async_trait]
 pub trait IAsyncConnection: Send + Sync {
     /// Executes a query with parameters and returns the number of affected rows.
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64>;
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64>;
     /// Executes a query with parameters and returns rows.
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>>;
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>>;
     /// Begins a transaction.
-    async fn begin_transaction(&mut self) -> EfResult<()>;
+    async fn begin_transaction(&mut self) -> EFResult<()>;
     /// Commits the current transaction.
-    async fn commit_transaction(&mut self) -> EfResult<()>;
+    async fn commit_transaction(&mut self) -> EFResult<()>;
     /// Rolls back the current transaction.
-    async fn rollback_transaction(&mut self) -> EfResult<()>;
+    async fn rollback_transaction(&mut self) -> EFResult<()>;
 }
 
 /// The database provider abstraction.
@@ -157,10 +351,10 @@ pub trait IDatabaseProvider: Send + Sync {
     fn sql_generator(&self) -> Box<dyn ISqlGenerator>;
 
     /// Gets an async database connection from the pool.
-    async fn get_connection(&self) -> EfResult<Box<dyn IAsyncConnection>>;
+    async fn get_connection(&self) -> EFResult<Box<dyn IAsyncConnection>>;
 
     /// Executes a migration command (DDL).
-    async fn execute_migration_command(&self, sql: &str) -> EfResult<()>;
+    async fn execute_migration_command(&self, sql: &str) -> EFResult<()>;
 
     /// Returns the provider name (e.g., "PostgreSQL", "MySQL").
     fn name(&self) -> &str;

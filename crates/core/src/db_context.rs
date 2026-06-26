@@ -17,7 +17,7 @@
 use crate::change_executor::ChangeExecutor;
 use crate::db_set::DbSet;
 use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
-use crate::error::{EfError, EfResult};
+use crate::error::{EFError, EFResult};
 use crate::interceptor::{InterceptorPipeline, SaveChangesContext, SaveChangesResultContext};
 use crate::metadata::EntityTypeMeta;
 use crate::migration::MigrationEngine;
@@ -38,7 +38,7 @@ pub struct DbContextOptions {
     pub(crate) connection_string: String,
     pub(crate) provider_tag: Option<String>,
     pub(crate) provider_factory:
-        Option<Arc<dyn Fn(&str) -> EfResult<Arc<dyn IDatabaseProvider>> + Send + Sync>>,
+        Option<Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync>>,
     pub(crate) interceptors: Vec<Arc<dyn crate::interceptor::ISaveChangesInterceptor>>,
 }
 
@@ -58,9 +58,9 @@ impl DbContextOptions {
     pub fn provider_tag(&self) -> Option<&str> {
         self.provider_tag.as_deref()
     }
-    pub fn create_provider(&self) -> EfResult<Arc<dyn IDatabaseProvider>> {
+    pub fn create_provider(&self) -> EFResult<Arc<dyn IDatabaseProvider>> {
         let factory = self.provider_factory.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider configured. Call use_sqlite / use_postgres / use_mysql first.".into(),
             )
         })?;
@@ -102,7 +102,7 @@ impl DbContextOptionsBuilder {
         &mut self,
         tag: &str,
         cs: impl Into<String>,
-        factory: Arc<dyn Fn(&str) -> EfResult<Arc<dyn IDatabaseProvider>> + Send + Sync>,
+        factory: Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync>,
     ) -> &mut Self {
         self.inner.provider_tag = Some(tag.to_string());
         self.inner.connection_string = cs.into();
@@ -152,7 +152,7 @@ trait ErasedSetOps: Send + Sync {
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
-    ) -> EfResult<(usize, usize, usize)>;
+    ) -> EFResult<(usize, usize, usize)>;
     fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync));
     fn clear(&self, raw_set: &mut (dyn Any + Send + Sync + 'static));
 }
@@ -178,7 +178,7 @@ where
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
-    ) -> EfResult<(usize, usize, usize)> {
+    ) -> EFResult<(usize, usize, usize)> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
             .expect("SetOps type mismatch");
@@ -212,7 +212,7 @@ pub struct DbContext {
 
 impl DbContext {
     /// Creates the context from options (uses the provider factory stored in options).
-    pub fn from_options(options: &DbContextOptions) -> EfResult<Self> {
+    pub fn from_options(options: &DbContextOptions) -> EFResult<Self> {
         let provider = options.create_provider()?;
         Ok(Self {
             sets: HashMap::new(),
@@ -279,10 +279,10 @@ impl DbContext {
 
     /// Creates all tables for entity types registered via `set::<T>()`.
     /// Corresponds to EF Core `Database.EnsureCreated()`.
-    pub async fn ensure_created(&self) -> EfResult<()> {
+    pub async fn ensure_created(&self) -> EFResult<()> {
         let metas: Vec<EntityTypeMeta> = self.entity_metas.values().cloned().collect();
         if metas.is_empty() {
-            return Err(EfError::Configuration(
+            return Err(EFError::Configuration(
                 "No entity types registered. Call ctx.set::<T>() before ensure_created()."
                     .into(),
             ));
@@ -305,10 +305,10 @@ impl DbContext {
 
     /// Drops all tables for entity types registered via `set::<T>()`.
     /// Corresponds to EF Core `Database.EnsureDeleted()`.
-    pub async fn ensure_deleted(&self) -> EfResult<()> {
+    pub async fn ensure_deleted(&self) -> EFResult<()> {
         let metas: Vec<EntityTypeMeta> = self.entity_metas.values().cloned().collect();
         if metas.is_empty() {
-            return Err(EfError::Configuration(
+            return Err(EFError::Configuration(
                 "No entity types registered. Call ctx.set::<T>() before ensure_deleted()."
                     .into(),
             ));
@@ -329,9 +329,9 @@ pub trait IDbContext: Send + Sync {
     fn provider(&self) -> &dyn IDatabaseProvider;
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
     fn change_tracker(&self) -> &ChangeTracker;
-    async fn save_changes(&mut self) -> EfResult<SaveChangesResult>;
+    async fn save_changes(&mut self) -> EFResult<SaveChangesResult>;
 
-    async fn begin_transaction(&self) -> EfResult<Box<dyn IAsyncConnection>> {
+    async fn begin_transaction(&self) -> EFResult<Box<dyn IAsyncConnection>> {
         let mut conn = self.provider().get_connection().await?;
         conn.begin_transaction().await?;
         Ok(conn)
@@ -340,10 +340,10 @@ pub trait IDbContext: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait IDbContextExt: IDbContext {
-    async fn use_transaction<F, Fut, R>(&self, f: F) -> EfResult<R>
+    async fn use_transaction<F, Fut, R>(&self, f: F) -> EFResult<R>
     where
         F: FnOnce(&mut dyn IAsyncConnection) -> Fut + Send,
-        Fut: Future<Output = EfResult<R>> + Send,
+        Fut: Future<Output = EFResult<R>> + Send,
         R: Send,
     {
         let mut conn = self.provider().get_connection().await?;
@@ -380,7 +380,7 @@ impl IDbContext for DbContext {
         &self.change_tracker
     }
 
-    async fn save_changes(&mut self) -> EfResult<SaveChangesResult> {
+    async fn save_changes(&mut self) -> EFResult<SaveChangesResult> {
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         for type_id in &type_ids {
             let set = self.sets.get_mut(type_id).unwrap();
@@ -454,7 +454,7 @@ pub async fn save_one_set<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
     db_set: &mut DbSet<E>,
-) -> EfResult<(usize, usize, usize)>
+) -> EFResult<(usize, usize, usize)>
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow,
 {

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use rust_ef::error::{EfError, EfResult};
+use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection};
 use tokio_postgres::types::ToSql;
 
@@ -9,7 +9,7 @@ pub struct PostgresConnection {
 
 #[async_trait]
 impl IAsyncConnection for PostgresConnection {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64> {
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64> {
         let pgp = crate::type_conversion::db_values_to_pg_params(params);
         let refs: Vec<&(dyn ToSql + Sync)> = pgp
             .iter()
@@ -18,10 +18,10 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .execute(sql, &refs)
             .await
-            .map_err(|e| EfError::Query(format!("Execution error: {}", e)))
+            .map_err(|e| EFError::Query(format!("Execution error: {}", e)))
     }
 
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>> {
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>> {
         let pgp = crate::type_conversion::db_values_to_pg_params(params);
         let refs: Vec<&(dyn ToSql + Sync)> = pgp
             .iter()
@@ -31,7 +31,7 @@ impl IAsyncConnection for PostgresConnection {
             .client
             .query(sql, &refs)
             .await
-            .map_err(|e| EfError::Query(format!("Query error: {}", e)))?;
+            .map_err(|e| EFError::Query(format!("Query error: {}", e)))?;
         let columns: Vec<String> = if !rows.is_empty() {
             rows[0]
                 .columns()
@@ -57,27 +57,27 @@ impl IAsyncConnection for PostgresConnection {
         Ok(result)
     }
 
-    async fn begin_transaction(&mut self) -> EfResult<()> {
+    async fn begin_transaction(&mut self) -> EFResult<()> {
         self.client
             .simple_query("BEGIN")
             .await
-            .map_err(|e| EfError::Transaction(format!("BEGIN failed: {}", e)))?;
+            .map_err(|e| EFError::Transaction(format!("BEGIN failed: {}", e)))?;
         Ok(())
     }
 
-    async fn commit_transaction(&mut self) -> EfResult<()> {
+    async fn commit_transaction(&mut self) -> EFResult<()> {
         self.client
             .simple_query("COMMIT")
             .await
-            .map_err(|e| EfError::Transaction(format!("COMMIT failed: {}", e)))?;
+            .map_err(|e| EFError::Transaction(format!("COMMIT failed: {}", e)))?;
         Ok(())
     }
 
-    async fn rollback_transaction(&mut self) -> EfResult<()> {
+    async fn rollback_transaction(&mut self) -> EFResult<()> {
         self.client
             .simple_query("ROLLBACK")
             .await
-            .map_err(|e| EfError::Transaction(format!("ROLLBACK failed: {}", e)))?;
+            .map_err(|e| EFError::Transaction(format!("ROLLBACK failed: {}", e)))?;
         Ok(())
     }
 }

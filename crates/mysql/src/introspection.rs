@@ -1,6 +1,6 @@
 //! Database introspection for MySQL via `information_schema`.
 
-use rust_ef::error::EfResult;
+use rust_ef::error::EFResult;
 use sqlx::Row;
 
 /// Column information from database introspection.
@@ -21,10 +21,10 @@ pub struct DbTable {
 }
 
 /// Reads tables and columns from a MySQL database.
-pub async fn introspect_mysql(connection_string: &str) -> EfResult<Vec<DbTable>> {
+pub async fn introspect_mysql(connection_string: &str) -> EFResult<Vec<DbTable>> {
     let pool = sqlx::MySqlPool::connect(connection_string)
         .await
-        .map_err(|e| rust_ef::error::EfError::Connection(format!("MySQL connect failed: {e}")))?;
+        .map_err(|e| rust_ef::error::EFError::Connection(format!("MySQL connect failed: {e}")))?;
 
     let table_rows = sqlx::query(
         "SELECT table_name FROM information_schema.tables \
@@ -34,7 +34,7 @@ pub async fn introspect_mysql(connection_string: &str) -> EfResult<Vec<DbTable>>
     )
     .fetch_all(&pool)
     .await
-    .map_err(|e| rust_ef::error::EfError::Query(format!("Table query error: {e}")))?;
+    .map_err(|e| rust_ef::error::EFError::Query(format!("Table query error: {e}")))?;
 
     let mut tables = Vec::new();
     for table_row in table_rows {
@@ -55,7 +55,7 @@ pub async fn introspect_mysql(connection_string: &str) -> EfResult<Vec<DbTable>>
         .bind(&table_name)
         .fetch_all(&pool)
         .await
-        .map_err(|e| rust_ef::error::EfError::Query(format!("Column query error: {e}")))?;
+        .map_err(|e| rust_ef::error::EFError::Query(format!("Column query error: {e}")))?;
 
         let mut columns = Vec::new();
         for col_row in col_rows {
@@ -80,6 +80,6 @@ pub async fn introspect_mysql(connection_string: &str) -> EfResult<Vec<DbTable>>
     Ok(tables)
 }
 
-fn map_row_err(e: sqlx::Error) -> rust_ef::error::EfError {
-    rust_ef::error::EfError::Query(format!("Row read error: {e}"))
+fn map_row_err(e: sqlx::Error) -> rust_ef::error::EFError {
+    rust_ef::error::EFError::Query(format!("Row read error: {e}"))
 }

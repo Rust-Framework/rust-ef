@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use rust_ef::error::{EfError, EfResult};
+use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 use crate::sql_generator::SqliteSqlGenerator;
 use std::path::Path;
@@ -11,17 +11,17 @@ pub struct SqliteProvider {
 }
 
 impl SqliteProvider {
-    pub fn new(path: impl AsRef<Path>) -> EfResult<Self> {
+    pub fn new(path: impl AsRef<Path>) -> EFResult<Self> {
         let conn = rusqlite::Connection::open(path)
-            .map_err(|e| EfError::Connection(format!("SQLite open failed: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("SQLite open failed: {}", e)))?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")
-            .map_err(|e| EfError::Connection(format!("SQLite WAL setup failed: {}", e)))?;
+            .map_err(|e| EFError::Connection(format!("SQLite WAL setup failed: {}", e)))?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
     }
 
-    pub fn new_in_memory() -> EfResult<Self> {
+    pub fn new_in_memory() -> EFResult<Self> {
         Self::new(":memory:")
     }
 }
@@ -32,14 +32,14 @@ impl IDatabaseProvider for SqliteProvider {
         Box::new(SqliteSqlGenerator::new())
     }
 
-    async fn get_connection(&self) -> EfResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
+    async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
         Ok(Box::new(crate::connection::SqliteConnection::new(self.conn.clone())))
     }
 
-    async fn execute_migration_command(&self, sql: &str) -> EfResult<()> {
+    async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {
         let conn = self.conn.lock().await;
         conn.execute_batch(sql)
-            .map_err(|e| EfError::Migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| EFError::Migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
 

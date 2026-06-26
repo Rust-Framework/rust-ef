@@ -50,7 +50,7 @@
 ### [第五章 查询模式](05-query-patterns/INDEX.md)
 
 - [DbSet 与 IQueryable 入门](05-query-patterns/dbset-and-queryable.md)
-- [linq! 宏：推荐写法与可读性](05-query-patterns/linq-macro.md)
+- [linq! 宏：统一 DSL 入口](05-query-patterns/linq-macro.md)
 - [过滤、排序与分页](05-query-patterns/filter-sort-page.md)
 - [计数与存在性检查](05-query-patterns/count-any.md)
 

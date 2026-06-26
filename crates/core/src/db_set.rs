@@ -6,7 +6,7 @@
 //!   - `IDbSet<T>`     �?collection mutation capabilities
 
 use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
-use crate::error::EfResult;
+use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 use crate::query::{BoolExpr, IQueryable, QueryBuilder};
 use std::collections::HashMap;
@@ -28,7 +28,7 @@ pub trait IDbSet<T: IEntityType>: IQueryable<T> + Send + Sync {
     fn remove_all(&mut self);
 
     /// Marks the entity at the given index as Deleted.
-    fn remove_at(&mut self, index: usize) -> EfResult<()>;
+    fn remove_at(&mut self, index: usize) -> EFResult<()>;
 
     /// Attaches an existing entity in Unchanged state.
     fn attach(&mut self, entity: T);
@@ -116,7 +116,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     }
 
     /// Convenience inherent method �?delegates to `IDbSet::remove_at`.
-    pub fn remove_at(&mut self, index: usize) -> EfResult<()> {
+    pub fn remove_at(&mut self, index: usize) -> EFResult<()> {
         IDbSet::remove_at(self, index)
     }
 
@@ -173,7 +173,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     }
 
     /// Loads all rows from the database into the change tracker as Unchanged.
-    pub async fn load_all(&mut self) -> EfResult<()>
+    pub async fn load_all(&mut self) -> EFResult<()>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
@@ -222,7 +222,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
             .map(|e| (&e.entity, e.original.as_ref()))
             .collect()
     }
-    pub async fn exists_by_id(&self, key_values: HashMap<String, DbValue>) -> EfResult<bool>
+    pub async fn exists_by_id(&self, key_values: HashMap<String, DbValue>) -> EFResult<bool>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
@@ -278,12 +278,12 @@ impl<T: IEntityType + IEntitySnapshot> IDbSet<T> for DbSet<T> {
         }
     }
 
-    fn remove_at(&mut self, index: usize) -> EfResult<()> {
+    fn remove_at(&mut self, index: usize) -> EFResult<()> {
         if let Some(entry) = self.entries.get_mut(index) {
             entry.state = EntityState::Deleted;
             Ok(())
         } else {
-            Err(crate::error::EfError::NotFound(
+            Err(crate::error::EFError::NotFound(
                 "Entity not found at the given index".to_string(),
             ))
         }

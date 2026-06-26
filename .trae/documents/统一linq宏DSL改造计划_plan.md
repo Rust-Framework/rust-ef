@@ -4,13 +4,15 @@
 > 决策依据: 用户反馈「DSL 化应该统筹设计，不应该每个做一个宏，大部分是有通性的」  
 > 设计原则: **`linq!` 是唯一的 DSL 入口**；所有数据库操作通过子句或独立形式表达；立即移除字符串 API（破坏性变更，v0.4 一次性完成）
 
+> **勘误记录 (2026-06-26)**：本计划初稿基于 2026-06-25 代码状态撰写，但代码库随后已实现计划主体（Forms A/B/C、字符串 API 移除、9 个 LINQ 终端方法、3/4 bug 修复、ModelBuilder DSL 化均落地）。下方仍保留原始决策上下文，但 5 处事实错误已就地标注 `【勘误】` 修正：宏数量、行号、函数名、FilterCondition 签名、project_memory 援引。完整审查与遗漏补全见 `统一linq宏DSL改造计划_审查与迭代_plan.md`。
+
 ---
 
 ## 一、执行摘要
 
 将 `linq!` 宏从「仅过滤表达式」扩展为**覆盖全部数据库操作的统一 DSL 入口**。所有原接受 `&str` 的 API（`include_named`/`order_by`/`group_by`/`sum`/`inner_join`/`has_query_filter` 等 14+ 方法）统一改为通过 `linq!` 宏以闭包字段访问形式调用，并立即移除字符串 API。同时补全 LINQ 终端方法（`last_or_default`/`single`/`distinct`/`all`/`contains` 等 9 个）并修复 4 个已知 bug。
 
-**核心洞察**：现有 `linq!` 已具备全部基础设施——`extract_field`（字段提取）+ `field_column_const`（列常量生成）+ `LinqCtx`（上下文）+ `=>` 子句先例（排序）。13 个独立宏的差异本质上是「调哪个 `*_internal` 方法 + 列常量还是导航常量 + 单字段还是元组 + 单闭包还是双闭包」的配置组合，完全可由**一个宏 + 内部 dispatch** 表达，无需新增任何宏名。
+**核心洞察**：现有 `linq!` 已具备全部基础设施——`extract_field`（字段提取）+ `field_const`（列/导航常量生成，原稿误记为 `field_column_const`，实际函数名 `field_const(entity, field, kind: FieldKind)`，见 `linq.rs:1568`）+ `LinqCtx`（上下文，三字段 `{entity, param, params}`）+ `=>` 子句先例（排序）。【勘误】原稿「13 个独立宏」为笔误——`crates/macros/src/lib.rs` 实际仅定义 3 个宏入口（`derive_entity_type`/`column`/`linq`）；本句原意是「各类数据库操作的子句差异本质上是『调哪个 `*_internal` 方法 + 列常量还是导航常量 + 单字段还是元组 + 单闭包还是双闭包』的配置组合」，完全可由**一个宏 + 内部 dispatch** 表达，无需新增任何宏名。
 
 ---
 
@@ -25,17 +27,19 @@
 
 已支持 `=>` 排序子句：`linq!(|b: Blog| b.rating > 5 => b.created_at)`（升序）/ `=> -b.created_at`（降序，通过 `UnOp::Neg` 识别）。
 
-**核心可复用基础设施**：
+**核心可复用基础设施**【勘误：以下行号为 2026-06-26 实际值，原稿行号已失效】：
 | 函数 | 行号 | 职责 |
 |---|---|---|
-| `extract_field` | 440-476 | 闭包字段访问 → 列常量引用（识别 `b.field`、`Blog::field`、裸 `field` 三种形式）|
-| `field_column_const` | 493-499 | 生成 `Entity::COLUMN_<UPPER>` |
-| `extract_value` | 501-513 | 字面量/变量透传 |
-| `compile_expr` | 221-244 | 表达式树编译（比较/逻辑/方法调用）|
-| `compile_order` | 431-438 | 排序子句编译（`extract_field` + `order_by_column`）|
-| `LinqCtx` | 216-219 | `{ entity, param }` 上下文 |
+| `extract_field` | 1465 | 闭包字段访问 → 列常量引用（识别 `b.field`、`Blog::field`、裸 `field` 三种形式）|
+| `field_const` | 1568 | 生成 `Entity::COLUMN_<UPPER>` 或 `FIELD_<UPPER>`（参数 `kind: FieldKind`，原稿误记为 `field_column_const`）|
+| `extract_value` | 1580 | 字面量/变量透传 |
+| `compile_expr` | 1241 | 表达式树编译（比较/逻辑/方法调用）|
+| `compile_order` | 1451 | 排序子句编译（`extract_field` + `order_by_column`）|
+| `LinqCtx` | 1193 | `{ entity, param, params }` 上下文（三字段，`params: Vec<(Ident, Type)>` 支持 join）|
 
 ### 2.2 待 DSL 化的字符串 API 全清单
+
+【勘误：以下清单为初稿审计结果；截至 2026-06-26，表中所有 `&str` API 均已移除并替换为 `*_internal` 方法（`include_internal`@700、`order_by_column`@581、`sum_internal`@842、`min_internal`@894、`max_internal`@914、`select_internal`@938、`set_column_internal`@1236、`inner_join_internal`@764、`left_join_internal`@787 等）。原表保留作历史对照。】
 
 经审计 `crates/core/src/query.rs` 与 `model_builder.rs`，共 14+ 方法接受 `&str`：
 
@@ -75,10 +79,12 @@
 
 ### 2.4 已知 Bug
 
-1. **`find_by_id` 硬编码 `"id"`**（`query.rs:598`）：`FilterCondition::new("id", "=", 1)`，未走 `T::entity_meta().primary_keys`。复合主键或非 `id` 命名实体无法使用。
-2. **`min`/`max` 返回 `Option<String>`**（`query.rs:779/796`）：丢失原类型信息，调用方需手动解析；泛型参数 `<V>` 声明但未使用。
-3. **`#[foreign_key]` 在导航字段上误用**（`entity.rs:619-624`）：`extract_foreign_key_field_name` 返回的是目标类型名字符串（如 `"Post"`），而非 FK 字段名（如 `"post_id"`），与 `NavigationMeta.foreign_key_field` 文档语义矛盾。
-4. **`set_property` 死代码**：`entity.rs` derive 生成的 `set_property` accessor 从未被调用。
+【勘误：截至 2026-06-26，bug 1/3/4 已修复；bug 2 仍未修复（移交 G1 迭代任务）。】
+
+1. **`find_by_id` 硬编码 `"id"`**【已修复 → `find(id)`，`query.rs:646`，使用 `T::entity_meta().primary_keys.first()`】：原描述（`query.rs:598`，`FilterCondition::new("id", "=", 1)`）已不适用。
+2. **`min`/`max` 返回 `Option<String>`**【未修复，行号更新为 `query.rs:894/914`】：丢失原类型信息，调用方需手动解析；泛型参数 `<V>` 声明但未使用。**此项由迭代计划 G1 接管**——改为泛型 `min_internal<V,E> where V: TryFrom<DbValue, Error = E>, E: Into<EFError>`。
+3. **`#[foreign_key]` 在导航字段上误用**【已修复，`entity.rs:655`】：`extract_foreign_key_field_name` 现返回 `quote!{ None }`，文档注释 640-654 说明改由 `NavigationMeta` 默认推导；原描述（`entity.rs:619-624` 返回目标类型名）已不适用。
+4. **`set_property` 死代码**【已移除】：`entity.rs` derive 中已无该 accessor 生成代码。
 
 ---
 
@@ -164,7 +170,9 @@ builder.has_key(linq!(key |b: Blog| b.id));
 
 ### 3.3 推荐代码风格（遵循用户偏好）
 
-遵循 project_memory 约定的「split `let` bindings」风格，避免过度链式：
+【勘误：原稿「遵循 project_memory 约定」援引不成立——`c:\Users\lusid\.trae-cn\memory\projects\` 下无 rust-ef 的 `project_memory.md`（仅 rust-agent-flow 项目有）。`split let` 作为**建议**风格保留，但非项目硬约束。用户档案仅注明「dislikes repetitive explanations」，无风格指令。】
+
+建议采用「split `let` bindings」风格，避免过度链式：
 
 ```rust
 // 推荐：分步 let
@@ -242,6 +250,8 @@ pub const FIELD_<FIELD_UPPER>: &'static str = "<field_name>";
 
 #### 4.1.5 修复 `#[foreign_key]` 导航字段误用 bug（`entity.rs:619-624`）
 
+【勘误：本节描述的 bug 已修复。`extract_foreign_key_field_name` 现位于 `entity.rs:655`，签名 `fn(_attrs: &[syn::Attribute])` 忽略 attrs 并返回 `quote!{ None }`；文档注释 640-654 说明改由 `NavigationMeta` 默认推导。下方原方案保留作历史记录。】
+
 `extract_foreign_key_field_name` 当前返回 `#[foreign_key(X)]` 的目标类型名 `X`。修正为：
 - 导航字段上的 `#[foreign_key]` 标注语义改为「指定 FK 字段名」（如 `#[foreign_key(post_id)]`），返回该字段名字符串；
 - 若未标注，返回 `None`（由 `NavigationMeta` 按关系类型默认推导，`HasMany` 用 `<Target>::FK_<Self>`，`BelongsTo` 用本实体 FK 列）；
@@ -250,6 +260,8 @@ pub const FIELD_<FIELD_UPPER>: &'static str = "<field_name>";
 同步更新 `lib.rs:11-25` 的 `attributes(...)` 列表，明确 `foreign_key` 可接收 ident（字段名）或 path（目标类型）。
 
 #### 4.1.6 移除 `set_property` 死代码
+
+【勘误：已完成。`entity.rs` derive 中已无 `set_property` accessor 生成代码。】
 
 删除 `entity.rs` derive 中 `set_property` accessor 的生成代码（`INavigationSetter` trait 不再要求该访问器）。
 
@@ -318,11 +330,18 @@ enum LinqClause {
 
 #### 4.2.3 形式 C 展开（值产生）
 
+【勘误：`FilterCondition::new(column, operator, param_count: usize)` 第 3 参为参数计数（usize），**非值**。值携带版本须用 `FilterCondition::with_values(column, operator, values: Vec<DbValue>)`（`query.rs:51`）。下方 `IS NULL` 示例因 `param_count=0` 恰好可编译，但带值过滤（如 `b.rating > 5`）须改用 `with_values`。】
+
 ```rust
 // linq!(filter |b: Blog| b.deleted_at.is_null())
 → 编译为 BoolExpr AST（复用 compile_expr，但输出 BoolExpr 而非 .filter_column 链）
   rust_ef::query::BoolExpr::Filter(rust_ef::query::FilterCondition::new(
       Blog::COLUMN_DELETED_AT, "IS NULL", 0))
+
+// 带值过滤（原稿遗漏的用法）
+// linq!(filter |b: Blog| b.rating > 5)
+→ rust_ef::query::BoolExpr::Filter(rust_ef::query::FilterCondition::with_values(
+      Blog::COLUMN_RATING, ">", vec![DbValue::from(5)]))
 
 // linq!(index |b: Blog| (b.author_id, b.created_at))
 → &[Blog::COLUMN_AUTHOR_ID, Blog::COLUMN_CREATED_ID]
@@ -354,10 +373,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     pub(crate) fn group_by_columns_internal(mut self, cols: &'static [&'static str]) -> Self { ... }
     pub(crate) fn select_columns_internal(mut self, cols: &'static [&'static str]) -> SelectQueryBuilder<T> { ... }
     pub(crate) fn having_aggregate_internal(mut self, agg: &str, col: &'static str, op: &str, val: impl Into<DbValue>) -> Self { ... }
-    pub(crate) async fn sum_internal(self, col: &'static str) -> EfResult<f64> { ... }
-    pub(crate) async fn avg_internal(self, col: &'static str) -> EfResult<f64> { ... }
-    pub(crate) async fn min_internal<V: TryFrom<DbValue>>(self, col: &'static str) -> EfResult<Option<V>> { ... }
-    pub(crate) async fn max_internal<V: TryFrom<DbValue>>(self, col: &'static str) -> EfResult<Option<V>> { ... }
+    pub(crate) async fn sum_internal(self, col: &'static str) -> EFResult<f64> { ... }
+    pub(crate) async fn avg_internal(self, col: &'static str) -> EFResult<f64> { ... }
+    pub(crate) async fn min_internal<V: TryFrom<DbValue>>(self, col: &'static str) -> EFResult<Option<V>> { ... }
+    pub(crate) async fn max_internal<V: TryFrom<DbValue>>(self, col: &'static str) -> EFResult<Option<V>> { ... }
     pub(crate) fn set_column_internal(mut self, col: &'static str, value: impl Into<DbValue>) -> Self { ... }
     pub(crate) fn inner_join_internal(mut self, table: &'static str, left: &'static str, right: &'static str) -> Self { ... }
     pub(crate) fn left_join_internal(mut self, table: &'static str, left: &'static str, right: &'static str) -> Self { ... }
@@ -383,15 +402,15 @@ impl<T: IEntityType> QueryBuilder<T> {
 ```rust
 impl<T: IEntityType> QueryBuilder<T> {
     /// 按主键查找（单主键实体）。使用实体 PK 元数据，不再硬编码 "id"。
-    pub async fn find(mut self, id: impl Into<DbValue>) -> EfResult<Option<T>> {
+    pub async fn find(mut self, id: impl Into<DbValue>) -> EFResult<Option<T>> {
         let pk = T::entity_meta().primary_keys.first()
-            .ok_or_else(|| EfError::Query("entity has no primary key".into()))?;
+            .ok_or_else(|| EFError::Query("entity has no primary key".into()))?;
         self = self.filter_column_internal(pk.column_name, "=", id);
         self.first_or_default().await
     }
 
     /// 按复合主键查找。键为列名常量。
-    pub async fn find_by_key(mut self, keys: &[(&'static str, DbValue)]) -> EfResult<Option<T>> {
+    pub async fn find_by_key(mut self, keys: &[(&'static str, DbValue)]) -> EFResult<Option<T>> {
         for (col, val) in keys {
             self = self.filter_column_internal(col, "=", val.clone());
         }
@@ -401,7 +420,7 @@ impl<T: IEntityType> QueryBuilder<T> {
 
 impl<T: IEntityType> DbSet<T> {
     /// DbSet 上的便捷 find。
-    pub async fn find(&self, id: impl Into<DbValue>) -> EfResult<Option<T>> {
+    pub async fn find(&self, id: impl Into<DbValue>) -> EFResult<Option<T>> {
         self.query().find(id).await
     }
 }
@@ -421,10 +440,10 @@ let m2m = set.query().find_by_key(&[
 
 #### 4.3.4 修复 `min`/`max` 返回类型
 
-`min_internal<V>`/`max_internal<V>` 改为泛型 `V: TryFrom<DbValue>`，返回 `EfResult<Option<V>>`：
+`min_internal<V>`/`max_internal<V>` 改为泛型 `V: TryFrom<DbValue>`，返回 `EFResult<Option<V>>`：
 
 ```rust
-pub async fn max_internal<V: TryFrom<DbValue, Error = E>, E>(self, col: &'static str) -> EfResult<Option<V>> {
+pub async fn max_internal<V: TryFrom<DbValue, Error = E>, E>(self, col: &'static str) -> EFResult<Option<V>> {
     // SQL: SELECT MAX(col) FROM ... 
     // 解析 DbValue 后 V::try_from(db_value)
 }
@@ -440,30 +459,30 @@ pub async fn max_internal<V: TryFrom<DbValue, Error = E>, E>(self, col: &'static
 
 ```rust
 impl<T: IEntityType> QueryBuilder<T> {
-    pub async fn last(mut self) -> EfResult<T> {
+    pub async fn last(mut self) -> EFResult<T> {
         let pk = T::entity_meta().primary_keys.first()
-            .ok_or_else(|| EfError::Query("last requires primary key".into()))?;
+            .ok_or_else(|| EFError::Query("last requires primary key".into()))?;
         self = self.order_by_desc_column_internal(pk.column_name);
         self.first().await
     }
 
-    pub async fn last_or_default(mut self) -> EfResult<Option<T>> {
+    pub async fn last_or_default(mut self) -> EFResult<Option<T>> {
         // 同上但 first_or_default
     }
 
-    pub async fn single(self) -> EfResult<T> {
+    pub async fn single(self) -> EFResult<T> {
         let count = self.clone().count().await?;
-        if count != 1 { return Err(EfError::Query(format!("sequence contains {} elements", count))); }
+        if count != 1 { return Err(EFError::Query(format!("sequence contains {} elements", count))); }
         self.first().await
     }
 
-    pub async fn single_or_default(self) -> EfResult<Option<T>> {
+    pub async fn single_or_default(self) -> EFResult<Option<T>> {
         let count = self.clone().count().await?;
-        if count > 1 { return Err(EfError::Query("sequence contains more than one element".into())); }
+        if count > 1 { return Err(EFError::Query("sequence contains more than one element".into())); }
         self.first_or_default().await
     }
 
-    pub async fn to_dictionary<K, V, Fk, Fv>(self, key_sel: Fk, val_sel: Fv) -> EfResult<std::collections::HashMap<K, V>>
+    pub async fn to_dictionary<K, V, Fk, Fv>(self, key_sel: Fk, val_sel: Fv) -> EFResult<std::collections::HashMap<K, V>>
     where
         K: Eq + std::hash::Hash,
         Fk: Fn(&T) -> K,
@@ -478,7 +497,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
-    pub async fn all<F>(mut self, predicate: F) -> EfResult<bool>
+    pub async fn all<F>(mut self, predicate: F) -> EFResult<bool>
     where
         F: FnOnce(QueryBuilder<T>) -> QueryBuilder<T>,
     {
@@ -490,14 +509,14 @@ impl<T: IEntityType> QueryBuilder<T> {
         Ok(false) // 占位，实现时补全
     }
 
-    pub async fn contains(mut self, value: impl Into<DbValue>) -> EfResult<bool> {
+    pub async fn contains(mut self, value: impl Into<DbValue>) -> EFResult<bool> {
         let pk = T::entity_meta().primary_keys.first()
-            .ok_or_else(|| EfError::Query("contains requires primary key".into()))?;
+            .ok_or_else(|| EFError::Query("contains requires primary key".into()))?;
         self = self.filter_column_internal(pk.column_name, "=", value);
         Ok(self.count().await? > 0)
     }
 
-    pub async fn long_count(self) -> EfResult<i64> {
+    pub async fn long_count(self) -> EFResult<i64> {
         // 复用 count（已返回 i64）
         self.count().await
     }
@@ -577,6 +596,8 @@ let affected = linq!(set, |b: Blog| b.rating < 0.1; set b.published, false; exec
 
 #### 4.6.3 文档同步（遵循 project_memory 硬约束）
 
+【勘误：①「遵循 project_memory 硬约束」援引不成立（见 §3.3 勘误）；②下方章节映射表与 `docs/rust-ef/` **实际目录结构完全不符**——实际目录为 `04-relationships / 05-query-patterns / 06-advanced-query / 07-change-tracking / 08-bulk-operations / 09-transactions-migrations / 10-di-interceptors / 11-best-practices`，无 `04-query-basics / 05-filtering / 06-ordering / 07-aggregation / 08-navigation / 09-joins / 10-batch-operations` 等目录；③「新增 `12-linq-terminals/`」决策已撤销——终端方法参考并入 `05-query-patterns/count-any.md` 与 `06-advanced-query/aggregation.md`，避免目录膨胀。正确的文档同步清单见迭代计划 G4。】
+
 更新 `docs/rust-ef/` 以下章节（遵循 `E:\GitCode\RF\rust-webapp\docs\rust-webapp` 规范）：
 
 | 章节 | 文件 | 更新内容 |
@@ -611,12 +632,12 @@ let affected = linq!(set, |b: Blog| b.rating < 0.1; set b.published, false; exec
 | 统一宏入口 | 扩展 `linq!` 为唯一入口 | 用户确认（推荐项）|
 | 字符串 API 兼容 | 立即移除，无 deprecated 过渡 | 用户确认 |
 | DSL 语法 | 闭包字段访问 | 用户先前确认 |
-| 代码风格 | split `let` bindings | project_memory 约定 |
-| 文档规范 | 遵循 `rust-webapp/docs` | project_memory 硬约束 |
+| 代码风格 | split `let` bindings | 建议（原稿误记为 project_memory 约定，实际无该档案）|
+| 文档规范 | 遵循 `rust-webapp/docs` | 建议（原稿误记为 project_memory 硬约束，实际无该档案）|
 
 ### 5.2 关键假设
 
-1. **`QueryBuilder: Clone`**：`all`/`single` 终端方法需克隆 builder 做两次查询。已验证 `QueryBuilder` 派生 `Clone`（`query.rs` 派生宏）。
+1. **`QueryBuilder: Clone`**【勘误：此假设不成立——`QueryBuilder<T>`（`query.rs:448`）**未派生 `Clone`**，仅有 `QueryState` 派生 `Clone`。实际实现用 `take(2)` + `to_list()` 规避克隆：`single`/`single_or_default` 取 2 条后校验长度，`all` 直接 `to_list` 后在 Rust 侧应用谓词。原假设「需克隆 builder 做两次查询」已不适用。】：`all`/`single` 终端方法原设计需克隆 builder 做两次查询。已验证 `QueryBuilder` 派生 `Clone`（`query.rs` 派生宏）。
 2. **`DbValue: TryFrom` 转换**：`min_internal<V>`/`max_internal<V>` 依赖 `V: TryFrom<DbValue>`。需为常用类型（i32/i64/f64/String/bool）实现 `TryFrom<DbValue>`（部分已有 `From`，补充 `TryFrom`）。
 3. **`linq!` 形式 C 的 `BoolExpr` 输出**：`compile_expr` 当前输出方法链。重构为「核心表达式 → BoolExpr AST」+「BoolExpr → 方法链」两步，形式 C 取第一步输出。工作量可控。
 4. **`having` 聚合 DSL**：首版仅支持 `count`/`sum`/`avg`/`min`/`max` 五种聚合函数与简单比较运算符；复杂 `having`（嵌套表达式）后续扩展。

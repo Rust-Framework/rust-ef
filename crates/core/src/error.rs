@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Represents all possible errors that can occur in rust-ef operations.
 #[derive(Error, Debug)]
-pub enum EfError {
+pub enum EFError {
     /// Database connection error.
     #[error("database connection error: {0}")]
     Connection(String),
@@ -55,12 +55,12 @@ pub enum EfError {
 }
 
 /// Result type alias for rust-ef operations.
-pub type EfResult<T> = Result<T, EfError>;
+pub type EFResult<T> = Result<T, EFError>;
 
-/// Deprecated alias ? use [`EfError`].
-#[deprecated(note = "renamed to EfError")]
-pub type LrefError = EfError;
+/// Deprecated alias ? use [`EFError`].
+#[deprecated(note = "renamed to EFError")]
+pub type LrefError = EFError;
 
-/// Deprecated alias ? use [`EfResult`].
-#[deprecated(note = "renamed to EfResult")]
-pub type LrefResult<T> = EfResult<T>;
+/// Deprecated alias ? use [`EFResult`].
+#[deprecated(note = "renamed to EFResult")]
+pub type LrefResult<T> = EFResult<T>;

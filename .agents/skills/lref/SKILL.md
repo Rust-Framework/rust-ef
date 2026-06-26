@@ -139,7 +139,7 @@ use rust_ef::interceptor::*;
 struct AuditInterceptor;
 #[async_trait::async_trait]
 impl ISaveChangesInterceptor for AuditInterceptor {
-    async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
+    async fn on_saving(&self, ctx: &SaveChangesContext) -> EFResult<()> {
         println!("Saving +{} ~{} -{}", ctx.added_count(), ctx.modified_count(), ctx.deleted_count());
         Ok(())
     }

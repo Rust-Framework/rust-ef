@@ -6,13 +6,13 @@
 
 ```rust
 use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext};
-use rust_ef::error::EfResult;
+use rust_ef::error::EFResult;
 
 struct AuditInterceptor;
 
 #[async_trait::async_trait]
 impl ISaveChangesInterceptor for AuditInterceptor {
-    async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
+    async fn on_saving(&self, ctx: &SaveChangesContext) -> EFResult<()> {
         tracing::info!(
             "Saving +{} ~{} -{}",
             ctx.added_count(),
@@ -22,12 +22,12 @@ impl ISaveChangesInterceptor for AuditInterceptor {
         Ok(())
     }
 
-    async fn on_saved(&self, _ctx: &SaveChangesContext, result: &SaveChangesResultContext) -> EfResult<()> {
+    async fn on_saved(&self, _ctx: &SaveChangesContext, result: &SaveChangesResultContext) -> EFResult<()> {
         tracing::info!("Saved: {} entities modified", result.total());
         Ok(())
     }
 
-    async fn on_save_failed(&self, _ctx: &SaveChangesContext, err: &rust_ef::error::EfError) {
+    async fn on_save_failed(&self, _ctx: &SaveChangesContext, err: &rust_ef::error::EFError) {
         tracing::error!("Save failed: {}", err);
     }
 }
@@ -53,7 +53,7 @@ struct SoftDeleteInterceptor;
 
 #[async_trait::async_trait]
 impl ISaveChangesInterceptor for SoftDeleteInterceptor {
-    async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
+    async fn on_saving(&self, ctx: &SaveChangesContext) -> EFResult<()> {
         // 将 Deleted 实体转换为 Modified，设置 deleted_at
         // 注意：当前版本需手动操作 ChangeTracker 条目
         Ok(())

@@ -26,7 +26,7 @@ println!("Added: {}, Updated: {}, Deleted: {}",
 ```rust
 match ctx.save_changes().await {
     Ok(result) => println!("Saved: {}", result.total()),
-    Err(EfError::Database(msg)) => {
+    Err(EFError::Database(msg)) => {
         // 事务已回滚，所有跟踪状态保持不变
         eprintln!("Save failed: {}", msg);
     }

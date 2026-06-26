@@ -5,7 +5,7 @@
 //! DML, and executes it against the database via the provider.
 
 use crate::entity::{IEntitySnapshot, IEntityType, IGetKeyValues};
-use crate::error::{EfError, EfResult};
+use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, PropertyMeta};
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ impl ChangeExecutor {
         provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta)],
         mut on_key_backfill: F,
-    ) -> EfResult<usize>
+    ) -> EFResult<usize>
     where
         E: IEntityType + IEntitySnapshot + IGetKeyValues,
         F: FnMut(usize, i64),
@@ -76,7 +76,7 @@ impl ChangeExecutor {
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
-    ) -> EfResult<usize>
+    ) -> EFResult<usize>
     where
         E: IEntityType + IEntitySnapshot + IGetKeyValues,
     {
@@ -131,7 +131,7 @@ impl ChangeExecutor {
 
             let rows = conn.execute(&sql, &params).await?;
             if rows == 0 {
-                return Err(EfError::ConcurrencyConflict(format!(
+                return Err(EFError::ConcurrencyConflict(format!(
                     "update affected 0 rows on {} (row may have been modified or deleted)",
                     meta.table_name
                 )));
@@ -147,7 +147,7 @@ impl ChangeExecutor {
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
-    ) -> EfResult<usize>
+    ) -> EFResult<usize>
     where
         E: IEntityType + IGetKeyValues,
     {
@@ -178,7 +178,7 @@ impl ChangeExecutor {
             let sql = gen.delete(meta.table_name.as_ref(), &where_clause);
             let rows = conn.execute(&sql, &where_params).await?;
             if rows == 0 {
-                return Err(EfError::ConcurrencyConflict(format!(
+                return Err(EFError::ConcurrencyConflict(format!(
                     "delete affected 0 rows on {} (row may have been modified or deleted)",
                     meta.table_name
                 )));
@@ -196,7 +196,7 @@ fn build_where_with_concurrency(
     concurrency_tokens: &[&PropertyMeta],
     original: Option<&HashMap<String, DbValue>>,
     start_param_idx: usize,
-) -> EfResult<(String, Vec<DbValue>)> {
+) -> EFResult<(String, Vec<DbValue>)> {
     let mut where_parts: Vec<String> = keys
         .keys()
         .enumerate()
@@ -223,7 +223,7 @@ fn build_where_with_concurrency(
         let original_val = original
             .and_then(|o| o.get(token.field_name.as_ref()))
             .ok_or_else(|| {
-                EfError::ChangeTracking(format!(
+                EFError::ChangeTracking(format!(
                     "missing original concurrency token for '{}'",
                     token.field_name
                 ))

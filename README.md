@@ -93,7 +93,7 @@ use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext};
 struct AuditInterceptor;
 #[async_trait::async_trait]
 impl ISaveChangesInterceptor for AuditInterceptor {
-    async fn on_saving(&self, ctx: &SaveChangesContext) -> EfResult<()> {
+    async fn on_saving(&self, ctx: &SaveChangesContext) -> EFResult<()> {
         tracing::info!("Saving +{} ~{} -{}", ctx.added_count(), ctx.modified_count(), ctx.deleted_count());
         Ok(())
     }
@@ -128,16 +128,11 @@ This is clearer than all-in-one chaining because each step has a name: the data 
 ### Filtering & Sorting
 
 ```rust
-let set = ctx.set::<Post>();
-let expr = linq!(|p: Post| p.blog_id == target_id && p.title.contains("Rust"));
-
-let posts = set
-    .filter(expr)
-    .order_by_desc("created_at")
-    .skip(offset)
-    .take(page_size)
-    .to_list()
-    .await?;
+let posts = linq!(ctx.set::<Post>(), |p: Post| p.blog_id == target_id && p.title.contains("Rust");
+    order_by p.created_at desc;
+    skip offset;
+    take page_size;
+).to_list().await?;
 ```
 
 ### Reusable LINQ Expressions

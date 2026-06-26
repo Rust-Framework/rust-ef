@@ -6,8 +6,8 @@
 //! executed against a database provider.
 
 use crate::entity::{IEntityType, IFromRow, INavigationSetter, IGetKeyValues, IEntitySnapshot};
-use crate::error::EfResult;
-use crate::provider::{DbValue, IDatabaseProvider};
+use crate::error::EFResult;
+use crate::provider::{DbValue, DbValueConvertError, IDatabaseProvider};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -442,6 +442,25 @@ impl crate::provider::ISqlGenerator for PortablePlaceholderGenerator {
 // QueryBuilder
 // ---------------------------------------------------------------------------
 
+/// Converts the first cell of the first row of an aggregation query result
+/// into the target type `V`. Returns `None` when no rows, no cells, or a SQL
+/// NULL was returned (e.g. `MIN`/`MAX` over an empty input set). The driver
+/// returns `String` cells, so the value is wrapped in `DbValue::String`
+/// before `TryFrom` conversion.
+fn convert_aggregate_cell<V>(rows: Vec<Vec<String>>) -> EFResult<Option<V>>
+where
+    V: TryFrom<DbValue, Error = DbValueConvertError>,
+{
+    match rows.first().and_then(|r| r.first()) {
+        Some(s) if s.eq_ignore_ascii_case("NULL") => Ok(None),
+        Some(s) => {
+            let db_val = DbValue::String(s.clone());
+            V::try_from(db_val).map(Some).map_err(crate::error::EFError::from)
+        }
+        None => Ok(None),
+    }
+}
+
 /// A chainable query builder for entity type `T`.
 ///
 /// Corresponds to EFCore's `IQueryable<T>`.
@@ -643,7 +662,7 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Finds an entity by its single primary key. Uses the entity's PK
     /// metadata — no longer hardcodes `"id"`.
-    pub async fn find(self, id: impl Into<DbValue>) -> EfResult<Option<T>>
+    pub async fn find(self, id: impl Into<DbValue>) -> EFResult<Option<T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
@@ -659,7 +678,7 @@ impl<T: IEntityType> QueryBuilder<T> {
                     .map(|p| p.column_name.as_ref())
             })
             .ok_or_else(|| {
-                crate::error::EfError::Query(format!(
+                crate::error::EFError::Query(format!(
                     "entity {} has no primary key defined",
                     std::any::type_name::<T>()
                 ))
@@ -670,7 +689,7 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Finds an entity by composite primary key. Keys are column-name
     /// constants paired with values, e.g. `&[(BlogTag::COLUMN_BLOG_ID, DbValue::I32(1))]`.
-    pub async fn find_by_key(mut self, keys: &[(&str, DbValue)]) -> EfResult<Option<T>>
+    pub async fn find_by_key(mut self, keys: &[(&str, DbValue)]) -> EFResult<Option<T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
@@ -839,12 +858,12 @@ impl<T: IEntityType> QueryBuilder<T> {
     ///
     /// `#[doc(hidden)]` — called by `linq!(sum b.views)` expansion.
     #[doc(hidden)]
-    pub async fn sum_internal(self, column: &'static str) -> EfResult<f64> {
+    pub async fn sum_internal(self, column: &'static str) -> EFResult<f64> {
         let mut state = self.state.clone();
         state.aggregate = Some("SUM".to_string());
         state.aggregate_column = Some(column.to_string());
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -854,7 +873,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
             first.trim().parse::<f64>().map_err(|_| {
-                crate::error::EfError::TypeConversion("SUM result is not f64".to_string())
+                crate::error::EFError::TypeConversion("SUM result is not f64".to_string())
             })
         } else {
             Ok(0.0)
@@ -865,12 +884,12 @@ impl<T: IEntityType> QueryBuilder<T> {
     ///
     /// `#[doc(hidden)]` — called by `linq!(avg b.rating)` expansion.
     #[doc(hidden)]
-    pub async fn avg_internal(self, column: &'static str) -> EfResult<f64> {
+    pub async fn avg_internal(self, column: &'static str) -> EFResult<f64> {
         let mut state = self.state.clone();
         state.aggregate = Some("AVG".to_string());
         state.aggregate_column = Some(column.to_string());
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -880,23 +899,30 @@ impl<T: IEntityType> QueryBuilder<T> {
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
             first.trim().parse::<f64>().map_err(|_| {
-                crate::error::EfError::TypeConversion("AVG result is not f64".to_string())
+                crate::error::EFError::TypeConversion("AVG result is not f64".to_string())
             })
         } else {
             Ok(0.0)
         }
     }
 
-    /// Executes a MIN aggregation query.
+    /// Executes a MIN aggregation query, returning the typed result.
     ///
-    /// `#[doc(hidden)]` — called by `linq!(min b.rating)` expansion.
+    /// `#[doc(hidden)]` — called by `linq!(min b.rating)` expansion. The target
+    /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
     #[doc(hidden)]
-    pub async fn min_internal(self, column: &'static str) -> EfResult<Option<String>> {
+    pub async fn min_internal<V>(
+        self,
+        column: &'static str,
+    ) -> EFResult<Option<V>>
+    where
+        V: TryFrom<DbValue, Error = DbValueConvertError>,
+    {
         let mut state = self.state.clone();
         state.aggregate = Some("MIN".to_string());
         state.aggregate_column = Some(column.to_string());
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -904,19 +930,26 @@ impl<T: IEntityType> QueryBuilder<T> {
         let params = state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
-        Ok(rows.first().and_then(|r| r.first().cloned()))
+        convert_aggregate_cell::<V>(rows)
     }
 
-    /// Executes a MAX aggregation query.
+    /// Executes a MAX aggregation query, returning the typed result.
     ///
-    /// `#[doc(hidden)]` — called by `linq!(max b.rating)` expansion.
+    /// `#[doc(hidden)]` — called by `linq!(max b.rating)` expansion. The target
+    /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
     #[doc(hidden)]
-    pub async fn max_internal(self, column: &'static str) -> EfResult<Option<String>> {
+    pub async fn max_internal<V>(
+        self,
+        column: &'static str,
+    ) -> EFResult<Option<V>>
+    where
+        V: TryFrom<DbValue, Error = DbValueConvertError>,
+    {
         let mut state = self.state.clone();
         state.aggregate = Some("MAX".to_string());
         state.aggregate_column = Some(column.to_string());
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -924,7 +957,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let params = state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
-        Ok(rows.first().and_then(|r| r.first().cloned()))
+        convert_aggregate_cell::<V>(rows)
     }
 
     // -------------------------------------------------------------------
@@ -969,14 +1002,14 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes the query and returns all matching entities.
-    pub async fn to_list(self) -> EfResult<Vec<T>>
+    pub async fn to_list(self) -> EFResult<Vec<T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
         let includes = self.state.includes.clone();
         let (sql, params) = self.compile_sql();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to QueryBuilder. Use DbSet::query() or attach a provider."
                     .to_string(),
             )
@@ -996,7 +1029,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes the query and eagerly loads included navigations.
-    pub async fn to_list_with_includes(self) -> EfResult<Vec<T>>
+    pub async fn to_list_with_includes(self) -> EFResult<Vec<T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
@@ -1004,18 +1037,18 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes the query and returns the first matching entity.
-    pub async fn first(self) -> EfResult<T>
+    pub async fn first(self) -> EFResult<T>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
         let mut results = self.take(1).to_list().await?;
         results
             .pop()
-            .ok_or_else(|| crate::error::EfError::NotFound("Entity not found".to_string()))
+            .ok_or_else(|| crate::error::EFError::NotFound("Entity not found".to_string()))
     }
 
     /// Executes the query and returns the first matching entity or None.
-    pub async fn first_or_default(self) -> EfResult<Option<T>>
+    pub async fn first_or_default(self) -> EFResult<Option<T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
@@ -1024,11 +1057,11 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes a COUNT query.
-    pub async fn count(self) -> EfResult<i64> {
+    pub async fn count(self) -> EFResult<i64> {
         let mut state = self.state.clone();
         state.is_count = true;
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -1039,7 +1072,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         if let Some(first_row) = rows.first() {
             if let Some(first_val) = first_row.first() {
                 return first_val.trim().parse::<i64>().map_err(|e| {
-                    crate::error::EfError::TypeConversion(format!(
+                    crate::error::EFError::TypeConversion(format!(
                         "COUNT result '{}' is not i64: {}",
                         first_val, e
                     ))
@@ -1050,12 +1083,12 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Checks if any entities match the query.
-    pub async fn any(self) -> EfResult<bool> {
+    pub async fn any(self) -> EFResult<bool> {
         let mut state = self.state.clone();
         state.is_exists = true;
         state.limit = Some(1);
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -1072,28 +1105,57 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Executes the query and returns the last matching entity (reverses
     /// ordering, then takes 1). Errors if no rows match.
-    pub async fn last(self) -> EfResult<T>
+    pub async fn last(self) -> EFResult<T>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
         let mut results = self.last_or_default().await?;
         results
             .take()
-            .ok_or_else(|| crate::error::EfError::NotFound("Entity not found".to_string()))
+            .ok_or_else(|| crate::error::EFError::NotFound("Entity not found".to_string()))
     }
 
-    /// Executes the query and returns the last matching entity or `None`
-    /// (reverses ordering, then takes 1).
-    pub async fn last_or_default(mut self) -> EfResult<Option<T>>
+    /// Executes the query and returns the last matching entity or `None`.
+    ///
+    /// When the caller has set explicit `order_by` clauses, their directions
+    /// are reversed and `take(1)` returns the last row under that ordering.
+    /// When no ordering is set, a default `ORDER BY <pk> DESC` is injected so
+    /// that "last" has deterministic semantics (matches the original design
+    /// in the v0.4 plan §4 阶段 4). Errors if the entity has no primary key
+    /// and no explicit ordering was provided.
+    pub async fn last_or_default(mut self) -> EFResult<Option<T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
-        // Reverse all orderings to get the "last" row.
-        for o in &mut self.state.orderings {
-            o.direction = match o.direction {
-                OrderDirection::Ascending => OrderDirection::Descending,
-                OrderDirection::Descending => OrderDirection::Ascending,
-            };
+        if self.state.orderings.is_empty() {
+            let meta = T::entity_meta();
+            let pk_col = meta
+                .primary_keys
+                .first()
+                .map(|s| s.as_ref())
+                .or_else(|| {
+                    meta.properties
+                        .iter()
+                        .find(|p| p.is_primary_key)
+                        .map(|p| p.column_name.as_ref())
+                })
+                .ok_or_else(|| {
+                    crate::error::EFError::Query(format!(
+                        "last_or_default requires a primary key on {} when no explicit ordering is set",
+                        std::any::type_name::<T>()
+                    ))
+                })?;
+            self.state
+                .orderings
+                .push(OrderBy::new(pk_col.to_string(), OrderDirection::Descending));
+        } else {
+            // Reverse existing orderings to get the "last" row.
+            for o in &mut self.state.orderings {
+                o.direction = match o.direction {
+                    OrderDirection::Ascending => OrderDirection::Descending,
+                    OrderDirection::Descending => OrderDirection::Ascending,
+                };
+            }
         }
         let mut results = self.take(1).to_list().await?;
         Ok(results.pop())
@@ -1101,30 +1163,30 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Executes the query and returns the only matching entity. Errors if
     /// there are 0 or 2+ results.
-    pub async fn single(self) -> EfResult<T>
+    pub async fn single(self) -> EFResult<T>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
         let mut results = self.take(2).to_list().await?;
         if results.len() > 1 {
-            return Err(crate::error::EfError::Query(
+            return Err(crate::error::EFError::Query(
                 "Sequence contains more than one element".to_string(),
             ));
         }
         results
             .pop()
-            .ok_or_else(|| crate::error::EfError::NotFound("Sequence contains no elements".to_string()))
+            .ok_or_else(|| crate::error::EFError::NotFound("Sequence contains no elements".to_string()))
     }
 
     /// Executes the query and returns the only matching entity, or `None` if
     /// empty. Errors if there are 2+ results.
-    pub async fn single_or_default(self) -> EfResult<Option<T>>
+    pub async fn single_or_default(self) -> EFResult<Option<T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
         let mut results = self.take(2).to_list().await?;
         if results.len() > 1 {
-            return Err(crate::error::EfError::Query(
+            return Err(crate::error::EFError::Query(
                 "Sequence contains more than one element".to_string(),
             ));
         }
@@ -1134,13 +1196,13 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Executes a COUNT query and returns the result as `i64`. Alias for
     /// `count()` — in .NET LINQ, `LongCount` returns `long` while `Count`
     /// returns `int`; in Rust both are `i64`.
-    pub async fn long_count(self) -> EfResult<i64> {
+    pub async fn long_count(self) -> EFResult<i64> {
         self.count().await
     }
 
     /// Determines whether all elements in the sequence satisfy a predicate.
     /// The predicate is applied in Rust after loading the entities.
-    pub async fn all<F>(self, predicate: F) -> EfResult<bool>
+    pub async fn all<F>(self, predicate: F) -> EFResult<bool>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
         F: Fn(&T) -> bool,
@@ -1151,7 +1213,7 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Determines whether the sequence contains an entity with the given
     /// primary key value.
-    pub async fn contains(self, id: impl Into<DbValue>) -> EfResult<bool>
+    pub async fn contains(self, id: impl Into<DbValue>) -> EFResult<bool>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
     {
@@ -1161,7 +1223,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Projects each entity into a key-value pair and collects into a
     /// `HashMap<K, T>`. The key selector closure extracts the key from each
     /// entity.
-    pub async fn to_dictionary<K, F>(self, key_selector: F) -> EfResult<std::collections::HashMap<K, T>>
+    pub async fn to_dictionary<K, F>(self, key_selector: F) -> EFResult<std::collections::HashMap<K, T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
         K: std::hash::Hash + Eq,
@@ -1191,9 +1253,9 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes a bulk delete operation.
-    pub async fn execute_delete(self) -> EfResult<u64> {
+    pub async fn execute_delete(self) -> EFResult<u64> {
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -1285,11 +1347,11 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     }
 
     /// Executes the bulk update.
-    pub async fn execute(self) -> EfResult<u64> {
+    pub async fn execute(self) -> EFResult<u64> {
         let sql = self.to_sql();
         let params = self.params();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to ExecuteUpdateBuilder.".to_string(),
             )
         })?;
@@ -1321,9 +1383,9 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     }
 
     /// Executes the projection query and returns raw column values per row.
-    pub async fn to_list(self) -> EfResult<Vec<Vec<String>>> {
+    pub async fn to_list(self) -> EFResult<Vec<Vec<String>>> {
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EfError::Configuration(
+            crate::error::EFError::Configuration(
                 "No provider attached to SelectQueryBuilder.".to_string(),
             )
         })?;

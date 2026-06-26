@@ -52,7 +52,7 @@ lref/src/
 ├── migration.rs    �?MigrationEngine
 ├── di.rs           �?rust-dicore integration (add_dbcontext / FromDbContextOptions)
 ├── cache.rs        �?DbCache (Identity Map)
-└── error.rs        �?EfError, EfResult
+└── error.rs        �?EFError, EFResult
 ```
 
 ---
@@ -63,7 +63,7 @@ lref/src/
 
 ```rust
 pub trait IEntityType: Send + Sync + 'static { fn entity_meta() -> EntityTypeMeta; }
-pub trait IFromRow: IEntityType + Sized { fn from_row(v: &[String]) -> EfResult<Self>; }
+pub trait IFromRow: IEntityType + Sized { fn from_row(v: &[String]) -> EFResult<Self>; }
 pub trait IGetKeyValues: IEntityType { fn key_values(&self) -> HashMap<String, DbValue>; }
 pub trait IEntitySnapshot: IEntityType { fn snapshot(&self) -> HashMap<String, DbValue>; }
 ```
@@ -76,12 +76,12 @@ pub trait IDbContext: Send + Sync {
     fn provider(&self) -> &dyn IDatabaseProvider;
     fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
     fn change_tracker(&self) -> &ChangeTracker;
-    async fn save_changes(&mut self) -> EfResult<SaveChangesResult>;
+    async fn save_changes(&mut self) -> EFResult<SaveChangesResult>;
 }
 
 #[async_trait]
 pub trait IDbContextExt: IDbContext {
-    async fn use_transaction<F, Fut, R>(&self, f: F) -> EfResult<R>;
+    async fn use_transaction<F, Fut, R>(&self, f: F) -> EFResult<R>;
 }
 ```
 
@@ -109,18 +109,18 @@ pub trait ISqlGenerator: Send + Sync { /* select, insert, update, delete, ... */
 
 #[async_trait]
 pub trait IAsyncConnection: Send + Sync {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EfResult<u64>;
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EfResult<Vec<Vec<String>>>;
-    async fn begin_transaction(&mut self) -> EfResult<()>;
-    async fn commit_transaction(&mut self) -> EfResult<()>;
-    async fn rollback_transaction(&mut self) -> EfResult<()>;
+    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64>;
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>>;
+    async fn begin_transaction(&mut self) -> EFResult<()>;
+    async fn commit_transaction(&mut self) -> EFResult<()>;
+    async fn rollback_transaction(&mut self) -> EFResult<()>;
 }
 
 #[async_trait]
 pub trait IDatabaseProvider: Send + Sync {
     fn sql_generator(&self) -> Box<dyn ISqlGenerator>;
-    async fn get_connection(&self) -> EfResult<Box<dyn IAsyncConnection>>;
-    async fn execute_migration_command(&self, sql: &str) -> EfResult<()>;
+    async fn get_connection(&self) -> EFResult<Box<dyn IAsyncConnection>>;
+    async fn execute_migration_command(&self, sql: &str) -> EFResult<()>;
     fn name(&self) -> &str;
 }
 ```
@@ -147,31 +147,58 @@ let ctx: Arc<dyn IDbContext> = provider.get();
 
 ## QueryBuilder API
 
+All query operations go through the `linq!` macro — the string-based APIs (`include_named` / `order_by("col")` / `sum("col")` / `find_by_id` etc.) have been removed. The macro expands to `#[doc(hidden)]` `*_internal` methods at compile time.
+
 ```rust
-// Filtering
-query.filter_column("col", "=", value).filter_in("col", vec![1,2,3])
-     .filter_is_null("col").filter_is_not_null("col").filter_between("col", low, high)
+// Form A: filter closure (reusable BoolExpr or direct query)
+let expr = linq!(|b: Blog| b.rating > 5);
+let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 
-// Ordering, pagination, JOIN, grouping
-     .order_by_column("col").order_by_desc_column("col").skip(10).take(20)
-     .inner_join("t2", "a", "b").left_join("t2", "a", "b")
-     .group_by(&["col"]).having("COUNT(*) > 1")
+// Form B: multi-clause query (filter + clauses separated by `;`)
+let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.published;
+    include b.posts then b.comments;
+    order_by b.created_at desc;
+).to_list().await?;
 
-// Eager loading
-     .include_named("posts")
+// Aggregates (terminals)
+let total: f64 = linq!(ctx.set::<Blog>(); sum b.views).await?;
+let top: i32 = linq!(ctx.set::<Blog>(); max b.rating).await?.unwrap_or(0);
+let n: i64 = linq!(ctx.set::<Blog>(); count).await?;
 
-// Terminal
-     .to_list().await?        // Vec<T>
-     .first().await?          // T
-     .first_or_default().await?  // Option<T>
-     .count().await?          // i64
-     .any().await?            // bool
-     .sum("col").await?       // f64
-     .avg("col").await?       // f64
+// JOIN via multi-param closure
+let rows = linq!(ctx.set::<Blog>();
+    inner_join |a: Blog, b: Post| a.blog_id == b.blog_id
+).to_list().await?;
 
-// Bulk
-     .execute_update().set_column("col", value).execute().await?
-     .execute_delete().await?
+// Bulk update
+let affected = linq!(ctx.set::<Blog>(), |b: Blog| b.rating < 0.1;
+    set b.published, false;
+    execute_update
+).await?;
+
+// Bulk delete
+let affected = linq!(ctx.set::<Blog>(), |b: Blog| b.rating < 1)
+    .execute_delete().await?;
+
+// Form C: value-producing (for ModelBuilder)
+builder.has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
+builder.has_index(linq!(index |b: Blog| (b.author_id, b.created_at)));
+builder.has_key(linq!(key |b: Blog| b.blog_id));
+
+// Terminals on QueryBuilder<T>
+ctx.set::<Blog>().query().find(1).await?            // Option<T> (PK metadata, no hardcoded "id")
+ctx.set::<Blog>().query().first().await?           // T (errors if empty)
+ctx.set::<Blog>().query().first_or_default().await?// Option<T>
+ctx.set::<Blog>().query().last().await?            // T (PK desc when no explicit order)
+ctx.set::<Blog>().query().last_or_default().await? // Option<T>
+ctx.set::<Blog>().query().single().await?          // T (errors if !=1)
+ctx.set::<Blog>().query().single_or_default().await? // Option<T> (errors if >1)
+ctx.set::<Blog>().query().count().await?           // i64
+ctx.set::<Blog>().query().long_count().await?     // i64 (alias)
+ctx.set::<Blog>().query().any().await?             // bool
+ctx.set::<Blog>().query().all(|b| b.published).await?  // bool (Rust-side predicate)
+ctx.set::<Blog>().query().contains(1).await?      // bool (PK existence)
+ctx.set::<Blog>().query().distinct().to_list().await?   // SELECT DISTINCT
 ```
 
 ## License

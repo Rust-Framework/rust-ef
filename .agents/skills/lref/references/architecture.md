@@ -37,7 +37,7 @@ User Code
 ## Provider Factory Mechanism
 
 1. `options.use_sqlite(cs)` injects a closure:
-   `Arc<dyn Fn(&str) -> EfResult<Arc<dyn IDatabaseProvider>>>`
+   `Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>>>`
 2. `DbContext::from_options()` calls this closure
 3. Core crate never imports any provider type
 

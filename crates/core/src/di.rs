@@ -127,11 +127,11 @@ impl DbContextServiceCollectionExt for ::rust_dicore::ServiceCollection {
 
 /// Trait for types that can be constructed from `DbContextOptions`.
 pub trait FromDbContextOptions: IDbContext + Sized {
-    fn from_options(options: &DbContextOptions) -> crate::error::EfResult<Self>;
+    fn from_options(options: &DbContextOptions) -> crate::error::EFResult<Self>;
 }
 
 impl FromDbContextOptions for DbContext {
-    fn from_options(options: &DbContextOptions) -> crate::error::EfResult<Self> {
+    fn from_options(options: &DbContextOptions) -> crate::error::EFResult<Self> {
         DbContext::from_options(options)
     }
 }

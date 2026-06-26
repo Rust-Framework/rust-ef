@@ -1,0 +1,268 @@
+//! Tests for `linq!` Form B (multi-clause query) and Form C (value-producing).
+//!
+//! Covers clauses not already exercised by `linq_tests.rs` / `navigation_tests.rs` /
+//! `sqlite_crud_tests.rs`: `order_by`, `group_by`, `select`, `having`, `min`/`max`
+//! typed return (G1), `count`, `distinct`, `set`+`execute_update`, `take`/`skip`,
+//! `inner_join`/`left_join`, and Form C `filter`/`index`/`key`.
+
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+use rust_ef::linq;
+use rust_ef::prelude::*;
+use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
+
+#[derive(Debug, Clone, EntityType)]
+#[table("dsl_blogs")]
+struct DslBlog {
+    #[primary_key]
+    #[auto_increment]
+    blog_id: i32,
+    #[required]
+    title: String,
+    rating: i32,
+    views: i64,
+    published: bool,
+    category: String,
+    #[navigation]
+    posts: HasMany<DslPost>,
+}
+
+#[derive(Debug, Clone, EntityType)]
+#[table("dsl_posts")]
+struct DslPost {
+    #[primary_key]
+    #[auto_increment]
+    post_id: i32,
+    #[required]
+    title: String,
+    #[foreign_key(DslBlog)]
+    blog_id: i32,
+    #[navigation]
+    blog: BelongsTo<DslBlog>,
+}
+
+fn make_ctx() -> DbContext {
+    let mut builder = DbContextOptionsBuilder::new();
+    builder.use_sqlite_in_memory();
+    let options = builder.build();
+    DbContext::from_options(&options).unwrap()
+}
+
+/// Seeds three blogs across two categories with posts attached.
+/// Returns the DbContext ready for querying.
+async fn seed() -> DbContext {
+    let mut ctx = make_ctx();
+    ctx.set::<DslBlog>();
+    ctx.set::<DslPost>();
+    ctx.ensure_created().await.unwrap();
+
+    ctx.set::<DslBlog>().add(DslBlog {
+        blog_id: 0,
+        title: "Rust".into(),
+        rating: 9,
+        views: 100,
+        published: true,
+        category: "tech".into(),
+        posts: HasMany::new(),
+    });
+    ctx.set::<DslBlog>().add(DslBlog {
+        blog_id: 0,
+        title: "Async".into(),
+        rating: 7,
+        views: 50,
+        published: true,
+        category: "tech".into(),
+        posts: HasMany::new(),
+    });
+    ctx.set::<DslBlog>().add(DslBlog {
+        blog_id: 0,
+        title: "Cooking".into(),
+        rating: 3,
+        views: 10,
+        published: false,
+        category: "food".into(),
+        posts: HasMany::new(),
+    });
+    ctx.save_changes().await.unwrap();
+
+    let blogs = ctx.set::<DslBlog>().query().to_list().await.unwrap();
+    let tech_id = blogs[0].blog_id;
+    ctx.set::<DslPost>().add(DslPost {
+        post_id: 0,
+        title: "P1".into(),
+        blog_id: tech_id,
+        blog: BelongsTo::new(),
+    });
+    ctx.set::<DslPost>().add(DslPost {
+        post_id: 0,
+        title: "P2".into(),
+        blog_id: tech_id,
+        blog: BelongsTo::new(),
+    });
+    ctx.save_changes().await.unwrap();
+    ctx
+}
+
+#[tokio::test]
+async fn test_order_by_clause_desc() {
+    let mut ctx = seed().await;
+    let blogs = linq!(ctx.set::<DslBlog>(); order_by b.rating desc).to_list().await.unwrap();
+    assert_eq!(blogs.len(), 3);
+    assert_eq!(blogs[0].rating, 9);
+    assert_eq!(blogs[2].rating, 3);
+}
+
+#[tokio::test]
+async fn test_order_by_clause_asc() {
+    let mut ctx = seed().await;
+    let blogs = linq!(ctx.set::<DslBlog>(); order_by b.rating asc).to_list().await.unwrap();
+    assert_eq!(blogs[0].rating, 3);
+    assert_eq!(blogs[2].rating, 9);
+}
+
+#[tokio::test]
+async fn test_take_skip_clauses() {
+    let mut ctx = seed().await;
+    let blogs = linq!(ctx.set::<DslBlog>(); order_by b.blog_id asc; skip 1; take 1)
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(blogs.len(), 1);
+    assert_eq!(blogs[0].title, "Async");
+}
+
+#[tokio::test]
+async fn test_min_typed_return_i32() {
+    // G1 verification: min returns typed Option<V>, not Option<String>.
+    let mut ctx = seed().await;
+    let min_rating: i32 = linq!(ctx.set::<DslBlog>(); min b.rating).await.unwrap().unwrap();
+    assert_eq!(min_rating, 3);
+}
+
+#[tokio::test]
+async fn test_max_typed_return_i32() {
+    // G1 verification: max returns typed Option<V>, not Option<String>.
+    let mut ctx = seed().await;
+    let max_rating: i32 = linq!(ctx.set::<DslBlog>(); max b.rating).await.unwrap().unwrap();
+    assert_eq!(max_rating, 9);
+}
+
+#[tokio::test]
+async fn test_max_typed_return_i64() {
+    // G1: cross-type inference — views column is i64.
+    let mut ctx = seed().await;
+    let max_views: i64 = linq!(ctx.set::<DslBlog>(); max b.views).await.unwrap().unwrap();
+    assert_eq!(max_views, 100);
+}
+
+#[tokio::test]
+async fn test_min_empty_returns_none() {
+    // G1: empty result set yields Ok(None), not an error.
+    let mut ctx = make_ctx();
+    ctx.set::<DslBlog>();
+    ctx.ensure_created().await.unwrap();
+    let min_rating: Option<i32> = linq!(ctx.set::<DslBlog>(); min b.rating).await.unwrap();
+    assert!(min_rating.is_none());
+}
+
+#[tokio::test]
+async fn test_count_clause() {
+    let mut ctx = seed().await;
+    let n: i64 = linq!(ctx.set::<DslBlog>(); count).await.unwrap();
+    assert_eq!(n, 3);
+}
+
+#[tokio::test]
+async fn test_distinct_clause() {
+    let mut ctx = seed().await;
+    // Distinct on the whole row; with a filter so the result is predictable.
+    let rows = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.published; distinct)
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+}
+
+#[tokio::test]
+async fn test_group_by_with_having() {
+    let mut ctx = seed().await;
+    // tech category has 2 blogs; food has 1. HAVING count > 1 keeps only tech.
+    let blogs = linq!(ctx.set::<DslBlog>(); group_by b.category; having count(b.blog_id) > 1)
+        .to_list()
+        .await
+        .unwrap();
+    assert!(!blogs.is_empty());
+}
+
+#[tokio::test]
+async fn test_select_clause_returns_raw_rows() {
+    let mut ctx = seed().await;
+    let rows: Vec<Vec<String>> = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.published; select (b.blog_id, b.title))
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].len(), 2);
+}
+
+#[tokio::test]
+async fn test_set_execute_update() {
+    let mut ctx = seed().await;
+    let affected = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.rating < 5; set b.published, false; execute_update)
+        .await
+        .unwrap();
+    assert_eq!(affected, 1);
+
+    // Verify the update took effect.
+    let cooking = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.title == "Cooking")
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(cooking.len(), 1);
+    assert!(!cooking[0].published);
+}
+
+#[tokio::test]
+async fn test_inner_join_clause() {
+    let mut ctx = seed().await;
+    let blogs = linq!(ctx.set::<DslBlog>(); inner_join |a: DslBlog, b: DslPost| a.blog_id == b.blog_id)
+        .to_list()
+        .await
+        .unwrap();
+    // Two posts belong to the first blog; inner join yields rows for those.
+    assert!(!blogs.is_empty());
+}
+
+#[tokio::test]
+async fn test_left_join_clause() {
+    let mut ctx = seed().await;
+    let blogs = linq!(ctx.set::<DslBlog>(); left_join |a: DslBlog, b: DslPost| a.blog_id == b.blog_id)
+        .to_list()
+        .await
+        .unwrap();
+    // Left join keeps all blogs; blog 1 appears twice (one row per matching post),
+    // blogs 2 and 3 appear once each with NULL post side → 4 rows total.
+    assert!(blogs.len() >= 3);
+}
+
+#[tokio::test]
+async fn test_form_c_filter_produces_bool_expr() {
+    use rust_ef::query::BoolExpr;
+    let expr: BoolExpr = linq!(filter |b: DslBlog| b.published);
+    // The expression is a value, not a method chain; just verify it's not Filter-free.
+    assert!(matches!(expr, BoolExpr::Filter(_)));
+}
+
+#[tokio::test]
+async fn test_form_c_index_produces_str_slice() {
+    let cols: &'static [&'static str] = linq!(index |b: DslBlog| (b.category, b.rating));
+    assert_eq!(cols.len(), 2);
+    assert!(cols.iter().any(|c| *c == "category"));
+    assert!(cols.iter().any(|c| *c == "rating"));
+}
+
+#[tokio::test]
+async fn test_form_c_key_produces_str_slice() {
+    let cols: &'static [&'static str] = linq!(key |b: DslBlog| b.blog_id);
+    assert_eq!(cols.len(), 1);
+    assert_eq!(cols[0], "blog_id");
+}

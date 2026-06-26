@@ -1,6 +1,6 @@
 //! Reverse-engineer entity types from database schema (Database First scaffold).
 
-use rust_ef::error::EfResult;
+use rust_ef::error::EFResult;
 use std::path::Path;
 
 /// A column read from database introspection (provider-agnostic).
@@ -21,7 +21,7 @@ pub struct ScaffoldTable {
 }
 
 /// Generates Rust entity source files under `output_dir`.
-pub fn write_entities(output_dir: &Path, tables: &[ScaffoldTable]) -> EfResult<()> {
+pub fn write_entities(output_dir: &Path, tables: &[ScaffoldTable]) -> EFResult<()> {
     std::fs::create_dir_all(output_dir).map_err(io_err)?;
     for table in tables {
         let type_name = table_name_to_type(&table.name);
@@ -147,8 +147,8 @@ fn map_rust_type(col: &ScaffoldColumn) -> String {
     }
 }
 
-fn io_err(e: std::io::Error) -> rust_ef::error::EfError {
-    rust_ef::error::EfError::Configuration(e.to_string())
+fn io_err(e: std::io::Error) -> rust_ef::error::EFError {
+    rust_ef::error::EFError::Configuration(e.to_string())
 }
 
 #[cfg(test)]

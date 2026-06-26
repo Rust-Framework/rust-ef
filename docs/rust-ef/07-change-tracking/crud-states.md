@@ -32,7 +32,7 @@ ctx.set::<Blog>().attach(blog);
 ## Update（修改）
 
 ```rust
-let mut blog = ctx.set::<Blog>().query().find_by_id(1).first().await?;
+let mut blog = ctx.set::<Blog>().query().find(1).await?.unwrap();
 blog.rating = 10;
 
 ctx.set::<Blog>().update(blog);
@@ -58,7 +58,7 @@ ctx.save_changes().await?;  // 执行 DELETE
 
 ```
 Add()        Attach()       DetectChanges()       RemoveAt()
-  ??           ??                ??                 ??
+  ↓            ↓                  ↓                   ↓
 Added    Unchanged  --------->  Modified  --------->  Deleted
                   修改属性        (update 标记)       (save_changes)
 ```
@@ -70,5 +70,6 @@ Added    Unchanged  --------->  Modified  --------->  Deleted
 | `update()` 是显式的 | 修改实体后必须调用，否则 SaveChanges 不会提交 UPDATE |
 | `remove_at` 按索引 | 因为 `DbSet` 内部存储为 `Vec`，按索引定位最高效 |
 | 批量删除用 `ExecuteDelete` | 见 [第八章](../08-bulk-operations/INDEX.md)，避免先加载再标记 |
+| `find(id)` 用 PK 元数据 | 不再硬编码 `"id"`，复合主键用 `find_by_key` |
 
 下一节：[SaveChanges 与事务边界](save-changes.md)
