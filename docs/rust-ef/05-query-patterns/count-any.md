@@ -98,6 +98,27 @@ let line = ctx
     .await?;
 ```
 
+## exists_by_id / exists_by_key
+
+`exists_by_id` 检查指定主键的行是否存在，生成 `SELECT 1 ... LIMIT 1`，比 `find(id).is_some()` 更轻量（不物化整行）。
+
+```rust
+// 单主键：读取实体 PK 元数据，无需硬编码列名
+let exists = ctx.set::<Blog>().query().exists_by_id(1).await?;
+
+// 复合主键
+let exists = ctx
+    .set::<OrderLine>()
+    .query()
+    .exists_by_key(&[
+        (OrderLine::COLUMN_ORDER_ID, DbValue::I32(1)),
+        (OrderLine::COLUMN_LINE_NO, DbValue::I32(2)),
+    ])
+    .await?;
+```
+
+`exists_by_id` 从 `T::entity_meta()` 解析主键列名，与 `find(id)` 一致；`exists_by_key` 接受 `&[(&str, DbValue)]`，与 `find_by_key` 对应。两者均委托 `any()`，仅检查行存在性而不加载实体。
+
 ## 设计要点
 
 | 实践 | 说明 |

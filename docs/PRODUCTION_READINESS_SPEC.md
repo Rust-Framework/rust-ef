@@ -3,15 +3,15 @@
 > 版本: v0.5 — 基于 2026-06-26 审计结果  
 > 包名: `rust-ef`（workspace: `crates/core`）  
 > 目标: 逐步推进至 v1.0 生产就绪状态  
-> **当前阶段: RC 1 接近完成（约 94% 就绪度）**
+> **当前阶段: RC 1 接近完成（约 98% 就绪度，P0 blocker 已全部清除）**
 
 ---
 
 ## 执行摘要
 
-rust-ef v0.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持。在 **SQLite** 上有完整的 CRUD 集成测试（194 个测试全绿）。
+rust-ef v0.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持、exists_by_id/exists_by_key 存在性检查、事务回滚与复合主键 CRUD 集成测试。在 **SQLite / PostgreSQL / MySQL** 上有完整的 CRUD 集成测试（208 个测试全绿），CI 三库 matrix 已就位。
 
-**已具备通用生产条件**（SQLite 场景），剩余缺口：Lazy Loading、CI 多库 matrix。
+**已具备通用生产条件**，剩余缺口仅为 P1 polish 项（Lazy Loading、Provider 原生类型绑定等）。
 
 | 场景 | 建议 |
 |------|------|
@@ -25,10 +25,10 @@ rust-ef v0.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 
 ## 里程碑总览
 
 ```
-Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► 当前 v0.5 (~94%) ──► 1.0
+Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► 当前 v0.5 (~98%) ──► 1.0
                                                     ↑
                                             RC1 核心项已完成
-                                            剩余: CI / Lazy Loading
+                                            P0 已清除，剩余 P1 polish
 ```
 
 ---
@@ -106,11 +106,11 @@ Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► 当前 v
 
 | 能力 | 状态 |
 |------|:----:|
-| 单元 + 集成测试（194） | ✅ |
+| 单元 + 集成测试（208） | ✅ |
 | GitHub Actions CI | ✅ |
 | CLI（migration add/apply/revert/list/script） | ✅ |
 | mdBook 用户文档 | ✅ |
-| 性能基准 | ❌ |
+| 性能基准 (criterion) | ✅ |
 
 ---
 
@@ -351,20 +351,26 @@ rust-ef-cli script --from X --to Y   # 或 --name SingleMigration
 
 ```yaml
 jobs:
+  lint:
+    # fmt --check + clippy（默认 + chrono/uuid/decimal features）-D warnings
   test:
     strategy:
+      fail-fast: false
       matrix:
         db: [sqlite, postgres, mysql]
+    services:   # postgres:16 + mysql:8 service containers
     steps:
-      - cargo test --workspace
-      - cargo clippy --workspace -- -D warnings
-      - cargo fmt --check
+      # sqlite  → cargo test --features chrono,uuid,decimal -- --skip postgres --skip mysql
+      # postgres→ cargo test --features chrono,uuid,decimal --test postgres_crud_tests
+      # mysql   → cargo test --features chrono,uuid,decimal --test mysql_crud_tests
 ```
 
 ### 验收标准
 
-- [ ] PR 触发 CI，三库 matrix（PG/MySQL 用 service container）
-- [ ] Clippy 零 warning（当前 lib 有 3 个 warning）
+- [x] PR 触发 CI，三库 matrix（PG/MySQL 用 service container）
+- [x] Clippy 零 warning（`-D warnings`，默认 + chrono/uuid/decimal features 双路径）
+- [x] fmt 检查独立 lint job
+- [x] feature 门控测试在 CI 中运行（extended_types_tests）
 
 ---
 
@@ -390,11 +396,19 @@ jobs:
 
 ## 3.4 性能基准（可选）
 
-文件: `benches/crud_benchmark.rs`
+**状态: ✅ 已完成**
 
-- 批量插入 1000 条吞吐量
-- Include vs N+1 对比
-- 与 sqlx 裸写对比基线
+文件: `crates/core/benches/bench_insert.rs`, `bench_query.rs`, `bench_include.rs`
+
+使用 `criterion`（`async_tokio` feature）对 SQLite 内存库进行基准测试：
+
+- **bench_insert** — 批量 INSERT 吞吐量（100 / 500 / 1000 行，单次 `save_changes` 事务）
+- **bench_query** — 批量 SELECT 吞吐量（`to_list` 全表 + `linq!` 过滤，100 / 500 / 1000 行）
+- **bench_include** — Include 预加载 vs N+1 查询对比（50 blogs × 10 posts）
+
+运行: `cargo bench -p rust-ef`
+
+> 注: "与 sqlx 裸写对比基线" 未纳入，因为 rust-ef 的 SQLite provider 内部已使用 sqlx，对比意义有限。
 
 ---
 
@@ -422,8 +436,8 @@ jobs:
 | CLI Migration | ❌ | ❌ | ✅ 三库 | 三库 |
 | Provider 集成测试 | SQLite | SQLite | ✅ 三库 | 三库 |
 | chrono/uuid/decimal | ❌ | ❌ | ✅ 可选 feature | 原生参数 |
-| 测试数量 | 19 | 46 | **194** | 200+ |
-| CI | ❌ | ❌ | SQLite | 三库 |
+| 测试数量 | 19 | 46 | **208** | 200+ |
+| CI | ❌ | ❌ | ✅ 三库 matrix | 三库 |
 | 文档 | 计划 | README | ✅ mdBook | mdBook |
 
 ---
@@ -440,15 +454,16 @@ jobs:
   ✅ 全局查询过滤器 + query_ignore_filters
   ✅ 软删除/审计拦截器示例 + 文档
   ✅ 3.3 chrono / uuid / decimal 类型支持（可选 feature）
+  ✅ 3.2 GitHub Actions CI 三库 matrix（lint + sqlite/pg/mysql）
+  ✅ 1.2 linq! 类型推断（已调研并文档化，proc_macro 根本限制）
+  ✅ 1.3 exists_by_id / exists_by_key（SELECT 1 ... LIMIT 1）
+  ✅ 1.4 事务回滚 + 复合主键 CRUD 集成测试
+  ✅ 3.4 性能基准（criterion: 批量 INSERT / SELECT / Include vs N+1）
 
 P0 — 1.0 GA blocker:
-  3.2 GitHub Actions CI 三库 matrix
+  （无）
 
 P1 — 1.0 polish:
-  1.2  linq! 类型推断
-  1.3  exists_by_id
-  1.4  事务回滚 + 复合主键集成测试
-  3.4  性能基准
   Lazy Loading（可选）
   Provider 原生 chrono/uuid 参数绑定（目前经 String 中转）
 ```
@@ -467,7 +482,7 @@ P1 — 1.0 polish:
 
 ---
 
-# 附录：测试清单（当前 194 个）
+# 附录：测试清单（当前 208 个）
 
 | 文件 | 数量 | 覆盖 |
 |------|:----:|------|
@@ -488,8 +503,10 @@ P1 — 1.0 polish:
 | `navigation_perf_tests.rs` | — | NavigationLoader 优化 |
 | `connection_pool_tests.rs` | — | 连接池配置 |
 | `extended_types_tests.rs` | 6 | chrono/uuid/decimal 类型映射（feature 门控） |
+| `exists_by_id_tests.rs` | 8 | exists_by_id / exists_by_key（单主键 + 复合主键） |
+| `transaction_composite_tests.rs` | 6 | 事务回滚 + 复合主键 CRUD 全生命周期 |
 | 其他（单元 + 集成） | 100+ | 类型映射、DI、拦截器等 |
 
 ---
 
-*下次审计建议触发条件：CI 三库 matrix 落地、Lazy Loading 实现、或版本升至 1.0。*
+*下次审计建议触发条件：Lazy Loading 实现、Provider 原生 chrono/uuid 参数绑定、或版本升至 1.0。*

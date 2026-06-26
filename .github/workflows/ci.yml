@@ -7,11 +7,30 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_EF_PG_URL: postgres://test:test@localhost:5432/rust_ef_test
-  RUST_EF_MYSQL_URL: mysql://root:test@localhost:3306/rust_ef_test
 
 jobs:
+  lint:
+    name: Lint (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --all --check
+      - name: Clippy (default features)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy (chrono/uuid/decimal features)
+        run: cargo clippy --workspace --all-targets --features chrono,uuid,decimal -- -D warnings
+
   test:
+    name: Test (${{ matrix.db }})
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres, mysql]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -39,13 +58,23 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+    env:
+      RUST_EF_PG_URL: postgres://test:test@localhost:5432/rust_ef_test
+      RUST_EF_MYSQL_URL: mysql://root:test@localhost:3306/rust_ef_test
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test --workspace
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets
-      - name: Format
-        run: cargo fmt --all --check
+        run: |
+          case "${{ matrix.db }}" in
+            sqlite)
+              cargo test --workspace --features chrono,uuid,decimal -- --skip postgres --skip mysql
+              ;;
+            postgres)
+              cargo test --workspace --features chrono,uuid,decimal --test postgres_crud_tests
+              ;;
+            mysql)
+              cargo test --workspace --features chrono,uuid,decimal --test mysql_crud_tests
+              ;;
+          esac

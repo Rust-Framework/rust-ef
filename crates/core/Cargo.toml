@@ -24,6 +24,7 @@ inventory = { workspace = true }
 rust-ef-sqlite = { path = "../sqlite" }
 rust-ef-postgres = { path = "../postgres" }
 rust-ef-mysql = { path = "../mysql" }
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 [features]
 default = []
@@ -31,3 +32,15 @@ serde = ["dep:serde"]
 chrono = ["dep:chrono", "rust-ef-macros/chrono"]
 uuid = ["dep:uuid", "rust-ef-macros/uuid"]
 decimal = ["dep:rust_decimal", "rust-ef-macros/decimal"]
+
+[[bench]]
+name = "bench_insert"
+harness = false
+
+[[bench]]
+name = "bench_query"
+harness = false
+
+[[bench]]
+name = "bench_include"
+harness = false

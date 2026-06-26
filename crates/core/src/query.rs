@@ -986,6 +986,43 @@ impl<T: IEntityType> QueryBuilder<T> {
         self.first_or_default().await
     }
 
+    /// Checks if an entity with the given single primary key exists.
+    ///
+    /// Uses `SELECT 1 ... LIMIT 1` — cheaper than `find(id).await?.is_some()`
+    /// which materializes the full row. Reads the PK column from entity
+    /// metadata, mirroring [`find`](Self::find).
+    pub async fn exists_by_id(self, id: impl Into<DbValue>) -> EFResult<bool> {
+        let meta = T::entity_meta();
+        let pk_col = meta
+            .primary_keys
+            .first()
+            .map(|s| s.as_ref())
+            .or_else(|| {
+                meta.properties
+                    .iter()
+                    .find(|p| p.is_primary_key)
+                    .map(|p| p.column_name.as_ref())
+            })
+            .ok_or_else(|| {
+                crate::error::EFError::Query(format!(
+                    "entity {} has no primary key defined",
+                    std::any::type_name::<T>()
+                ))
+            })?;
+        let col_const = pk_col.to_string();
+        self.filter_column(&col_const, "=", id).any().await
+    }
+
+    /// Checks if an entity with the given composite key exists.
+    ///
+    /// Uses `SELECT 1 ... LIMIT 1` — cheaper than `find_by_key(keys).is_some()`.
+    pub async fn exists_by_key(mut self, keys: &[(&str, DbValue)]) -> EFResult<bool> {
+        for (col, val) in keys {
+            self = self.filter_column(col, "=", val.clone());
+        }
+        self.any().await
+    }
+
     /// Skips the specified number of rows.
     pub fn skip(mut self, count: usize) -> Self {
         self.state.offset = Some(count);

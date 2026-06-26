@@ -33,6 +33,8 @@ let expr = linq!(|b| b.rating > 5);
 let expr = linq!(|b: Blog| b.rating > 5);
 ```
 
+**原因**：`linq!` 是 `proc_macro`（函数式过程宏），在编译的**解析后、类型检查前**阶段执行。宏需要实体类型来将字段引用（如 `b.rating`）编译为列常量（如 `Blog::COLUMN_RATING`），但此阶段类型检查尚未运行，宏无法从上下文推断闭包参数的类型。这是 Rust 过程宏系统的根本限制，1.0 不会改变。Form B 的 source 也必须含 `::<Type>` turbofish，原因相同。
+
 ## 4. `ensure_created()` 找不到实体（v0.5.1 已修复）
 
 **v0.5.1 之前**：必须先调用 `ctx.set::<T>()`，否则 `ensure_created()` 看不到任何实体，会报 `No entity types registered`。
