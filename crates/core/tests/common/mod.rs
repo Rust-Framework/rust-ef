@@ -105,6 +105,7 @@ impl IEntitySnapshot for TestItem {
 
 impl INavigationSetter for TestItem {}
 
+#[allow(clippy::type_complexity)]
 pub fn db_context_with_provider(provider: Arc<dyn IDatabaseProvider>) -> DbContext {
     let p = provider.clone();
     let factory: Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync> =
@@ -121,7 +122,9 @@ pub async fn reset_schema(
 ) -> EFResult<()> {
     let meta = TestItem::entity_meta();
     let engine = MigrationEngine::new(dialect);
-    let _ = engine.ensure_deleted(provider, &[meta.clone()]).await;
+    let _ = engine
+        .ensure_deleted(provider, std::slice::from_ref(&meta))
+        .await;
     engine.ensure_created(provider, &[meta]).await
 }
 

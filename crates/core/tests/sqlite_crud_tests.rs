@@ -10,7 +10,6 @@ mod sqlite_crud {
     use rust_ef::linq;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
-    use rust_ef::prelude::*;
     use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
     use rust_ef_sqlite::SqliteProvider;
     use std::collections::HashMap;
@@ -28,7 +27,6 @@ mod sqlite_crud {
     }
 
     impl TestItem {
-        pub const COLUMN_ID: &'static str = "id";
         pub const COLUMN_NAME: &'static str = "name";
         pub const COLUMN_VALUE: &'static str = "value";
     }
@@ -95,7 +93,7 @@ mod sqlite_crud {
     impl IFromRow for TestItem {
         fn from_row(values: &[String]) -> EFResult<Self> {
             Ok(TestItem {
-                id: values.get(0).and_then(|s| s.parse().ok()).unwrap_or(0),
+                id: values.first().and_then(|s| s.parse().ok()).unwrap_or(0),
                 name: values.get(1).cloned().unwrap_or_default(),
                 value: values.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
             })

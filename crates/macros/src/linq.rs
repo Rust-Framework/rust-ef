@@ -34,10 +34,10 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{
-    parse::Parse, parse_macro_input, BinOp, Expr, ExprCall, ExprField, ExprLit, ExprMethodCall,
-    ExprPath, ExprUnary, Ident, Lit, Member, Token, Type, UnOp,
+    parse::Parse, parse_macro_input, BinOp, Expr, ExprField, ExprLit, ExprMethodCall, ExprPath,
+    ExprUnary, Ident, Lit, Member, Token, Type, UnOp,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,13 +95,9 @@ enum LinqClause {
     GroupBy { fields: Vec<Expr> },
     /// `select (b.id, b.title)` or `select b.id`
     Select { fields: Vec<Expr> },
-    /// `having count(b.id) > 1`
-    Having {
-        agg: String,
-        col: Expr,
-        op: String,
-        value: Expr,
-    },
+    /// `having <expr>` — supports `agg(col) op value`, `AND`, `OR`, `NOT`,
+    /// and `agg(col) op agg(col)`.
+    HavingExpr { expr: HavingExprAst },
     /// `sum b.views` (terminal)
     Sum(Expr),
     /// `avg b.rating` (terminal)
@@ -134,6 +130,36 @@ enum LinqClause {
     Take(Expr),
     /// `skip N`
     Skip(Expr),
+}
+
+/// Macro-side AST for `HAVING` expressions.
+///
+/// Mirrors `rust_ef::query::HavingExpr` but carries `syn::Expr` nodes for
+/// column references and values, which are resolved to column constants and
+/// `DbValue` literals at expansion time by `compile_having_expr`.
+#[derive(Debug)]
+enum HavingExprAst {
+    /// `agg(col) op value`
+    Compare {
+        agg: String,
+        col: Expr,
+        op: String,
+        value: Expr,
+    },
+    /// `expr AND expr`
+    And(Box<HavingExprAst>, Box<HavingExprAst>),
+    /// `expr OR expr`
+    Or(Box<HavingExprAst>, Box<HavingExprAst>),
+    /// `NOT expr`
+    Not(Box<HavingExprAst>),
+    /// `agg(col1) op agg(col2)`
+    CompareAgg {
+        left_agg: String,
+        left_col: Expr,
+        op: String,
+        right_agg: String,
+        right_col: Expr,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -586,79 +612,149 @@ fn parse_select_rest(input: syn::parse::ParseStream) -> syn::Result<LinqClause> 
     Ok(LinqClause::Select { fields })
 }
 
-/// `having count(b.id) > 1`
+/// `having <expr>` — parses a boolean expression tree of aggregate comparisons.
+///
+/// Supported forms:
+/// - `agg(col) op value` (e.g. `count(b.id) > 1`)
+/// - `agg(col) op agg(col)` (e.g. `count(b.id) > sum(b.views)`)
+/// - `expr && expr`, `expr || expr`, `!expr`, `(expr)`
 fn parse_having_rest(input: syn::parse::ParseStream) -> syn::Result<LinqClause> {
     let expr: Expr = input.parse()?;
-    let binary = match &expr {
-        Expr::Binary(b) => b,
+    let ast = expr_to_having_ast(&expr)?;
+    Ok(LinqClause::HavingExpr { expr: ast })
+}
+
+/// Converts a parsed `syn::Expr` into a `HavingExprAst`.
+///
+/// Walks the expression tree recursively, handling `&&`, `||`, `!`, and
+/// parentheses as boolean combinators, and `agg(col) op <rhs>` as comparisons.
+fn expr_to_having_ast(expr: &Expr) -> syn::Result<HavingExprAst> {
+    match expr {
+        Expr::Binary(b) => match &b.op {
+            BinOp::And(_) => {
+                let left = expr_to_having_ast(&b.left)?;
+                let right = expr_to_having_ast(&b.right)?;
+                Ok(HavingExprAst::And(Box::new(left), Box::new(right)))
+            }
+            BinOp::Or(_) => {
+                let left = expr_to_having_ast(&b.left)?;
+                let right = expr_to_having_ast(&b.right)?;
+                Ok(HavingExprAst::Or(Box::new(left), Box::new(right)))
+            }
+            BinOp::Eq(_)
+            | BinOp::Ne(_)
+            | BinOp::Gt(_)
+            | BinOp::Ge(_)
+            | BinOp::Lt(_)
+            | BinOp::Le(_) => parse_having_compare_from_binary(b),
+            _ => Err(syn::Error::new_spanned(
+                expr,
+                "having expression supports only `&&`, `||`, `!`, and comparison operators",
+            )),
+        },
+        Expr::Unary(ExprUnary {
+            op: UnOp::Not(_),
+            expr: inner,
+            ..
+        }) => {
+            let inner_ast = expr_to_having_ast(inner)?;
+            Ok(HavingExprAst::Not(Box::new(inner_ast)))
+        }
+        Expr::Paren(p) => expr_to_having_ast(&p.expr),
+        _ => Err(syn::Error::new_spanned(
+            expr,
+            "having expects a boolean expression of aggregate comparisons",
+        )),
+    }
+}
+
+/// Parses `agg(col) op <rhs>` from a binary expression.
+///
+/// `<rhs>` is either a literal/value (→ `Compare`) or another `agg(col)` call
+/// (→ `CompareAgg`).
+fn parse_having_compare_from_binary(b: &syn::ExprBinary) -> syn::Result<HavingExprAst> {
+    let op = bin_op_to_symbol(&b.op)?;
+    let (left_agg, left_col) = parse_agg_call(&b.left)?;
+
+    // Try to parse the right side as an aggregate call. If that succeeds,
+    // it's a `CompareAgg`; otherwise treat it as a value.
+    match parse_agg_call(&b.right) {
+        Ok((right_agg, right_col)) => Ok(HavingExprAst::CompareAgg {
+            left_agg,
+            left_col,
+            op: op.to_string(),
+            right_agg,
+            right_col,
+        }),
+        Err(_) => {
+            let value: Expr = (*b.right).clone();
+            Ok(HavingExprAst::Compare {
+                agg: left_agg,
+                col: left_col,
+                op: op.to_string(),
+                value,
+            })
+        }
+    }
+}
+
+/// Extracts `(agg_name_uppercase, col_expr)` from an `agg(col)` call.
+///
+/// Returns an error if `expr` is not a single-argument call to one of
+/// `count`/`sum`/`avg`/`min`/`max`.
+fn parse_agg_call(expr: &Expr) -> syn::Result<(String, Expr)> {
+    let call = match expr {
+        Expr::Call(c) => c,
         _ => {
             return Err(syn::Error::new_spanned(
                 expr,
-                "having expects `agg(field) op value`, e.g. `having count(b.id) > 1`",
-            ));
-        }
-    };
-
-    let (agg, col) = match &*binary.left {
-        Expr::Call(ExprCall { func, args, .. }) => {
-            let agg = match &**func {
-                Expr::Path(p) if p.path.segments.len() == 1 => p.path.segments[0].ident.to_string(),
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        func,
-                        "expected aggregate function: count/sum/avg/min/max",
-                    ));
-                }
-            };
-            let col = args
-                .first()
-                .ok_or_else(|| {
-                    syn::Error::new_spanned(func, "aggregate function requires a column argument")
-                })?
-                .clone();
-            (agg, col)
-        }
-        _ => {
-            return Err(syn::Error::new_spanned(
-                &binary.left,
                 "expected aggregate function call, e.g. `count(b.id)`",
             ));
         }
     };
-
-    // Validate aggregate name.
-    match agg.to_lowercase().as_str() {
-        "count" | "sum" | "avg" | "min" | "max" => {}
+    let agg = match &*call.func {
+        Expr::Path(p) if p.path.segments.len() == 1 => p.path.segments[0].ident.to_string(),
         _ => {
             return Err(syn::Error::new_spanned(
-                &binary.left,
-                "unsupported aggregate; use count/sum/avg/min/max",
-            ));
-        }
-    }
-
-    let op = match binary.op {
-        BinOp::Eq(_) => "=",
-        BinOp::Ne(_) => "!=",
-        BinOp::Gt(_) => ">",
-        BinOp::Ge(_) => ">=",
-        BinOp::Lt(_) => "<",
-        BinOp::Le(_) => "<=",
-        _ => {
-            return Err(syn::Error::new_spanned(
-                binary.op,
-                "unsupported comparison operator in having",
+                &call.func,
+                "expected aggregate function: count/sum/avg/min/max",
             ));
         }
     };
-    let value: Expr = (*binary.right).clone();
+    // Validate aggregate name.
+    if !matches!(
+        agg.to_lowercase().as_str(),
+        "count" | "sum" | "avg" | "min" | "max"
+    ) {
+        return Err(syn::Error::new_spanned(
+            &call.func,
+            "unsupported aggregate; use count/sum/avg/min/max",
+        ));
+    }
+    let col = call
+        .args
+        .first()
+        .ok_or_else(|| {
+            syn::Error::new_spanned(&call.func, "aggregate function requires a column argument")
+        })?
+        .clone();
+    Ok((agg.to_uppercase(), col))
+}
 
-    Ok(LinqClause::Having {
-        agg: agg.to_uppercase(),
-        col,
-        op: op.to_string(),
-        value,
-    })
+/// Maps a `syn::BinOp` comparison variant to its SQL symbol.
+fn bin_op_to_symbol(op: &BinOp) -> syn::Result<&'static str> {
+    match op {
+        BinOp::Eq(_) => Ok("="),
+        BinOp::Ne(_) => Ok("!="),
+        BinOp::Gt(_) => Ok(">"),
+        BinOp::Ge(_) => Ok(">="),
+        BinOp::Lt(_) => Ok("<"),
+        BinOp::Le(_) => Ok("<="),
+        _ => Err(syn::Error::new_spanned(
+            op,
+            "unsupported comparison operator in having",
+        )),
+    }
 }
 
 /// `set b.col, value`
@@ -855,16 +951,10 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
                 let cols = extract_field_array(&ctx, fields)?;
                 chain = quote! { #chain .select_internal(#cols) };
             }
-            LinqClause::Having {
-                agg,
-                col,
-                op,
-                value,
-            } => {
-                let col_const = extract_field(&ctx, col)?;
-                let val = extract_value(value)?;
+            LinqClause::HavingExpr { expr } => {
+                let having_code = compile_having_expr(expr, &ctx)?;
                 chain = quote! {
-                    #chain .having_internal(#agg, #col_const, #op, rust_ef::provider::DbValue::from(#val))
+                    #chain .having_expr_internal(#having_code)
                 };
             }
             LinqClause::Distinct => {
@@ -1625,4 +1715,105 @@ fn extract_value(expr: &Expr) -> syn::Result<TokenStream2> {
         Expr::Path(p) if p.path.is_ident("None") => Ok(quote! { None::<String> }),
         other => Ok(quote! { #other }),
     }
+}
+
+/// Compiles a `HavingExprAst` into Rust code that constructs the corresponding
+/// `rust_ef::query::HavingExpr` runtime value.
+///
+/// Column references are resolved to `Entity::COLUMN_*` constants via
+/// `extract_field`, and value literals via `extract_value`. Aggregate names
+/// and operators (validated during parsing) are mapped to enum variants.
+fn compile_having_expr(ast: &HavingExprAst, ctx: &LinqCtx<'_>) -> syn::Result<TokenStream2> {
+    match ast {
+        HavingExprAst::Compare {
+            agg,
+            col,
+            op,
+            value,
+        } => {
+            let col_const = extract_field(ctx, col)?;
+            let val = extract_value(value)?;
+            let agg_kind = agg_kind_ident(agg);
+            let op_ident = op_to_ident(op);
+            Ok(quote! {
+                rust_ef::query::HavingExpr::Compare {
+                    agg: rust_ef::query::AggKind::#agg_kind,
+                    col: #col_const.to_string(),
+                    op: rust_ef::query::CompareOp::#op_ident,
+                    value: rust_ef::provider::DbValue::from(#val),
+                }
+            })
+        }
+        HavingExprAst::And(left, right) => {
+            let l = compile_having_expr(left, ctx)?;
+            let r = compile_having_expr(right, ctx)?;
+            Ok(quote! {
+                rust_ef::query::HavingExpr::And(Box::new(#l), Box::new(#r))
+            })
+        }
+        HavingExprAst::Or(left, right) => {
+            let l = compile_having_expr(left, ctx)?;
+            let r = compile_having_expr(right, ctx)?;
+            Ok(quote! {
+                rust_ef::query::HavingExpr::Or(Box::new(#l), Box::new(#r))
+            })
+        }
+        HavingExprAst::Not(inner) => {
+            let i = compile_having_expr(inner, ctx)?;
+            Ok(quote! {
+                rust_ef::query::HavingExpr::Not(Box::new(#i))
+            })
+        }
+        HavingExprAst::CompareAgg {
+            left_agg,
+            left_col,
+            op,
+            right_agg,
+            right_col,
+        } => {
+            let left_col_const = extract_field(ctx, left_col)?;
+            let right_col_const = extract_field(ctx, right_col)?;
+            let left_agg_kind = agg_kind_ident(left_agg);
+            let right_agg_kind = agg_kind_ident(right_agg);
+            let op_ident = op_to_ident(op);
+            Ok(quote! {
+                rust_ef::query::HavingExpr::CompareAgg {
+                    left_agg: rust_ef::query::AggKind::#left_agg_kind,
+                    left_col: #left_col_const.to_string(),
+                    op: rust_ef::query::CompareOp::#op_ident,
+                    right_agg: rust_ef::query::AggKind::#right_agg_kind,
+                    right_col: #right_col_const.to_string(),
+                }
+            })
+        }
+    }
+}
+
+/// Maps an aggregate name (e.g. `"COUNT"`) to the `AggKind` variant ident
+/// (`Count`). Aggregate names are validated during parsing.
+fn agg_kind_ident(agg: &str) -> Ident {
+    let variant = match agg.to_uppercase().as_str() {
+        "COUNT" => "Count",
+        "SUM" => "Sum",
+        "AVG" => "Avg",
+        "MIN" => "Min",
+        "MAX" => "Max",
+        other => unreachable!("invalid aggregate name at codegen: {}", other),
+    };
+    format_ident!("{}", variant)
+}
+
+/// Maps an SQL operator symbol (e.g. `">"`) to the `CompareOp` variant ident
+/// (`Gt`). Operators are validated during parsing.
+fn op_to_ident(op: &str) -> Ident {
+    let variant = match op {
+        "=" => "Eq",
+        "!=" => "Ne",
+        ">" => "Gt",
+        ">=" => "Ge",
+        "<" => "Lt",
+        "<=" => "Le",
+        other => unreachable!("invalid operator at codegen: {}", other),
+    };
+    format_ident!("{}", variant)
 }

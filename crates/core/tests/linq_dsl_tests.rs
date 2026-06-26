@@ -209,6 +209,95 @@ async fn test_group_by_with_having() {
 }
 
 #[tokio::test]
+async fn test_having_with_and() {
+    let mut ctx = seed().await;
+    // tech: count=2 > 1 AND sum(views)=150 > 100 → true
+    // food: count=1 > 1 → false (short-circuit) → excluded
+    let blogs = linq!(
+        ctx.set::<DslBlog>();
+        group_by b.category;
+        having count(b.blog_id) > 1 && sum(b.views) > 100
+    )
+    .to_list()
+    .await
+    .unwrap();
+    assert_eq!(blogs.len(), 1, "only tech group should pass AND condition");
+    assert_eq!(blogs[0].category, "tech");
+}
+
+#[tokio::test]
+async fn test_having_with_or() {
+    let mut ctx = seed().await;
+    // tech: count=2 > 5 → false; sum(views)=150 > 100 → true → true
+    // food: count=1 > 5 → false; sum(views)=10 > 100 → false → false
+    let blogs = linq!(
+        ctx.set::<DslBlog>();
+        group_by b.category;
+        having count(b.blog_id) > 5 || sum(b.views) > 100
+    )
+    .to_list()
+    .await
+    .unwrap();
+    assert_eq!(blogs.len(), 1, "only tech group should pass OR condition");
+    assert_eq!(blogs[0].category, "tech");
+}
+
+#[tokio::test]
+async fn test_having_with_not() {
+    let mut ctx = seed().await;
+    // NOT(count > 1): tech (NOT true = false), food (NOT false = true)
+    let blogs = linq!(
+        ctx.set::<DslBlog>();
+        group_by b.category;
+        having !(count(b.blog_id) > 1)
+    )
+    .to_list()
+    .await
+    .unwrap();
+    assert_eq!(blogs.len(), 1, "only food group should pass NOT condition");
+    assert_eq!(blogs[0].category, "food");
+}
+
+#[tokio::test]
+async fn test_having_compare_agg() {
+    let mut ctx = seed().await;
+    // sum(views) > count(blog_id):
+    //   tech: 150 > 2 → true
+    //   food: 10 > 1 → true
+    let blogs = linq!(
+        ctx.set::<DslBlog>();
+        group_by b.category;
+        having sum(b.views) > count(b.blog_id)
+    )
+    .to_list()
+    .await
+    .unwrap();
+    assert_eq!(
+        blogs.len(),
+        2,
+        "both groups should pass agg-vs-agg comparison"
+    );
+}
+
+#[tokio::test]
+async fn test_having_nested_and_or() {
+    let mut ctx = seed().await;
+    // count > 1 && (sum(views) > 100 || count(blog_id) > 0)
+    //   tech: true && (true || true) → true
+    //   food: false && ... → false
+    let blogs = linq!(
+        ctx.set::<DslBlog>();
+        group_by b.category;
+        having count(b.blog_id) > 1 && (sum(b.views) > 100 || count(b.blog_id) > 0)
+    )
+    .to_list()
+    .await
+    .unwrap();
+    assert_eq!(blogs.len(), 1, "only tech should pass nested AND/OR");
+    assert_eq!(blogs[0].category, "tech");
+}
+
+#[tokio::test]
 async fn test_select_clause_returns_raw_rows() {
     let mut ctx = seed().await;
     let rows: Vec<Vec<String>> =
@@ -274,8 +363,8 @@ async fn test_form_c_filter_produces_bool_expr() {
 async fn test_form_c_index_produces_str_slice() {
     let cols: &'static [&'static str] = linq!(index |b: DslBlog| (b.category, b.rating));
     assert_eq!(cols.len(), 2);
-    assert!(cols.iter().any(|c| *c == "category"));
-    assert!(cols.iter().any(|c| *c == "rating"));
+    assert!(cols.contains(&"category"));
+    assert!(cols.contains(&"rating"));
 }
 
 #[tokio::test]

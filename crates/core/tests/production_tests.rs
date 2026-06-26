@@ -110,6 +110,7 @@ mod production_tests {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     async fn setup_ctx() -> (DbContext, Arc<SqliteProvider>) {
         let provider = Arc::new(SqliteProvider::new(":memory:").unwrap());
         let meta = VersionedItem::entity_meta();
@@ -241,6 +242,7 @@ mod production_tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::type_complexity)]
     async fn test_composite_primary_key_crud() {
         #[derive(Debug, Clone, Default, PartialEq)]
         struct UserRole {
