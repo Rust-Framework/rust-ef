@@ -12,7 +12,8 @@ impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder
             "postgres",
             &cs,
             Arc::new(move |cs: &str| {
-                Ok(Arc::new(crate::provider::PostgresProvider::new(cs, 5)?) as Arc<dyn IDatabaseProvider>)
+                Ok(Arc::new(crate::provider::PostgresProvider::new(cs, 5)?)
+                    as Arc<dyn IDatabaseProvider>)
             }),
         )
     }

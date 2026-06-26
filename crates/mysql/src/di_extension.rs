@@ -12,7 +12,8 @@ impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder
             "mysql",
             &cs,
             Arc::new(move |cs: &str| {
-                Ok(Arc::new(crate::provider::MySqlProvider::new_lazy(cs)?) as Arc<dyn IDatabaseProvider>)
+                Ok(Arc::new(crate::provider::MySqlProvider::new_lazy(cs)?)
+                    as Arc<dyn IDatabaseProvider>)
             }),
         )
     }

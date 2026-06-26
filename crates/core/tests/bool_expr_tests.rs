@@ -73,9 +73,8 @@ mod bool_expr_tests {
         state.parameters.push(DbValue::I32(3));
         state.parameters.push(DbValue::I32(1));
         state.where_expr = Some(
-            BoolExpr::Filter(FilterCondition::new("rating", ">", 1)).or(BoolExpr::Filter(
-                FilterCondition::new("featured", "=", 1),
-            )),
+            BoolExpr::Filter(FilterCondition::new("rating", ">", 1))
+                .or(BoolExpr::Filter(FilterCondition::new("featured", "=", 1))),
         );
         let sql = state.to_sql();
         assert!(sql.contains("OR"));

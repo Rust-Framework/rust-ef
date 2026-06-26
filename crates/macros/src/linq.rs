@@ -45,6 +45,7 @@ use syn::{
 // ---------------------------------------------------------------------------
 
 /// Top-level dispatch: query form (A/B) vs. value form (C).
+#[allow(clippy::large_enum_variant)]
 enum LinqInput {
     Query(QueryInput),
     Value(ValueInput),
@@ -73,7 +74,11 @@ struct LinqOrder {
 /// Form C value-producing inputs.
 enum ValueInput {
     /// `linq!(filter |b: T| <bool_expr>)` → `BoolExpr`
-    Filter { entity: Type, param: Ident, body: Expr },
+    Filter {
+        entity: Type,
+        param: Ident,
+        body: Expr,
+    },
     /// `linq!(index |b: T| (f1, f2, ...))` → `&'static [&'static str]`
     Index { entity: Type, fields: Vec<Expr> },
     /// `linq!(key |b: T| (f1, f2, ...))` → `&'static [&'static str]`
@@ -91,7 +96,12 @@ enum LinqClause {
     /// `select (b.id, b.title)` or `select b.id`
     Select { fields: Vec<Expr> },
     /// `having count(b.id) > 1`
-    Having { agg: String, col: Expr, op: String, value: Expr },
+    Having {
+        agg: String,
+        col: Expr,
+        op: String,
+        value: Expr,
+    },
     /// `sum b.views` (terminal)
     Sum(Expr),
     /// `avg b.rating` (terminal)
@@ -107,9 +117,17 @@ enum LinqClause {
     /// `set b.views, 10` (only valid before `execute_update`)
     Set { field: Expr, value: Expr },
     /// `inner_join |a: T1, b: T2| a.col == b.col`
-    InnerJoin { params: Vec<(Ident, Type)>, left: Expr, right: Expr },
+    InnerJoin {
+        params: Vec<(Ident, Type)>,
+        left: Expr,
+        right: Expr,
+    },
     /// `left_join |a: T1, b: T2| a.col == b.col`
-    LeftJoin { params: Vec<(Ident, Type)>, left: Expr, right: Expr },
+    LeftJoin {
+        params: Vec<(Ident, Type)>,
+        left: Expr,
+        right: Expr,
+    },
     /// `execute_update` (terminal, triggers bulk update)
     ExecuteUpdate,
     /// `take N`
@@ -170,7 +188,11 @@ fn parse_value_filter(input: syn::parse::ParseStream) -> syn::Result<ValueInput>
 
     let body: Expr = input.parse()?;
 
-    Ok(ValueInput::Filter { entity, param, body })
+    Ok(ValueInput::Filter {
+        entity,
+        param,
+        body,
+    })
 }
 
 /// Parses `index |b: T| <field_or_tuple>` or `key |b: T| <field_or_tuple>`.
@@ -365,9 +387,7 @@ fn expr_as_entity_type(expr: &Expr) -> syn::Result<Type> {
 }
 
 /// Parses `|param: Type| body` — returns (entity_type, param, body).
-fn parse_typed_closure(
-    input: syn::parse::ParseStream,
-) -> syn::Result<(Type, Ident, Expr)> {
+fn parse_typed_closure(input: syn::parse::ParseStream) -> syn::Result<(Type, Ident, Expr)> {
     let _open: Token![|] = input.parse()?;
     let param: Ident = input.parse()?;
     let _colon: Token![:] = input.parse()?;
@@ -378,9 +398,7 @@ fn parse_typed_closure(
 }
 
 /// Parses `|param| body` — returns (param, body). Entity type inferred from context.
-fn parse_untyped_closure(
-    input: syn::parse::ParseStream,
-) -> syn::Result<(Ident, Expr)> {
+fn parse_untyped_closure(input: syn::parse::ParseStream) -> syn::Result<(Ident, Expr)> {
     let _open: Token![|] = input.parse()?;
     let param: Ident = input.parse()?;
     let _close: Token![|] = input.parse()?;
@@ -584,9 +602,7 @@ fn parse_having_rest(input: syn::parse::ParseStream) -> syn::Result<LinqClause> 
     let (agg, col) = match &*binary.left {
         Expr::Call(ExprCall { func, args, .. }) => {
             let agg = match &**func {
-                Expr::Path(p) if p.path.segments.len() == 1 => {
-                    p.path.segments[0].ident.to_string()
-                }
+                Expr::Path(p) if p.path.segments.len() == 1 => p.path.segments[0].ident.to_string(),
                 _ => {
                     return Err(syn::Error::new_spanned(
                         func,
@@ -683,9 +699,17 @@ fn parse_join_rest(input: syn::parse::ParseStream, is_left: bool) -> syn::Result
     let right: Expr = (*binary.right).clone();
 
     if is_left {
-        Ok(LinqClause::LeftJoin { params, left, right })
+        Ok(LinqClause::LeftJoin {
+            params,
+            left,
+            right,
+        })
     } else {
-        Ok(LinqClause::InnerJoin { params, left, right })
+        Ok(LinqClause::InnerJoin {
+            params,
+            left,
+            right,
+        })
     }
 }
 
@@ -831,7 +855,12 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
                 let cols = extract_field_array(&ctx, fields)?;
                 chain = quote! { #chain .select_internal(#cols) };
             }
-            LinqClause::Having { agg, col, op, value } => {
+            LinqClause::Having {
+                agg,
+                col,
+                op,
+                value,
+            } => {
                 let col_const = extract_field(&ctx, col)?;
                 let val = extract_value(value)?;
                 chain = quote! {
@@ -847,11 +876,19 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
             LinqClause::Skip(n) => {
                 chain = quote! { #chain .skip(#n) };
             }
-            LinqClause::InnerJoin { params, left, right } => {
+            LinqClause::InnerJoin {
+                params,
+                left,
+                right,
+            } => {
                 let (table, left_col, right_col) = expand_join(params, left, right)?;
                 chain = quote! { #chain .inner_join_internal(#table, #left_col, #right_col) };
             }
-            LinqClause::LeftJoin { params, left, right } => {
+            LinqClause::LeftJoin {
+                params,
+                left,
+                right,
+            } => {
                 let (table, left_col, right_col) = expand_join(params, left, right)?;
                 chain = quote! { #chain .left_join_internal(#table, #left_col, #right_col) };
             }
@@ -863,7 +900,9 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
                 }
                 let col = extract_field(&ctx, field)?;
                 let val = extract_value(value)?;
-                set_clauses.push(quote! { .set_column_internal(#col, rust_ef::provider::DbValue::from(#val)) });
+                set_clauses.push(
+                    quote! { .set_column_internal(#col, rust_ef::provider::DbValue::from(#val)) },
+                );
             }
             LinqClause::ExecuteUpdate => {
                 if !in_update_mode {
@@ -962,16 +1001,16 @@ fn extract_field_name_only(expr: &Expr) -> syn::Result<String> {
 
 fn expand_value(input: &ValueInput) -> syn::Result<TokenStream2> {
     match input {
-        ValueInput::Filter { entity, param, body } => {
+        ValueInput::Filter {
+            entity,
+            param,
+            body,
+        } => {
             let ctx = LinqCtx::single(entity, Some(param));
             compile_bool_expr(&ctx, body)
         }
-        ValueInput::Index { entity, fields } => {
-            expand_field_array(entity, fields)
-        }
-        ValueInput::Key { entity, fields } => {
-            expand_field_array(entity, fields)
-        }
+        ValueInput::Index { entity, fields } => expand_field_array(entity, fields),
+        ValueInput::Key { entity, fields } => expand_field_array(entity, fields),
     }
 }
 
@@ -1333,9 +1372,7 @@ fn compile_negated_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<Tok
     match expr {
         Expr::Group(g) => compile_negated_comparison(ctx, &g.expr),
         Expr::Paren(p) => compile_negated_comparison(ctx, &p.expr),
-        Expr::MethodCall(call) if call.method == "contains" => {
-            compile_contains(ctx, call, true)
-        }
+        Expr::MethodCall(call) if call.method == "contains" => compile_contains(ctx, call, true),
         Expr::Binary(b) => {
             let op = match b.op {
                 BinOp::Eq(_) => "=",
@@ -1370,9 +1407,10 @@ fn compile_contains(
     call: &ExprMethodCall,
     negate: bool,
 ) -> syn::Result<TokenStream2> {
-    let arg = call.args.first().ok_or_else(|| {
-        syn::Error::new_spanned(call, "`.contains()` requires one argument")
-    })?;
+    let arg = call
+        .args
+        .first()
+        .ok_or_else(|| syn::Error::new_spanned(call, "`.contains()` requires one argument"))?;
 
     if let Ok(column) = extract_field(ctx, arg) {
         let values = extract_value(&call.receiver)?;
@@ -1559,9 +1597,7 @@ fn type_path_matches(path: &syn::Path, entity: &Type) -> bool {
     } else {
         String::new()
     };
-    path.segments
-        .last()
-        .is_some_and(|s| s.ident == entity_name)
+    path.segments.last().is_some_and(|s| s.ident == entity_name)
 }
 
 /// Generates `Entity::COLUMN_<UPPER>` or `Entity::FIELD_<UPPER>` depending on `kind`.

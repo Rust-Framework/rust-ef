@@ -3,8 +3,8 @@
 //! These types form the metadata layer of rust-ef, analogous to EFCore's
 //! `IEntityType`, `IProperty`, `INavigation`, etc.
 
-use std::borrow::Cow;
 use std::any::TypeId;
+use std::borrow::Cow;
 
 // ---------------------------------------------------------------------------
 // PropertyMeta ?describes a single column / property

@@ -125,7 +125,11 @@ pub struct DbValueConvertError {
 
 impl fmt::Display for DbValueConvertError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "cannot convert {:?} to {}", self.source, self.target_type)
+        write!(
+            f,
+            "cannot convert {:?} to {}",
+            self.source, self.target_type
+        )
     }
 }
 

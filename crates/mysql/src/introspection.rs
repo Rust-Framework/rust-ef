@@ -74,7 +74,10 @@ pub async fn introspect_mysql(connection_string: &str) -> EFResult<Vec<DbTable>>
             });
         }
 
-        tables.push(DbTable { name: table_name, columns });
+        tables.push(DbTable {
+            name: table_name,
+            columns,
+        });
     }
 
     Ok(tables)

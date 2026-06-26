@@ -79,7 +79,12 @@ mod linq_tests {
 
         let ids = [8i32, 2];
         let in_expr = linq!(|b: LinqBlog| ids.contains(b.rating));
-        let rows = ctx.set::<LinqBlog>().filter(in_expr).to_list().await.unwrap();
+        let rows = ctx
+            .set::<LinqBlog>()
+            .filter(in_expr)
+            .to_list()
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 2);
     }
 
@@ -161,19 +166,18 @@ mod linq_tests {
         });
         ctx.save_changes().await.unwrap();
 
-        let dotnet = linq!(
-            ctx.set::<LinqBlog>(),
-            |b: LinqBlog| b.url.contains("dotnet") && !(b.rating < 3)
-        )
+        let dotnet = linq!(ctx.set::<LinqBlog>(), |b: LinqBlog| b
+            .url
+            .contains("dotnet")
+            && !(b.rating < 3))
         .to_list()
         .await
         .unwrap();
         assert_eq!(dotnet.len(), 1);
 
-        let either = linq!(
-            ctx.set::<LinqBlog>(),
-            |b: LinqBlog| (b.rating > 5 || b.rating < 3) && b.active
-        )
+        let either = linq!(ctx.set::<LinqBlog>(), |b: LinqBlog| (b.rating > 5
+            || b.rating < 3)
+            && b.active)
         .to_list()
         .await
         .unwrap();

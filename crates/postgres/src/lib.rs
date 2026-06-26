@@ -10,7 +10,7 @@ pub mod type_mapping;
 
 pub use connection::PostgresConnection;
 pub use di_extension::DbContextOptionsBuilderExt;
-pub use introspection::{DbColumn, DbTable, introspect_postgres};
+pub use introspection::{introspect_postgres, DbColumn, DbTable};
 pub use provider::PostgresProvider;
 pub use sql_generator::PostgresSqlGenerator;
 pub use type_mapping::PostgresTypeMapping;

@@ -86,9 +86,7 @@ impl ISqlGenerator for PostgresSqlGenerator {
     fn create_table(&self, table: &str, columns: &[(String, String)]) -> String {
         let col_defs: Vec<String> = columns
             .iter()
-            .map(|(name, type_def)| {
-                format!("{} {}", self.quote_identifier(name), type_def)
-            })
+            .map(|(name, type_def)| format!("{} {}", self.quote_identifier(name), type_def))
             .collect();
         format!(
             "CREATE TABLE {} (\n    {}\n)",

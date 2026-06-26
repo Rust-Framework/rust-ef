@@ -1,6 +1,6 @@
 //! Eager-loading of navigation properties via secondary queries.
 
-use crate::entity::{IEntitySnapshot, IFromRow, INavigationSetter, IEntityType, IGetKeyValues};
+use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use crate::error::EFResult;
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
 use crate::provider::{DbValue, IDatabaseProvider};
@@ -9,7 +9,9 @@ use std::any::TypeId;
 use std::collections::HashMap;
 
 /// Builds include paths from navigation field names using entity metadata.
-pub fn include_paths_for<T: IEntityType, S: AsRef<str>>(navigation_names: &[S]) -> Vec<IncludePath> {
+pub fn include_paths_for<T: IEntityType, S: AsRef<str>>(
+    navigation_names: &[S],
+) -> Vec<IncludePath> {
     let meta = T::entity_meta();
     navigation_names
         .iter()
@@ -312,9 +314,7 @@ fn group_join_rows(
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
     for row in rows {
         if let (Some(parent), Some(related)) = (row.get(parent_index), row.get(related_index)) {
-            map.entry(parent.clone())
-                .or_default()
-                .push(related.clone());
+            map.entry(parent.clone()).or_default().push(related.clone());
         }
     }
     map

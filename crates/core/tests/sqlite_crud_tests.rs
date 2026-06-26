@@ -6,11 +6,11 @@
 #[cfg(test)]
 mod sqlite_crud {
     use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
-    use rust_ef::linq;
-    use rust_ef::prelude::*;
     use rust_ef::error::EFResult;
+    use rust_ef::linq;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
+    use rust_ef::prelude::*;
     use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
     use rust_ef_sqlite::SqliteProvider;
     use std::collections::HashMap;
@@ -181,9 +181,10 @@ mod sqlite_crud {
         let mut conn: Box<dyn IAsyncConnection> =
             arc_provider.get_connection().await.expect("get connection");
         conn.begin_transaction().await.expect("begin tx");
-        let (added, _, _) = rust_ef::db_context::save_one_set(&mut *conn, &*arc_provider, &mut db_set)
-            .await
-            .expect("save");
+        let (added, _, _) =
+            rust_ef::db_context::save_one_set(&mut *conn, &*arc_provider, &mut db_set)
+                .await
+                .expect("save");
         conn.commit_transaction().await.expect("commit");
         assert_eq!(added, 2);
         db_set.clear_entries();
@@ -397,10 +398,14 @@ mod sqlite_crud {
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
-        let sum = linq!(db_set.query(), |b: TestItem| true; sum b.value).await.unwrap();
+        let sum = linq!(db_set.query(), |b: TestItem| true; sum b.value)
+            .await
+            .unwrap();
         assert!((sum - 15.0).abs() < 0.01, "sum should be 15.0, got {}", sum);
 
-        let avg = linq!(db_set.query(), |b: TestItem| true; avg b.value).await.unwrap();
+        let avg = linq!(db_set.query(), |b: TestItem| true; avg b.value)
+            .await
+            .unwrap();
         assert!((avg - 3.0).abs() < 0.01, "avg should be 3.0, got {}", avg);
     }
 

@@ -37,6 +37,7 @@ use std::sync::Arc;
 pub struct DbContextOptions {
     pub(crate) connection_string: String,
     pub(crate) provider_tag: Option<String>,
+    #[allow(clippy::type_complexity)]
     pub(crate) provider_factory:
         Option<Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync>>,
     pub(crate) interceptors: Vec<Arc<dyn crate::interceptor::ISaveChangesInterceptor>>,
@@ -68,6 +69,7 @@ impl DbContextOptions {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for DbContextOptions {
     fn default() -> Self {
         Self {
@@ -98,6 +100,7 @@ impl DbContextOptionsBuilder {
         self.inner.connection_string = cs.into();
         self
     }
+    #[allow(clippy::type_complexity)]
     pub fn set_provider_factory(
         &mut self,
         tag: &str,
@@ -171,7 +174,14 @@ impl<E> SetOps<E> {
 #[async_trait::async_trait]
 impl<E> ErasedSetOps for SetOps<E>
 where
-    E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow + INavigationSetter + Send + Sync + 'static,
+    E: IEntityType
+        + IEntitySnapshot
+        + IGetKeyValues
+        + IFromRow
+        + INavigationSetter
+        + Send
+        + Sync
+        + 'static,
 {
     async fn save(
         &self,
@@ -245,10 +255,8 @@ impl DbContext {
             .or_insert_with(T::entity_meta);
         self.sets.entry(type_id).or_insert_with(|| {
             let meta = T::entity_meta();
-            let mut db_set = DbSet::<T>::with_provider(
-                meta.table_name.as_ref(),
-                Arc::clone(&self.provider),
-            );
+            let mut db_set =
+                DbSet::<T>::with_provider(meta.table_name.as_ref(), Arc::clone(&self.provider));
             if let Some(filter) = self.model_builder.get_query_filter(&type_id) {
                 db_set.set_query_filter(filter.clone());
             }
@@ -283,8 +291,7 @@ impl DbContext {
         let metas: Vec<EntityTypeMeta> = self.entity_metas.values().cloned().collect();
         if metas.is_empty() {
             return Err(EFError::Configuration(
-                "No entity types registered. Call ctx.set::<T>() before ensure_created()."
-                    .into(),
+                "No entity types registered. Call ctx.set::<T>() before ensure_created().".into(),
             ));
         }
         let dialect = self.provider.migration_dialect();
@@ -309,8 +316,7 @@ impl DbContext {
         let metas: Vec<EntityTypeMeta> = self.entity_metas.values().cloned().collect();
         if metas.is_empty() {
             return Err(EFError::Configuration(
-                "No entity types registered. Call ctx.set::<T>() before ensure_deleted()."
-                    .into(),
+                "No entity types registered. Call ctx.set::<T>() before ensure_deleted().".into(),
             ));
         }
         let dialect = self.provider.migration_dialect();
@@ -384,7 +390,10 @@ impl IDbContext for DbContext {
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         for type_id in &type_ids {
             let set = self.sets.get_mut(type_id).unwrap();
-            self.savers.get(type_id).unwrap().detect_changes(set.as_mut());
+            self.savers
+                .get(type_id)
+                .unwrap()
+                .detect_changes(set.as_mut());
         }
 
         // --- Interceptor: on_saving (pre-commit) ---
@@ -450,6 +459,7 @@ impl IDbContext for DbContext {
 // save_one_set
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 pub async fn save_one_set<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,

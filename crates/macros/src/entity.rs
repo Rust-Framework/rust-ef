@@ -2,7 +2,9 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, GenericArgument, LitStr, PathArguments, Type};
+use syn::{
+    parse_macro_input, Data, DeriveInput, Fields, GenericArgument, LitStr, PathArguments, Type,
+};
 
 pub fn expand_entity_type(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -97,20 +99,11 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 }
             };
             let fk_field = extract_foreign_key_field_name(&field.attrs);
-            let parent_pk_col = pk_column_names
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("id");
-            let parent_fk_col = fk_column_names
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("id");
+            let parent_pk_col = pk_column_names.first().map(|s| s.as_str()).unwrap_or("id");
+            let parent_fk_col = fk_column_names.first().map(|s| s.as_str()).unwrap_or("id");
             let parent_type_name = struct_name.to_string();
             let related_type_name = type_ident_string(inner_type);
-            let fk_const = syn::Ident::new(
-                &format!("FK_{}", parent_type_name),
-                struct_name.span(),
-            );
+            let fk_const = syn::Ident::new(&format!("FK_{}", parent_type_name), struct_name.span());
 
             navigation_builders.push(match nav_kind {
                 NavigationDiscriminant::ManyToMany => {
@@ -308,12 +301,10 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 fk_column_names.push(column_name.clone());
                 if let Some(target) = extract_foreign_key_target(&field.attrs) {
                     let target_ident = syn::Ident::new(&target, field_name.span());
-                    let fk_ident = syn::Ident::new(
-                        &format!("FK_{}", target),
-                        field_name.span(),
-                    );
+                    let fk_ident = syn::Ident::new(&format!("FK_{}", target), field_name.span());
                     let col = column_name.clone();
                     fk_const_decls.push(quote! {
+                        #[allow(non_upper_case_globals)]
                         pub const #fk_ident: &'static str = #col;
                     });
                     fk_index_arms.push(quote! {
@@ -714,7 +705,8 @@ fn generate_parse_expr(ty: &Type, type_str: &str, idx: syn::Index) -> proc_macro
                 if let PathArguments::AngleBracketed(args) = &seg.arguments {
                     if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
                         let inner_type_str = quote!(#inner_ty).to_string();
-                        let inner_parse = generate_scalar_parse(&inner_type_str, inner_ty, idx.clone());
+                        let inner_parse =
+                            generate_scalar_parse(&inner_type_str, inner_ty, idx.clone());
                         return quote! {
                             {
                                 let v = &values[#idx];

@@ -35,13 +35,16 @@ let expr = linq!(|b: Blog| b.rating > 5);
 
 ## 4. `ensure_created()` 在 `set::<T>()` 之前调用
 
+rust-ef 与 EFCore 的关键差异：EFCore 通过 `DbContext` 的 `DbSet<T>` 静态属性预先声明实体类型，模型在 `OnModelCreating` 中构建完备；rust-ef 无静态 `DbSet<T>` 属性，模型通过 `set::<T>()` 调用动态构建（`entity_metas` 在 `set::<T>()` 时填充）。因此 `ensure_created()` 必须在所有 `set::<T>()` 注册完成后调用，否则 `entity_metas` 为空会报 `No entity types registered`。
+
 ```rust
-// ❌ 错误：不知道要建哪些表
+// ❌ 错误：entity_metas 为空，ensure_created 报 "No entity types registered"
 ctx.ensure_created().await?;
 ctx.set::<Blog>();
 
-// ✅ 正确
+// ✅ 正确：先注册所有实体，再建表
 ctx.set::<Blog>();
+ctx.set::<Post>();
 ctx.ensure_created().await?;
 ```
 

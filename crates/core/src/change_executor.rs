@@ -72,6 +72,7 @@ impl ChangeExecutor {
 
     /// Executes UPDATE statements for all modified entities.
     /// Uses original snapshots for optimistic concurrency tokens in the WHERE clause.
+    #[allow(clippy::type_complexity)]
     pub async fn execute_updates<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
@@ -143,6 +144,7 @@ impl ChangeExecutor {
     }
 
     /// Executes DELETE statements for all deleted entities.
+    #[allow(clippy::type_complexity)]
     pub async fn execute_deletes<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
@@ -167,13 +169,8 @@ impl ChangeExecutor {
                 .filter(|p| p.is_concurrency_token)
                 .collect();
 
-            let (where_clause, where_params) = build_where_with_concurrency(
-                &*gen,
-                &keys,
-                &concurrency_tokens,
-                *original,
-                1,
-            )?;
+            let (where_clause, where_params) =
+                build_where_with_concurrency(&*gen, &keys, &concurrency_tokens, *original, 1)?;
 
             let sql = gen.delete(meta.table_name.as_ref(), &where_clause);
             let rows = conn.execute(&sql, &where_params).await?;

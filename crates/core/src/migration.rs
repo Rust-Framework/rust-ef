@@ -72,20 +72,16 @@ impl MigrationDialect {
     /// Map a Rust type name to the dialect-specific column type.
     pub fn map_column_type(&self, col: &SnapshotColumn) -> String {
         let base = match (col.type_name.as_str(), col.max_length) {
-            ("i32", _) if col.is_auto_increment => {
-                match self {
-                    MigrationDialect::Postgres => "SERIAL",
-                    MigrationDialect::MySql => "INT AUTO_INCREMENT",
-                    MigrationDialect::Sqlite => "INTEGER",
-                }
-            }
-            ("i64", _) if col.is_auto_increment => {
-                match self {
-                    MigrationDialect::Postgres => "BIGSERIAL",
-                    MigrationDialect::MySql => "BIGINT AUTO_INCREMENT",
-                    MigrationDialect::Sqlite => "INTEGER",
-                }
-            }
+            ("i32", _) if col.is_auto_increment => match self {
+                MigrationDialect::Postgres => "SERIAL",
+                MigrationDialect::MySql => "INT AUTO_INCREMENT",
+                MigrationDialect::Sqlite => "INTEGER",
+            },
+            ("i64", _) if col.is_auto_increment => match self {
+                MigrationDialect::Postgres => "BIGSERIAL",
+                MigrationDialect::MySql => "BIGINT AUTO_INCREMENT",
+                MigrationDialect::Sqlite => "INTEGER",
+            },
             ("i16", _) => "SMALLINT",
             ("i32", _) => "INTEGER",
             ("i64", _) => "BIGINT",
@@ -163,9 +159,7 @@ impl MigrationEngine {
 
         let changes = match previous_snapshot {
             Some(prev) => self.diff(prev, &current_snapshot),
-            None => {
-                self.initial_create_with_fks(&current_snapshot)
-            }
+            None => self.initial_create_with_fks(&current_snapshot),
         };
 
         let up_sql = self.generate_up_sql(&changes);
@@ -328,7 +322,11 @@ impl MigrationEngine {
         changes
     }
 
-    fn append_create_table_fks(changes: &mut Vec<SchemaChange>, table: &str, columns: &[SnapshotColumn]) {
+    fn append_create_table_fks(
+        changes: &mut Vec<SchemaChange>,
+        table: &str,
+        columns: &[SnapshotColumn],
+    ) {
         for col in columns {
             if let Some((ref_table, ref_col)) = fk_target(col) {
                 changes.push(SchemaChange::AddForeignKey {
@@ -561,7 +559,11 @@ impl MigrationEngine {
                 }
                 SchemaChange::AddColumn { table, column } => {
                     let col_type = self.dialect.map_column_type(column);
-                    let nullable = if column.is_required { "NOT NULL" } else { "NULL" };
+                    let nullable = if column.is_required {
+                        "NOT NULL"
+                    } else {
+                        "NULL"
+                    };
                     sql.push_str(&format!(
                         "ALTER TABLE {} ADD COLUMN {} {} {};\n",
                         q(table),
@@ -737,9 +739,7 @@ impl MigrationEngine {
             return Ok(());
         }
         self.ensure_history_table(provider).await?;
-        let sql = migration
-            .up_sql
-            .replace("{migration_id}", &migration.id);
+        let sql = migration.up_sql.replace("{migration_id}", &migration.id);
         for statement in split_sql_statements(&sql) {
             if !statement.is_empty() {
                 provider.execute_migration_command(&statement).await?;
@@ -760,9 +760,7 @@ impl MigrationEngine {
                 migration.id
             )));
         }
-        let sql = migration
-            .down_sql
-            .replace("{migration_id}", &migration.id);
+        let sql = migration.down_sql.replace("{migration_id}", &migration.id);
         for statement in split_sql_statements(&sql) {
             if !statement.is_empty() {
                 provider.execute_migration_command(&statement).await?;
@@ -841,15 +839,12 @@ impl MigrationEngine {
         let Some(last_id) = last else {
             return Ok(None);
         };
-        let migration = migrations
-            .iter()
-            .find(|m| m.id == last_id)
-            .ok_or_else(|| {
-                crate::error::EFError::Migration(format!(
-                    "applied migration '{}' not found in local migration set",
-                    last_id
-                ))
-            })?;
+        let migration = migrations.iter().find(|m| m.id == last_id).ok_or_else(|| {
+            crate::error::EFError::Migration(format!(
+                "applied migration '{}' not found in local migration set",
+                last_id
+            ))
+        })?;
         self.revert(provider, migration).await?;
         Ok(Some(last_id))
     }
@@ -921,12 +916,7 @@ impl MigrationEngine {
                 })
                 .collect();
 
-            let sql = seed_insert_sql(
-                self.dialect,
-                meta.table_name.as_ref(),
-                &col_names,
-                &*gen,
-            );
+            let sql = seed_insert_sql(self.dialect, meta.table_name.as_ref(), &col_names, &*gen);
             conn.execute(&sql, &params).await?;
         }
         Ok(())
@@ -955,25 +945,22 @@ fn seed_insert_sql(
     gen: &dyn crate::provider::ISqlGenerator,
 ) -> String {
     let quoted_table = dialect.quote(table);
-    let quoted_cols: Vec<String> = columns
-        .iter()
-        .map(|c| dialect.quote(c))
-        .collect();
+    let quoted_cols: Vec<String> = columns.iter().map(|c| dialect.quote(c)).collect();
     let placeholders: Vec<String> = (0..columns.len())
         .map(|i| gen.parameter_placeholder(i + 1))
         .collect();
     let cols = quoted_cols.join(", ");
     let vals = placeholders.join(", ");
     match dialect {
-        MigrationDialect::Sqlite => format!(
-            "INSERT OR IGNORE INTO {quoted_table} ({cols}) VALUES ({vals})"
-        ),
-        MigrationDialect::Postgres => format!(
-            "INSERT INTO {quoted_table} ({cols}) VALUES ({vals}) ON CONFLICT DO NOTHING"
-        ),
-        MigrationDialect::MySql => format!(
-            "INSERT IGNORE INTO {quoted_table} ({cols}) VALUES ({vals})"
-        ),
+        MigrationDialect::Sqlite => {
+            format!("INSERT OR IGNORE INTO {quoted_table} ({cols}) VALUES ({vals})")
+        }
+        MigrationDialect::Postgres => {
+            format!("INSERT INTO {quoted_table} ({cols}) VALUES ({vals}) ON CONFLICT DO NOTHING")
+        }
+        MigrationDialect::MySql => {
+            format!("INSERT IGNORE INTO {quoted_table} ({cols}) VALUES ({vals})")
+        }
     }
 }
 
@@ -1164,14 +1151,13 @@ fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
 
 fn snapshot_from_json(text: &str) -> EFResult<Option<ModelSnapshot>> {
     // Minimal JSON parser for snapshot files written by save_snapshot.
-    let migration_id = extract_json_string(text, "migration_id")
-        .unwrap_or_else(|| "__snapshot__".to_string());
+    let migration_id =
+        extract_json_string(text, "migration_id").unwrap_or_else(|| "__snapshot__".to_string());
     let mut entity_types = Vec::new();
     if let Some(arr_start) = text.find("\"entity_types\"") {
         let slice = &text[arr_start..];
         for table_block in slice.split("\"table_name\"").skip(1) {
-            let table_name = extract_quoted_after_colon(table_block)
-                .unwrap_or_default();
+            let table_name = extract_quoted_after_colon(table_block).unwrap_or_default();
             let _type_name = entity_types.len().to_string(); // fallback
             let columns_start = table_block.find("\"columns\"");
             let mut columns = Vec::new();
@@ -1192,8 +1178,14 @@ fn snapshot_from_json(text: &str) -> EFResult<Option<ModelSnapshot>> {
                             is_foreign_key: col_chunk.contains("\"is_foreign_key\":true"),
                             max_length: None,
                             is_auto_increment: col_chunk.contains("\"is_auto_increment\":true"),
-                            fk_referenced_table: extract_json_string(col_chunk, "fk_referenced_table"),
-                            fk_referenced_column: extract_json_string(col_chunk, "fk_referenced_column"),
+                            fk_referenced_table: extract_json_string(
+                                col_chunk,
+                                "fk_referenced_table",
+                            ),
+                            fk_referenced_column: extract_json_string(
+                                col_chunk,
+                                "fk_referenced_column",
+                            ),
                         });
                     }
                 }

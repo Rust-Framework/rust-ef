@@ -5,7 +5,9 @@
 //!   - `IQueryable<T>` �?query capabilities
 //!   - `IDbSet<T>`     �?collection mutation capabilities
 
-use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use crate::entity::{
+    EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
+};
 use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 use crate::query::{BoolExpr, IQueryable, QueryBuilder};
@@ -162,11 +164,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
         T: PartialEq,
     {
         for entity in entities {
-            if let Some(entry) = self
-                .entries
-                .iter_mut()
-                .find(|e| e.entity == *entity)
-            {
+            if let Some(entry) = self.entries.iter_mut().find(|e| e.entity == *entity) {
                 entry.state = EntityState::Deleted;
             }
         }

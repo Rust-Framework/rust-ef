@@ -10,7 +10,7 @@ pub mod type_mapping;
 
 pub use connection::MySqlConnection;
 pub use di_extension::DbContextOptionsBuilderExt;
-pub use introspection::{DbColumn, DbTable, introspect_mysql};
+pub use introspection::{introspect_mysql, DbColumn, DbTable};
 pub use provider::MySqlProvider;
 pub use sql_generator::MySqlSqlGenerator;
 pub use type_mapping::MySqlTypeMapping;

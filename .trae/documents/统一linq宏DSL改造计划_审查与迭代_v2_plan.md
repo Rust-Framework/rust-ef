@@ -338,3 +338,22 @@ cargo test --workspace                              # 全工作区全绿
 ---
 
 *本 v2 审查基于 2026-06-26 代码库实际状态，所有行号引用均经 Read/Grep 工具直接验证。v1 已完成项经逐文件核对确认，G5 经 `last_or_default` 源码阅读 + 失败测试断言对照确认，G6 经全工作区 Grep 扫描确认。*
+
+---
+
+## v3 补遗（2026-06-26）
+
+**v3 审查范围**：对 v2 验收清单未执行所暴露的遗漏 + 用户二次反馈的 3 项跨切面问题。
+
+**v3 已完成项**：
+- G7（3 文档残留：one-to-many.md / INDEX.md / INDEX.json）—— 已修复
+- G8（entity.rs FK 常量 clippy 告警）—— 已加 `#[allow(non_upper_case_globals)]`
+- G10（common-pitfalls.md #4 重写）—— 已补充 EFCore 差异根因
+- G11（change-tracker.md 已知限制）—— 已追加「与 EFCore 的差异」
+- G12（let-binding 推迟项）—— 已追加到原计划 §5.3
+
+**v3 未完成的验证**（由 v4 接管）：
+- G9（最终验证）：因前置 clippy/fmt 错误（v4 G13/G14）未执行
+- v3 补遗归档：本节即补遗
+
+**v4 接续**：见 `统一linq宏DSL改造计划_审查与迭代_v4_plan.md`，处理 G13/G14/G15 + 完成 G9 验证。

@@ -2,7 +2,8 @@
 
 mod scaffold;
 
-use clap::{Parser, Subcommand};use rust_ef::error::{EFError, EFResult};
+use clap::{Parser, Subcommand};
+use rust_ef::error::{EFError, EFResult};
 use rust_ef::metadata::EntityTypeMeta;
 use rust_ef::migration::{
     parse_model_snapshot_json, MigrationDialect, MigrationEngine, MigrationStore, ModelSnapshot,
@@ -133,9 +134,10 @@ async fn main() -> Result<(), EFError> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Migration { command } => match command {
-            MigrationCommands::Init { connection, provider } => {
-                cmd_init(&connection, provider).await
-            }
+            MigrationCommands::Init {
+                connection,
+                provider,
+            } => cmd_init(&connection, provider).await,
             MigrationCommands::Add {
                 name,
                 dir,
@@ -179,9 +181,14 @@ async fn cmd_init(connection: &str, provider: ProviderArg) -> EFResult<()> {
     Ok(())
 }
 
-fn cmd_add(name: &str, dir: &PathBuf, snapshot_path: &PathBuf, dialect: DialectArg) -> EFResult<()> {
-    let text = std::fs::read_to_string(snapshot_path)
-        .map_err(|e| EFError::Migration(e.to_string()))?;
+fn cmd_add(
+    name: &str,
+    dir: &PathBuf,
+    snapshot_path: &PathBuf,
+    dialect: DialectArg,
+) -> EFResult<()> {
+    let text =
+        std::fs::read_to_string(snapshot_path).map_err(|e| EFError::Migration(e.to_string()))?;
     let target_snapshot = parse_model_snapshot_json(&text)?.ok_or_else(|| {
         EFError::Migration("snapshot must describe at least one entity type".into())
     })?;
@@ -268,53 +275,49 @@ fn cmd_script(name: &str, dir: &PathBuf) -> EFResult<()> {
 async fn cmd_scaffold_dbcontext(
     connection: &str,
     provider: ProviderArg,
-    output: &PathBuf,
+    #[allow(clippy::ptr_arg)] output: &PathBuf,
 ) -> EFResult<()> {
     let kind = match provider {
         ProviderArg::Auto => detect_provider(connection),
         other => other,
     };
     let tables: Vec<scaffold::ScaffoldTable> = match kind {
-        ProviderArg::Postgres => {
-            rust_ef_postgres::introspection::introspect_postgres(connection)
-                .await?
-                .into_iter()
-                .map(|t| scaffold::ScaffoldTable {
-                    name: t.name,
-                    columns: t
-                        .columns
-                        .into_iter()
-                        .map(|c| scaffold::ScaffoldColumn {
-                            name: c.name,
-                            data_type: c.data_type,
-                            is_nullable: c.is_nullable,
-                            is_primary_key: c.is_primary_key,
-                            max_length: c.max_length,
-                        })
-                        .collect(),
-                })
-                .collect()
-        }
-        ProviderArg::Mysql => {
-            rust_ef_mysql::introspection::introspect_mysql(connection)
-                .await?
-                .into_iter()
-                .map(|t| scaffold::ScaffoldTable {
-                    name: t.name,
-                    columns: t
-                        .columns
-                        .into_iter()
-                        .map(|c| scaffold::ScaffoldColumn {
-                            name: c.name,
-                            data_type: c.data_type,
-                            is_nullable: c.is_nullable,
-                            is_primary_key: c.is_primary_key,
-                            max_length: c.max_length,
-                        })
-                        .collect(),
-                })
-                .collect()
-        }
+        ProviderArg::Postgres => rust_ef_postgres::introspection::introspect_postgres(connection)
+            .await?
+            .into_iter()
+            .map(|t| scaffold::ScaffoldTable {
+                name: t.name,
+                columns: t
+                    .columns
+                    .into_iter()
+                    .map(|c| scaffold::ScaffoldColumn {
+                        name: c.name,
+                        data_type: c.data_type,
+                        is_nullable: c.is_nullable,
+                        is_primary_key: c.is_primary_key,
+                        max_length: c.max_length,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        ProviderArg::Mysql => rust_ef_mysql::introspection::introspect_mysql(connection)
+            .await?
+            .into_iter()
+            .map(|t| scaffold::ScaffoldTable {
+                name: t.name,
+                columns: t
+                    .columns
+                    .into_iter()
+                    .map(|c| scaffold::ScaffoldColumn {
+                        name: c.name,
+                        data_type: c.data_type,
+                        is_nullable: c.is_nullable,
+                        is_primary_key: c.is_primary_key,
+                        max_length: c.max_length,
+                    })
+                    .collect(),
+            })
+            .collect(),
         ProviderArg::Sqlite => {
             return Err(EFError::Configuration(
                 "SQLite scaffold is not supported yet; use PostgreSQL or MySQL".into(),
@@ -337,7 +340,10 @@ async fn cmd_scaffold_dbcontext(
     Ok(())
 }
 
-fn create_provider(connection: &str, provider: ProviderArg) -> EFResult<Arc<dyn IDatabaseProvider>> {
+fn create_provider(
+    connection: &str,
+    provider: ProviderArg,
+) -> EFResult<Arc<dyn IDatabaseProvider>> {
     let kind = match provider {
         ProviderArg::Auto => detect_provider(connection),
         other => other,

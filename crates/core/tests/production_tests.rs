@@ -3,7 +3,9 @@
 #[cfg(test)]
 mod production_tests {
     use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
-    use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+    use rust_ef::entity::{
+        IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
+    };
     use rust_ef::error::EFError;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
@@ -112,10 +114,7 @@ mod production_tests {
         let provider = Arc::new(SqliteProvider::new(":memory:").unwrap());
         let meta = VersionedItem::entity_meta();
         let engine = MigrationEngine::new(MigrationDialect::Sqlite);
-        engine
-            .ensure_created(&*provider, &[meta])
-            .await
-            .unwrap();
+        engine.ensure_created(&*provider, &[meta]).await.unwrap();
 
         let factory: Arc<
             dyn Fn(&str) -> rust_ef::error::EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync,
@@ -141,12 +140,7 @@ mod production_tests {
         });
         ctx.save_changes().await.unwrap();
 
-        let mut loaded = ctx
-            .set::<VersionedItem>()
-            .query()
-            .to_list()
-            .await
-            .unwrap();
+        let mut loaded = ctx.set::<VersionedItem>().query().to_list().await.unwrap();
         assert_eq!(loaded.len(), 1);
         let entity = loaded.remove(0);
         ctx.set::<VersionedItem>().clear_entries();
@@ -393,10 +387,8 @@ mod production_tests {
         let meta = VersionedItem::entity_meta();
         let migration = engine.generate("Init", &[meta], &None).unwrap();
 
-        let dir = std::env::temp_dir().join(format!(
-            "rust_ef_migration_test_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("rust_ef_migration_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let store = MigrationStore::new(&dir);
         store.save(&migration).unwrap();
@@ -422,7 +414,11 @@ mod production_tests {
 
         let mut keys = HashMap::new();
         keys.insert("id".into(), DbValue::I32(1));
-        assert!(ctx.set::<VersionedItem>().exists_by_id(keys.clone()).await.unwrap());
+        assert!(ctx
+            .set::<VersionedItem>()
+            .exists_by_id(keys.clone())
+            .await
+            .unwrap());
 
         keys.insert("id".into(), DbValue::I32(999));
         assert!(!ctx.set::<VersionedItem>().exists_by_id(keys).await.unwrap());

@@ -1,7 +1,7 @@
+use crate::sql_generator::MySqlSqlGenerator;
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
-use crate::sql_generator::MySqlSqlGenerator;
 
 pub struct MySqlProvider {
     pool: sqlx::MySqlPool,

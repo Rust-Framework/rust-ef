@@ -50,7 +50,9 @@ pub mod prelude {
     };
     pub use crate::db_set::{DbSet, IDbSet};
     pub use crate::di::DbContextServiceCollectionExt;
-    pub use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+    pub use crate::entity::{
+        EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
+    };
     pub use crate::error::{EFError, EFResult};
     pub use crate::interceptor::{
         ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext,

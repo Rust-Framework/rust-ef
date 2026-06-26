@@ -91,12 +91,7 @@ mod m2m_tests {
         ctx.save_changes().await.unwrap();
 
         let student_id = if use_through_attr {
-            ctx.set::<StudentThrough>()
-                .query()
-                .to_list()
-                .await
-                .unwrap()[0]
-                .student_id
+            ctx.set::<StudentThrough>().query().to_list().await.unwrap()[0].student_id
         } else {
             ctx.set::<Student>().query().to_list().await.unwrap()[0].student_id
         };

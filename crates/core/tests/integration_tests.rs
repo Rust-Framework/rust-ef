@@ -33,10 +33,9 @@ mod tests {
     #[test]
     fn test_query_state_to_sql_with_order() {
         let mut state = QueryState::new("posts");
-        state.orderings.push(OrderBy::new(
-            "title",
-            OrderDirection::Ascending,
-        ));
+        state
+            .orderings
+            .push(OrderBy::new("title", OrderDirection::Ascending));
         let sql = state.to_sql();
         assert!(sql.contains("ORDER BY"));
     }
@@ -90,9 +89,9 @@ mod tests {
             is_primary_key: true,
             is_auto_increment: true,
             is_required: true,
-                is_foreign_key: false,
-                is_concurrency_token: false,
-                max_length: None,
+            is_foreign_key: false,
+            is_concurrency_token: false,
+            max_length: None,
             is_unique: false,
             has_index: false,
             is_not_mapped: false,
@@ -111,11 +110,8 @@ mod tests {
 
     #[test]
     fn test_migration_foreign_key_naming() {
-        let name = rust_ef::migration::MigrationEngine::foreign_key_name(
-            "posts",
-            "blog_id",
-            "blogs",
-        );
+        let name =
+            rust_ef::migration::MigrationEngine::foreign_key_name("posts", "blog_id", "blogs");
         assert_eq!(name, "fk_posts_blog_id_blogs");
     }
 
@@ -173,7 +169,10 @@ mod tests {
             fk_referenced_column: None,
         };
         assert_eq!(MigrationDialect::Postgres.map_column_type(&col), "SERIAL");
-        assert_eq!(MigrationDialect::MySql.map_column_type(&col), "INT AUTO_INCREMENT");
+        assert_eq!(
+            MigrationDialect::MySql.map_column_type(&col),
+            "INT AUTO_INCREMENT"
+        );
         assert_eq!(MigrationDialect::Sqlite.map_column_type(&col), "INTEGER");
     }
 

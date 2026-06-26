@@ -1,8 +1,8 @@
+use crate::sql_generator::PostgresSqlGenerator;
 use async_trait::async_trait;
 use deadpool_postgres::{Config, Pool, Runtime};
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
-use crate::sql_generator::PostgresSqlGenerator;
 use tokio_postgres::NoTls;
 
 pub struct PostgresProvider {

@@ -1,7 +1,7 @@
+use crate::sql_generator::SqliteSqlGenerator;
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
-use crate::sql_generator::SqliteSqlGenerator;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -33,7 +33,9 @@ impl IDatabaseProvider for SqliteProvider {
     }
 
     async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
-        Ok(Box::new(crate::connection::SqliteConnection::new(self.conn.clone())))
+        Ok(Box::new(crate::connection::SqliteConnection::new(
+            self.conn.clone(),
+        )))
     }
 
     async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {

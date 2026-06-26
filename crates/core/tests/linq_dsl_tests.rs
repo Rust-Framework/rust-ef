@@ -105,7 +105,10 @@ async fn seed() -> DbContext {
 #[tokio::test]
 async fn test_order_by_clause_desc() {
     let mut ctx = seed().await;
-    let blogs = linq!(ctx.set::<DslBlog>(); order_by b.rating desc).to_list().await.unwrap();
+    let blogs = linq!(ctx.set::<DslBlog>(); order_by b.rating desc)
+        .to_list()
+        .await
+        .unwrap();
     assert_eq!(blogs.len(), 3);
     assert_eq!(blogs[0].rating, 9);
     assert_eq!(blogs[2].rating, 3);
@@ -114,7 +117,10 @@ async fn test_order_by_clause_desc() {
 #[tokio::test]
 async fn test_order_by_clause_asc() {
     let mut ctx = seed().await;
-    let blogs = linq!(ctx.set::<DslBlog>(); order_by b.rating asc).to_list().await.unwrap();
+    let blogs = linq!(ctx.set::<DslBlog>(); order_by b.rating asc)
+        .to_list()
+        .await
+        .unwrap();
     assert_eq!(blogs[0].rating, 3);
     assert_eq!(blogs[2].rating, 9);
 }
@@ -134,7 +140,10 @@ async fn test_take_skip_clauses() {
 async fn test_min_typed_return_i32() {
     // G1 verification: min returns typed Option<V>, not Option<String>.
     let mut ctx = seed().await;
-    let min_rating: i32 = linq!(ctx.set::<DslBlog>(); min b.rating).await.unwrap().unwrap();
+    let min_rating: i32 = linq!(ctx.set::<DslBlog>(); min b.rating)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(min_rating, 3);
 }
 
@@ -142,7 +151,10 @@ async fn test_min_typed_return_i32() {
 async fn test_max_typed_return_i32() {
     // G1 verification: max returns typed Option<V>, not Option<String>.
     let mut ctx = seed().await;
-    let max_rating: i32 = linq!(ctx.set::<DslBlog>(); max b.rating).await.unwrap().unwrap();
+    let max_rating: i32 = linq!(ctx.set::<DslBlog>(); max b.rating)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(max_rating, 9);
 }
 
@@ -150,7 +162,10 @@ async fn test_max_typed_return_i32() {
 async fn test_max_typed_return_i64() {
     // G1: cross-type inference — views column is i64.
     let mut ctx = seed().await;
-    let max_views: i64 = linq!(ctx.set::<DslBlog>(); max b.views).await.unwrap().unwrap();
+    let max_views: i64 = linq!(ctx.set::<DslBlog>(); max b.views)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(max_views, 100);
 }
 
@@ -196,10 +211,11 @@ async fn test_group_by_with_having() {
 #[tokio::test]
 async fn test_select_clause_returns_raw_rows() {
     let mut ctx = seed().await;
-    let rows: Vec<Vec<String>> = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.published; select (b.blog_id, b.title))
-        .to_list()
-        .await
-        .unwrap();
+    let rows: Vec<Vec<String>> =
+        linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.published; select (b.blog_id, b.title))
+            .to_list()
+            .await
+            .unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].len(), 2);
 }
@@ -224,10 +240,11 @@ async fn test_set_execute_update() {
 #[tokio::test]
 async fn test_inner_join_clause() {
     let mut ctx = seed().await;
-    let blogs = linq!(ctx.set::<DslBlog>(); inner_join |a: DslBlog, b: DslPost| a.blog_id == b.blog_id)
-        .to_list()
-        .await
-        .unwrap();
+    let blogs =
+        linq!(ctx.set::<DslBlog>(); inner_join |a: DslBlog, b: DslPost| a.blog_id == b.blog_id)
+            .to_list()
+            .await
+            .unwrap();
     // Two posts belong to the first blog; inner join yields rows for those.
     assert!(!blogs.is_empty());
 }
@@ -235,10 +252,11 @@ async fn test_inner_join_clause() {
 #[tokio::test]
 async fn test_left_join_clause() {
     let mut ctx = seed().await;
-    let blogs = linq!(ctx.set::<DslBlog>(); left_join |a: DslBlog, b: DslPost| a.blog_id == b.blog_id)
-        .to_list()
-        .await
-        .unwrap();
+    let blogs =
+        linq!(ctx.set::<DslBlog>(); left_join |a: DslBlog, b: DslPost| a.blog_id == b.blog_id)
+            .to_list()
+            .await
+            .unwrap();
     // Left join keeps all blogs; blog 1 appears twice (one row per matching post),
     // blogs 2 and 3 appear once each with NULL post side → 4 rows total.
     assert!(blogs.len() >= 3);

@@ -4,6 +4,7 @@ use rust_ef::provider::ISqlGenerator;
 pub struct MySqlSqlGenerator;
 
 impl MySqlSqlGenerator {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self
     }

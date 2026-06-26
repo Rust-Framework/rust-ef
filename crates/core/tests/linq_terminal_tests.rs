@@ -65,14 +65,24 @@ async fn test_last_or_default_none_on_empty() {
     let mut ctx = make_ctx();
     ctx.set::<TermItem>();
     ctx.ensure_created().await.unwrap();
-    let result = ctx.set::<TermItem>().query().last_or_default().await.unwrap();
+    let result = ctx
+        .set::<TermItem>()
+        .query()
+        .last_or_default()
+        .await
+        .unwrap();
     assert!(result.is_none());
 }
 
 #[tokio::test]
 async fn test_last_or_default_some_on_nonempty() {
     let mut ctx = seed(2).await;
-    let result = ctx.set::<TermItem>().query().last_or_default().await.unwrap();
+    let result = ctx
+        .set::<TermItem>()
+        .query()
+        .last_or_default()
+        .await
+        .unwrap();
     assert!(result.is_some());
     assert_eq!(result.unwrap().name, "i1");
 }
@@ -105,14 +115,24 @@ async fn test_single_or_default_none_on_empty() {
     let mut ctx = make_ctx();
     ctx.set::<TermItem>();
     ctx.ensure_created().await.unwrap();
-    let result = ctx.set::<TermItem>().query().single_or_default().await.unwrap();
+    let result = ctx
+        .set::<TermItem>()
+        .query()
+        .single_or_default()
+        .await
+        .unwrap();
     assert!(result.is_none());
 }
 
 #[tokio::test]
 async fn test_single_or_default_some_on_one() {
     let mut ctx = seed(1).await;
-    let result = ctx.set::<TermItem>().query().single_or_default().await.unwrap();
+    let result = ctx
+        .set::<TermItem>()
+        .query()
+        .single_or_default()
+        .await
+        .unwrap();
     assert!(result.is_some());
 }
 

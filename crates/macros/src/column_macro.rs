@@ -42,7 +42,10 @@ pub fn expand_column(input: TokenStream) -> TokenStream {
         _ => {}
     }
 
-    syn::Error::new_spanned(input, "expected `Type::field` syntax, e.g. `column!(Blog::url)`")
-        .to_compile_error()
-        .into()
+    syn::Error::new_spanned(
+        input,
+        "expected `Type::field` syntax, e.g. `column!(Blog::url)`",
+    )
+    .to_compile_error()
+    .into()
 }

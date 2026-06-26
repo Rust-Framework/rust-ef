@@ -1,7 +1,7 @@
 //! Application `DbContext` using type-map set storage.
 
-use rust_ef::entity::IEntityType;
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+use rust_ef::entity::IEntityType;
 use rust_ef::error::EFResult;
 use rust_ef::migration::{MigrationDialect, MigrationEngine};
 use rust_ef::provider::IDatabaseProvider;
@@ -19,6 +19,7 @@ pub async fn create_blog_context() -> EFResult<DbContext> {
         .await?;
 
     let shared = provider.clone();
+    #[allow(clippy::type_complexity)]
     let factory: Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync> =
         Arc::new(move |_| Ok(shared.clone() as Arc<dyn IDatabaseProvider>));
 

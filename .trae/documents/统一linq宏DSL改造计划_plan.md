@@ -175,23 +175,22 @@ builder.has_key(linq!(key |b: Blog| b.id));
 建议采用「split `let` bindings」风格，避免过度链式：
 
 ```rust
-// 推荐：分步 let
+// 推荐：分步 let（过滤闭包与查询分离）
 let set = context.set::<Blog>();
 let expr = linq!(|b: Blog| b.rating > 0.5);
 let result = set.filter(expr).to_list().await?;
 
-// 推荐：复杂查询用多子句形式
-let set = context.set::<Blog>();
-let query = linq!(set, |b: Blog| b.rating > 0.5;
+// 推荐：复杂查询用多子句形式（source 内联 turbofish）
+let blogs = linq!(context.set::<Blog>(), |b: Blog| b.rating > 0.5;
     include b.posts then b.comments;
     order_by b.created_at desc;
-);
-let blogs = query.to_list().await?;
+).to_list().await?;
 
-// 推荐：聚合也用多子句
-let set = context.set::<Blog>();
-let total_views = linq!(set; sum b.views).await?;
+// 推荐：聚合也用多子句（source 内联 turbofish）
+let total_views = linq!(context.set::<Blog>(); sum b.views).await?;
 ```
+
+> **注意**：`linq!(set; ...)` 形式（`set` 为 `let` 绑定的变量）暂不支持，因宏展开时无法从裸变量推断实体类型。详见 [常见陷阱 #8](../../docs/rust-ef/11-best-practices/common-pitfalls.md)。此项推迟到 v0.5+ 与类型推断一同处理。
 
 ---
 
@@ -655,9 +654,11 @@ let affected = linq!(set, |b: Blog| b.rating < 0.1; set b.published, false; exec
 
 **不纳入（推迟到 v0.5+）**：
 - `linq!` 类型推断（省略闭包类型标注）—— 迭代计划已列为可选
+- `linq!` let-binding 语法（`let set = ctx.set::<T>(); linq!(set; ...)`）—— 与类型推断一同处理
 - 子查询 / 关联过滤（`b.posts.any(p => ...)`）—— 需多段路径解析，工作量大
 - Lazy Loading —— 架构性变更
 - 强类型元组投影（`select (b.id, b.title)` 返回 `(i32, String)` 而非 `Vec<String>`）—— 首版保留 `Vec<String>`，强类型化后续
+- 实体自动跟踪机制（代理式跟踪 / Identity Map / 导航 Fixup）—— 架构性变更，v0.5+ 评估
 
 ---
 

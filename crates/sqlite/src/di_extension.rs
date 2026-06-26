@@ -13,7 +13,8 @@ impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder
             "sqlite",
             &cs,
             Arc::new(move |cs: &str| {
-                Ok(Arc::new(crate::provider::SqliteProvider::new(cs)?) as Arc<dyn IDatabaseProvider>)
+                Ok(Arc::new(crate::provider::SqliteProvider::new(cs)?)
+                    as Arc<dyn IDatabaseProvider>)
             }),
         )
     }
@@ -23,7 +24,8 @@ impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder
             "sqlite",
             ":memory:",
             Arc::new(|_cs: &str| {
-                Ok(Arc::new(crate::provider::SqliteProvider::new_in_memory()?) as Arc<dyn IDatabaseProvider>)
+                Ok(Arc::new(crate::provider::SqliteProvider::new_in_memory()?)
+                    as Arc<dyn IDatabaseProvider>)
             }),
         )
     }

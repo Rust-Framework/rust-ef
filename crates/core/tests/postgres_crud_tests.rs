@@ -33,10 +33,7 @@ async fn test_postgres_crud_lifecycle() {
         }
     };
 
-    run_crud_lifecycle(
-        provider,
-        rust_ef::migration::MigrationDialect::Postgres,
-    )
-    .await
-    .expect("postgres CRUD lifecycle");
+    run_crud_lifecycle(provider, rust_ef::migration::MigrationDialect::Postgres)
+        .await
+        .expect("postgres CRUD lifecycle");
 }

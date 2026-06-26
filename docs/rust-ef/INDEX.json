@@ -274,7 +274,7 @@
             {
               "id": "execute-update",
               "title": "批量更新 ExecuteUpdate",
-              "summary": "execute_update().set_column().execute()",
+              "summary": "linq!(...; set b.col, val; execute_update)",
               "readingTime": 10,
               "difficulty": "intermediate"
             },

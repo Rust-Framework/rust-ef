@@ -5,7 +5,7 @@
 //! (`to_list`, `first`, `count`, etc.) produce real SQL that can be
 //! executed against a database provider.
 
-use crate::entity::{IEntityType, IFromRow, INavigationSetter, IGetKeyValues, IEntitySnapshot};
+use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use crate::error::EFResult;
 use crate::provider::{DbValue, DbValueConvertError, IDatabaseProvider};
 use std::marker::PhantomData;
@@ -32,11 +32,7 @@ pub struct FilterCondition {
 }
 
 impl FilterCondition {
-    pub fn new(
-        column: impl Into<String>,
-        operator: impl Into<String>,
-        param_count: usize,
-    ) -> Self {
+    pub fn new(column: impl Into<String>, operator: impl Into<String>, param_count: usize) -> Self {
         Self {
             column: column.into(),
             operator: operator.into(),
@@ -132,6 +128,7 @@ impl BoolExpr {
         BoolExpr::Or(Box::new(self), Box::new(other))
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn not(self) -> Self {
         BoolExpr::Not(Box::new(self))
     }
@@ -140,7 +137,9 @@ impl BoolExpr {
         match self {
             BoolExpr::Filter(f) => f.param_count(),
             BoolExpr::Raw(_) => 0,
-            BoolExpr::And(a, b) | BoolExpr::Or(a, b) => a.total_param_count() + b.total_param_count(),
+            BoolExpr::And(a, b) | BoolExpr::Or(a, b) => {
+                a.total_param_count() + b.total_param_count()
+            }
             BoolExpr::Not(inner) => inner.total_param_count(),
         }
     }
@@ -355,7 +354,10 @@ impl QueryState {
                 compile_bool_expr(expr, gen, &mut param_idx)
             ));
         } else if !self.filters.is_empty() {
-            sql.push_str(&format!(" WHERE {}", build_where_clauses(&self.filters, gen)));
+            sql.push_str(&format!(
+                " WHERE {}",
+                build_where_clauses(&self.filters, gen)
+            ));
         }
 
         // GROUP BY
@@ -455,7 +457,9 @@ where
         Some(s) if s.eq_ignore_ascii_case("NULL") => Ok(None),
         Some(s) => {
             let db_val = DbValue::String(s.clone());
-            V::try_from(db_val).map(Some).map_err(crate::error::EFError::from)
+            V::try_from(db_val)
+                .map(Some)
+                .map_err(crate::error::EFError::from)
         }
         None => Ok(None),
     }
@@ -521,17 +525,13 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     #[doc(hidden)]
-    pub fn filter_not(
-        mut self,
-        column: &str,
-        operator: &str,
-        value: impl Into<DbValue>,
-    ) -> Self {
+    pub fn filter_not(mut self, column: &str, operator: &str, value: impl Into<DbValue>) -> Self {
         let db_val = value.into();
         self.state.parameters.push(db_val);
-        self.state.append_bool_expr(BoolExpr::Not(Box::new(BoolExpr::Filter(
-            FilterCondition::new(column, operator, 1),
-        ))));
+        self.state
+            .append_bool_expr(BoolExpr::Not(Box::new(BoolExpr::Filter(
+                FilterCondition::new(column, operator, 1),
+            ))));
         self
     }
 
@@ -541,7 +541,8 @@ impl<T: IEntityType> QueryBuilder<T> {
         for v in values {
             self.state.parameters.push(v);
         }
-        self.state.append_filter(FilterCondition::new(column, "IN", count));
+        self.state
+            .append_filter(FilterCondition::new(column, "IN", count));
         self
     }
 
@@ -551,9 +552,10 @@ impl<T: IEntityType> QueryBuilder<T> {
         for v in values {
             self.state.parameters.push(v);
         }
-        self.state.append_bool_expr(BoolExpr::Not(Box::new(BoolExpr::Filter(
-            FilterCondition::new(column, "IN", count),
-        ))));
+        self.state
+            .append_bool_expr(BoolExpr::Not(Box::new(BoolExpr::Filter(
+                FilterCondition::new(column, "IN", count),
+            ))));
         self
     }
 
@@ -582,7 +584,8 @@ impl<T: IEntityType> QueryBuilder<T> {
         let hi: DbValue = high.into();
         self.state.parameters.push(lo);
         self.state.parameters.push(hi);
-        self.state.append_filter(FilterCondition::new(column, "BETWEEN", 2));
+        self.state
+            .append_filter(FilterCondition::new(column, "BETWEEN", 2));
         self
     }
 
@@ -629,10 +632,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     #[doc(hidden)]
-    pub fn or_where(
-        mut self,
-        f: impl FnOnce(QueryBuilder<T>) -> QueryBuilder<T>,
-    ) -> Self {
+    pub fn or_where(mut self, f: impl FnOnce(QueryBuilder<T>) -> QueryBuilder<T>) -> Self {
         let sub = f(QueryBuilder {
             state: QueryState::new(&self.state.from),
             provider: self.provider.clone(),
@@ -684,7 +684,9 @@ impl<T: IEntityType> QueryBuilder<T> {
                 ))
             })?;
         let col_const = pk_col.to_string();
-        self.filter_column(&col_const, "=", id).first_or_default().await
+        self.filter_column(&col_const, "=", id)
+            .first_or_default()
+            .await
     }
 
     /// Finds an entity by composite primary key. Keys are column-name
@@ -755,14 +757,8 @@ impl<T: IEntityType> QueryBuilder<T> {
                         last.nested.push(IncludePath {
                             navigation: navigation.to_string(),
                             nested: Vec::new(),
-                            related_table: nav_meta
-                                .related_table
-                                .as_ref()
-                                .map(|s| s.to_string()),
-                            foreign_key_column: nav_meta
-                                .fk_column
-                                .as_ref()
-                                .map(|s| s.to_string()),
+                            related_table: nav_meta.related_table.as_ref().map(|s| s.to_string()),
+                            foreign_key_column: nav_meta.fk_column.as_ref().map(|s| s.to_string()),
                             referenced_key_column: nav_meta
                                 .referenced_key_column
                                 .as_ref()
@@ -911,10 +907,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// `#[doc(hidden)]` — called by `linq!(min b.rating)` expansion. The target
     /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
     #[doc(hidden)]
-    pub async fn min_internal<V>(
-        self,
-        column: &'static str,
-    ) -> EFResult<Option<V>>
+    pub async fn min_internal<V>(self, column: &'static str) -> EFResult<Option<V>>
     where
         V: TryFrom<DbValue, Error = DbValueConvertError>,
     {
@@ -938,10 +931,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// `#[doc(hidden)]` — called by `linq!(max b.rating)` expansion. The target
     /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
     #[doc(hidden)]
-    pub async fn max_internal<V>(
-        self,
-        column: &'static str,
-    ) -> EFResult<Option<V>>
+    pub async fn max_internal<V>(self, column: &'static str) -> EFResult<Option<V>>
     where
         V: TryFrom<DbValue, Error = DbValueConvertError>,
     {
@@ -1018,12 +1008,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let rows = conn.query(&sql, &params).await?;
         let mut entities = crate::entity::materialize_entities::<T>(&rows)?;
         if !includes.is_empty() {
-            crate::navigation_loader::load_includes(
-                &mut entities,
-                &includes,
-                &**provider,
-            )
-            .await?;
+            crate::navigation_loader::load_includes(&mut entities, &includes, &**provider).await?;
         }
         Ok(entities)
     }
@@ -1173,9 +1158,9 @@ impl<T: IEntityType> QueryBuilder<T> {
                 "Sequence contains more than one element".to_string(),
             ));
         }
-        results
-            .pop()
-            .ok_or_else(|| crate::error::EFError::NotFound("Sequence contains no elements".to_string()))
+        results.pop().ok_or_else(|| {
+            crate::error::EFError::NotFound("Sequence contains no elements".to_string())
+        })
     }
 
     /// Executes the query and returns the only matching entity, or `None` if
@@ -1223,7 +1208,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Projects each entity into a key-value pair and collects into a
     /// `HashMap<K, T>`. The key selector closure extracts the key from each
     /// entity.
-    pub async fn to_dictionary<K, F>(self, key_selector: F) -> EFResult<std::collections::HashMap<K, T>>
+    pub async fn to_dictionary<K, F>(
+        self,
+        key_selector: F,
+    ) -> EFResult<std::collections::HashMap<K, T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
         K: std::hash::Hash + Eq,
@@ -1295,11 +1283,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     /// `#[doc(hidden)]` — called by `linq!(set b.views, 10; execute_update)`
     /// expansion.
     #[doc(hidden)]
-    pub fn set_column_internal(
-        mut self,
-        column: &'static str,
-        value: impl Into<DbValue>,
-    ) -> Self {
+    pub fn set_column_internal(mut self, column: &'static str, value: impl Into<DbValue>) -> Self {
         self.updates.push((column.to_string(), value.into()));
         self
     }
@@ -1455,7 +1439,10 @@ fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
     }
 }
 
-fn build_where_clauses(filters: &[FilterCondition], gen: &dyn crate::provider::ISqlGenerator) -> String {
+fn build_where_clauses(
+    filters: &[FilterCondition],
+    gen: &dyn crate::provider::ISqlGenerator,
+) -> String {
     build_where_clause_with_offset(filters, gen, 1)
 }
 

@@ -63,6 +63,6 @@ ctx.set::<Post>().add(Post {
 ctx.save_changes().await?;
 ```
 
-> 注意：导航属性的物化（填充）需要通过 `include_named` 显式加载，参见 [Eager Loading](eager-loading.md)。
+> 注意：导航属性的物化（填充）需要通过 `linq!(...; include b.x)` 显式加载，参见 [Eager Loading](eager-loading.md)。
 
 下一节：[多对多与 Join 实体](many-to-many.md)

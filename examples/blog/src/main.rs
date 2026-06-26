@@ -54,9 +54,7 @@ async fn main() -> Result<(), EFError> {
     println!("    Found {} blog(s) with rating > 3.", filtered.len());
 
     println!("[5] Eager load posts...");
-    let _with_posts = linq!(ctx.set::<Blog>(); include b.posts)
-        .to_list()
-        .await?;
+    let _with_posts = linq!(ctx.set::<Blog>(); include b.posts).to_list().await?;
     println!("    Include executed.");
 
     println!("[6] Count posts...");
@@ -64,13 +62,17 @@ async fn main() -> Result<(), EFError> {
     println!("    Total posts: {count}");
 
     println!("[7] Migration snapshot demo...");
-    let engine = rust_ef::migration::MigrationEngine::new(rust_ef::migration::MigrationDialect::Sqlite);
+    let engine =
+        rust_ef::migration::MigrationEngine::new(rust_ef::migration::MigrationDialect::Sqlite);
     let migration = engine.generate(
         "InitialCreate",
         &[Blog::entity_meta(), Post::entity_meta()],
         &None,
     )?;
-    println!("    Generated migration SQL ({} chars).", migration.up_sql.len());
+    println!(
+        "    Generated migration SQL ({} chars).",
+        migration.up_sql.len()
+    );
 
     println!("\n=== Example Complete ===");
     Ok(())

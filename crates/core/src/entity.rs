@@ -75,11 +75,7 @@ pub trait INavigationSetter: IEntityType {
         Ok(())
     }
 
-    fn apply_reference(
-        &mut self,
-        field: &str,
-        row: &[String],
-    ) -> EFResult<()> {
+    fn apply_reference(&mut self, field: &str, row: &[String]) -> EFResult<()> {
         let _ = (field, row);
         Ok(())
     }

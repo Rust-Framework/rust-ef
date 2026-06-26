@@ -148,6 +148,9 @@ mod navigation_tests {
         assert_eq!(blogs.len(), 1);
         assert_eq!(blogs[0].posts.len(), 1);
         assert_eq!(blogs[0].posts.items()[0].comments.len(), 2);
-        assert_eq!(blogs[0].posts.items()[0].comments.items()[0].text, "Great post");
+        assert_eq!(
+            blogs[0].posts.items()[0].comments.items()[0].text,
+            "Great post"
+        );
     }
 }

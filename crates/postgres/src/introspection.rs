@@ -22,9 +22,9 @@ pub struct DbTable {
 
 /// Reads all tables and their columns from a PostgreSQL database.
 pub async fn introspect_postgres(connection_string: &str) -> EFResult<Vec<DbTable>> {
-    let config: tokio_postgres::Config = connection_string
-        .parse()
-        .map_err(|e| rust_ef::error::EFError::Connection(format!("Invalid connection string: {}", e)))?;
+    let config: tokio_postgres::Config = connection_string.parse().map_err(|e| {
+        rust_ef::error::EFError::Connection(format!("Invalid connection string: {}", e))
+    })?;
 
     let (client, connection) = config
         .connect(NoTls)
