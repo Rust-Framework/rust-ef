@@ -14,8 +14,11 @@ impl SqliteProvider {
     pub fn new(path: impl AsRef<Path>) -> EFResult<Self> {
         let conn = rusqlite::Connection::open(path)
             .map_err(|e| EFError::Connection(format!("SQLite open failed: {}", e)))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")
-            .map_err(|e| EFError::Connection(format!("SQLite WAL setup failed: {}", e)))?;
+        // Enable WAL for read/write concurrency and set a busy timeout so
+        // writers don't immediately fail when another connection holds the
+        // lock — they retry for up to 5 seconds before returning SQLITE_BUSY.
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
+            .map_err(|e| EFError::Connection(format!("SQLite pragma setup failed: {}", e)))?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })

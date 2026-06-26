@@ -356,15 +356,13 @@ fn build_where_with_concurrency(
         .collect();
 
     let mut params: Vec<DbValue> = keys.values().cloned().collect();
-    let mut next_idx = start_param_idx + keys.len();
 
-    for token in concurrency_tokens {
+    for (next_idx, token) in (start_param_idx + keys.len()..).zip(concurrency_tokens.iter()) {
         where_parts.push(format!(
             "{} = {}",
             gen.quote_identifier(token.column_name.as_ref()),
             gen.parameter_placeholder(next_idx)
         ));
-        next_idx += 1;
 
         let original_val = original
             .and_then(|o| o.get(token.field_name.as_ref()))

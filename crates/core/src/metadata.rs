@@ -5,6 +5,7 @@
 
 use std::any::TypeId;
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // PropertyMeta ?describes a single column / property
@@ -202,17 +203,57 @@ pub struct EntityTypeMeta {
     pub navigations: Vec<NavigationMeta>,
     /// The name of the primary key property (simplified; multi-key via Vec<String> in practice).
     pub primary_keys: Vec<Cow<'static, str>>,
+    /// Lazily-built `field_name -> properties index` map for O(1) lookup.
+    /// Built on first `find_property` call; empty after clone (rebuilt on demand).
+    /// `#[doc(hidden)]` — internal cache, do not set manually.
+    #[doc(hidden)]
+    pub property_index: std::sync::OnceLock<HashMap<String, usize>>,
+    /// Lazily-built `field_name -> navigations index` map for O(1) lookup.
+    /// Built on first `find_navigation` call; empty after clone (rebuilt on demand).
+    /// `#[doc(hidden)]` — internal cache, do not set manually.
+    #[doc(hidden)]
+    pub navigation_index: std::sync::OnceLock<HashMap<String, usize>>,
 }
 
 impl EntityTypeMeta {
     /// Find a property by field name.
+    ///
+    /// Uses a lazily-built HashMap index for O(1) lookup instead of linear
+    /// scan. The index is cached for the lifetime of this `EntityTypeMeta`;
+    /// a cloned meta rebuilds its own index on first access.
     pub fn find_property(&self, field_name: &str) -> Option<&PropertyMeta> {
-        self.properties.iter().find(|p| p.field_name == field_name)
+        let idx = self
+            .property_index
+            .get_or_init(|| {
+                self.properties
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| (p.field_name.to_string(), i))
+                    .collect()
+            })
+            .get(field_name)
+            .copied();
+        idx.and_then(|i| self.properties.get(i))
     }
 
     /// Find a navigation by field name.
+    ///
+    /// Uses a lazily-built HashMap index for O(1) lookup instead of linear
+    /// scan. The index is cached for the lifetime of this `EntityTypeMeta`;
+    /// a cloned meta rebuilds its own index on first access.
     pub fn find_navigation(&self, field_name: &str) -> Option<&NavigationMeta> {
-        self.navigations.iter().find(|n| n.field_name == field_name)
+        let idx = self
+            .navigation_index
+            .get_or_init(|| {
+                self.navigations
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| (n.field_name.to_string(), i))
+                    .collect()
+            })
+            .get(field_name)
+            .copied();
+        idx.and_then(|i| self.navigations.get(i))
     }
 
     /// Get the primary key property.
@@ -223,5 +264,24 @@ impl EntityTypeMeta {
     /// Returns properties that are not navigation and not mapped.
     pub fn mapped_scalar_properties(&self) -> impl Iterator<Item = &PropertyMeta> {
         self.properties.iter().filter(|p| !p.is_not_mapped)
+    }
+}
+
+impl Default for EntityTypeMeta {
+    /// Produces an empty `EntityTypeMeta` with lazily-built index caches.
+    /// `type_id` defaults to `TypeId::of::<()>()` since `TypeId` itself has no
+    /// `Default` impl; callers always override it in struct literals via
+    /// `..EntityTypeMeta::default()`.
+    fn default() -> Self {
+        Self {
+            type_id: TypeId::of::<()>(),
+            type_name: Cow::Borrowed(""),
+            table_name: Cow::Borrowed(""),
+            properties: Vec::new(),
+            navigations: Vec::new(),
+            primary_keys: Vec::new(),
+            property_index: std::sync::OnceLock::new(),
+            navigation_index: std::sync::OnceLock::new(),
+        }
     }
 }

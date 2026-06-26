@@ -79,6 +79,7 @@ mod tests {
             properties: vec![],
             navigations: vec![],
             primary_keys: vec![],
+            ..EntityTypeMeta::default()
         };
 
         meta.properties.push(PropertyMeta {

@@ -4,22 +4,27 @@ use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavi
 use crate::error::EFResult;
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
 use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
-use crate::query::{collect_bool_expr_values, compile_bool_expr, BoolExpr, IncludePath};
+use crate::query::{compile_bool_expr, CompiledFilter, IncludePath};
 use std::any::TypeId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Appends a query filter (e.g. tenant_id = ?) to a navigation SQL statement.
+///
+/// Uses the pre-collected `params` from `CompiledFilter` (collected once at
+/// registration time) instead of traversing the `BoolExpr` tree per query.
+/// The SQL fragment is still compiled per query because placeholder numbering
+/// is dialect-specific and depends on the current parameter count.
 fn apply_filter_to_sql(
     sql: &mut String,
     params: &mut Vec<DbValue>,
     related_table: &str,
-    filter_map: Option<&HashMap<String, BoolExpr>>,
+    filter_map: Option<&HashMap<String, CompiledFilter>>,
     gen: &dyn ISqlGenerator,
 ) {
     if let Some(filter) = filter_map.and_then(|m| m.get(related_table)) {
         let mut idx = params.len() + 1;
-        let filter_sql = compile_bool_expr(filter, gen, &mut idx);
-        params.extend(collect_bool_expr_values(filter));
+        let filter_sql = compile_bool_expr(&filter.expr, gen, &mut idx);
+        params.extend(filter.params.iter().cloned());
         *sql = format!("{} AND ({})", sql, filter_sql);
     }
 }
@@ -59,7 +64,7 @@ pub async fn load_includes<T>(
     entities: &mut [T],
     includes: &[IncludePath],
     provider: &dyn IDatabaseProvider,
-    filter_map: Option<&HashMap<String, BoolExpr>>,
+    filter_map: Option<&HashMap<String, CompiledFilter>>,
 ) -> EFResult<()>
 where
     T: IEntityType + IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
@@ -103,7 +108,7 @@ async fn load_scalar_navigation<T>(
     nav: &NavigationMeta,
     meta: &EntityTypeMeta,
     provider: &dyn IDatabaseProvider,
-    filter_map: Option<&HashMap<String, BoolExpr>>,
+    filter_map: Option<&HashMap<String, CompiledFilter>>,
 ) -> EFResult<()>
 where
     T: IEntitySnapshot + INavigationSetter + IGetKeyValues,
@@ -211,7 +216,7 @@ async fn load_many_to_many<T>(
     navigation: &str,
     nav: &NavigationMeta,
     provider: &dyn IDatabaseProvider,
-    filter_map: Option<&HashMap<String, BoolExpr>>,
+    filter_map: Option<&HashMap<String, CompiledFilter>>,
 ) -> EFResult<()>
 where
     T: IEntityType + INavigationSetter + IGetKeyValues,
@@ -274,14 +279,15 @@ where
         })
         .unwrap_or_else(TypeId::of::<i32>);
 
-    let mut related_keys: Vec<String> = Vec::new();
-    for row in &join_rows {
-        if let Some(v) = row.get(nav.through_related_fk_index) {
-            if !related_keys.iter().any(|k| k == v) {
-                related_keys.push(v.clone());
-            }
-        }
-    }
+    // Collect unique related keys using a HashSet for O(1) dedup
+    // (previously O(N²) linear scan per join row).
+    let mut seen: HashSet<String> = HashSet::new();
+    let related_keys: Vec<String> = join_rows
+        .iter()
+        .filter_map(|row| row.get(nav.through_related_fk_index))
+        .filter(|v| seen.insert((*v).clone()))
+        .cloned()
+        .collect();
 
     if related_keys.is_empty() {
         return Ok(());

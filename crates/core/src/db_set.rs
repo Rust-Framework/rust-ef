@@ -66,7 +66,7 @@ pub struct DbSet<T: IEntityType> {
     table_name: String,
     provider: Option<Arc<dyn IDatabaseProvider>>,
     query_filter: Option<BoolExpr>,
-    filter_map: Option<Arc<HashMap<String, BoolExpr>>>,
+    filter_map: Option<Arc<HashMap<String, crate::query::CompiledFilter>>>,
 }
 
 pub struct TrackedEntry<T: IEntityType> {
@@ -106,7 +106,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
 
     /// Sets the global filter map (table_name → BoolExpr) used by
     /// NavigationLoader to scope secondary queries.
-    pub fn set_filter_map(&mut self, map: Arc<HashMap<String, BoolExpr>>) {
+    pub fn set_filter_map(&mut self, map: Arc<HashMap<String, crate::query::CompiledFilter>>) {
         self.filter_map = Some(map);
     }
 

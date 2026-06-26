@@ -76,6 +76,7 @@ mod production_tests {
                 ],
                 navigations: Vec::new(),
                 primary_keys: vec![std::borrow::Cow::Borrowed("id")],
+                ..EntityTypeMeta::default()
             }
         }
     }
@@ -311,6 +312,7 @@ mod production_tests {
                         std::borrow::Cow::Borrowed("user_id"),
                         std::borrow::Cow::Borrowed("role_id"),
                     ],
+                    ..EntityTypeMeta::default()
                 }
             }
         }

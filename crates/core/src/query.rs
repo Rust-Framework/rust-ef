@@ -176,6 +176,35 @@ impl OrderBy {
     }
 }
 
+/// A query filter with pre-collected parameter values.
+///
+/// Produced by `ModelBuilder::filters_by_table()`. The `expr` is retained for
+/// per-query SQL compilation (which depends on the provider's dialect and the
+/// current placeholder index), while `params` are collected once at
+/// registration time to avoid redundant `collect_bool_expr_values` traversals
+/// on every navigation/primary query.
+///
+/// For simple tenant filters (`tenant_id = ?`) the per-query SQL compilation
+/// is a single `to_sql` call — cheap and correct for all dialects.
+#[derive(Debug, Clone)]
+pub struct CompiledFilter {
+    /// The filter expression tree. Compiled to SQL per query using the
+    /// provider's `ISqlGenerator` (placeholder syntax is dialect-specific).
+    pub expr: BoolExpr,
+    /// Parameter values extracted from the expression tree at registration
+    /// time. Appended to the query's parameter list at apply time.
+    pub params: Vec<DbValue>,
+}
+
+impl CompiledFilter {
+    /// Builds a `CompiledFilter` from a `BoolExpr`, pre-collecting its
+    /// inline parameter values.
+    pub fn new(expr: BoolExpr) -> Self {
+        let params = collect_bool_expr_values(&expr);
+        Self { expr, params }
+    }
+}
+
 /// An eager-load include specification.
 #[derive(Debug, Clone)]
 pub struct IncludePath {
@@ -630,7 +659,7 @@ where
 pub struct QueryBuilder<T: IEntityType> {
     state: QueryState,
     provider: Option<Arc<dyn IDatabaseProvider>>,
-    filter_map: Option<Arc<HashMap<String, BoolExpr>>>,
+    filter_map: Option<Arc<HashMap<String, CompiledFilter>>>,
     _phantom: PhantomData<T>,
 }
 
@@ -659,7 +688,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Attaches a global filter map (table_name → BoolExpr) for NavigationLoader.
-    pub(crate) fn with_filter_map(mut self, map: Option<Arc<HashMap<String, BoolExpr>>>) -> Self {
+    pub(crate) fn with_filter_map(
+        mut self,
+        map: Option<Arc<HashMap<String, CompiledFilter>>>,
+    ) -> Self {
         self.filter_map = map;
         self
     }

@@ -76,6 +76,7 @@ impl IEntityType for TenantItem {
             ],
             navigations: vec![],
             primary_keys: vec![std::borrow::Cow::Borrowed("id")],
+            ..EntityTypeMeta::default()
         }
     }
 }

@@ -415,6 +415,8 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                     primary_keys: vec![
                         #(#primary_key_names,)*
                     ],
+                    property_index: std::sync::OnceLock::new(),
+                    navigation_index: std::sync::OnceLock::new(),
                 }
             }
         }
@@ -506,7 +508,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 parent_navigation: &str,
                 nested: &[rust_ef::query::IncludePath],
                 provider: &dyn rust_ef::provider::IDatabaseProvider,
-                filter_map: ::core::option::Option<&std::collections::HashMap<String, rust_ef::query::BoolExpr>>,
+                filter_map: ::core::option::Option<&std::collections::HashMap<String, rust_ef::query::CompiledFilter>>,
             ) -> rust_ef::error::EFResult<()> {
                 #( #nested_loader_arms )*
                 Ok(())

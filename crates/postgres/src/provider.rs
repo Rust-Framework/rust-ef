@@ -10,7 +10,7 @@ pub struct PostgresProvider {
 }
 
 impl PostgresProvider {
-    pub fn new(connection_string: &str, _pool_size: usize) -> EFResult<Self> {
+    pub fn new(connection_string: &str, pool_size: usize) -> EFResult<Self> {
         let config: tokio_postgres::Config = connection_string
             .parse()
             .map_err(|e| EFError::Connection(format!("Invalid connection string: {}", e)))?;
@@ -24,6 +24,11 @@ impl PostgresProvider {
         cfg.password = config
             .get_password()
             .map(|p| String::from_utf8_lossy(p).to_string());
+        // Apply the requested pool size. `pool_size = 0` falls back to
+        // deadpool's default (which is typically the CPU count).
+        if pool_size > 0 {
+            cfg.pool.get_or_insert_default().max_size = pool_size;
+        }
         let pool = cfg
             .create_pool(Some(Runtime::Tokio1), NoTls)
             .map_err(|e| EFError::Connection(format!("Failed to create pool: {}", e)))?;

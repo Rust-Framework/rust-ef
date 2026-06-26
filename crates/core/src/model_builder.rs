@@ -8,7 +8,7 @@
 use crate::entity::{IEntitySnapshot, IEntityType};
 use crate::metadata::EntityTypeMeta;
 use crate::provider::DbValue;
-use crate::query::BoolExpr;
+use crate::query::{BoolExpr, CompiledFilter};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -49,7 +49,7 @@ pub struct ModelBuilder {
     build_cache: OnceLock<Vec<EntityTypeMeta>>,
     /// Cache of `filters_by_table()` output, shared via `Arc` so DbSets can
     /// hold a cheap clone without re-traversing configs on every query.
-    filter_cache: OnceLock<Arc<HashMap<String, BoolExpr>>>,
+    filter_cache: OnceLock<Arc<HashMap<String, CompiledFilter>>>,
 }
 
 impl ModelBuilder {
@@ -236,14 +236,22 @@ impl ModelBuilder {
     /// is also the compile-time name — NOT the Fluent API override. If a Fluent
     /// `to_table()` override renames the table, the navigation SQL and the
     /// filter lookup both use the compile-time name, staying consistent.
-    pub fn filters_by_table(&self) -> Arc<HashMap<String, BoolExpr>> {
+    ///
+    /// Each filter is wrapped in a `CompiledFilter` that pre-collects parameter
+    /// values at registration time, avoiding redundant `collect_bool_expr_values`
+    /// traversals on every query. The SQL fragment is still compiled per query
+    /// (dialect-specific placeholders depend on the provider and query context).
+    pub fn filters_by_table(&self) -> Arc<HashMap<String, CompiledFilter>> {
         self.filter_cache
             .get_or_init(|| {
                 let mut map = HashMap::new();
                 for meta in &self.entity_metas {
                     if let Some(config) = self.configs.get(&meta.type_id) {
                         if let Some(filter) = &config.query_filter {
-                            map.insert(meta.table_name.to_string(), filter.clone());
+                            map.insert(
+                                meta.table_name.to_string(),
+                                CompiledFilter::new(filter.clone()),
+                            );
                         }
                     }
                 }

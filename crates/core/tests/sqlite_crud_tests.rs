@@ -86,6 +86,7 @@ mod sqlite_crud {
                 ],
                 navigations: vec![],
                 primary_keys: vec![std::borrow::Cow::Borrowed("id")],
+                ..EntityTypeMeta::default()
             }
         }
     }

@@ -35,6 +35,7 @@ mod advanced_tests {
                 std::borrow::Cow::Borrowed("user_id"),
                 std::borrow::Cow::Borrowed("role_id"),
             ],
+            ..EntityTypeMeta::default()
         };
         let migration = engine
             .generate("InitialCreate", &[user_role_meta], &None)
@@ -68,6 +69,7 @@ mod advanced_tests {
             }],
             navigations: vec![],
             primary_keys: vec![std::borrow::Cow::Borrowed("blog_id")],
+            ..EntityTypeMeta::default()
         };
         let migration = engine.generate("Initial", &[blog_meta], &None).unwrap();
         assert!(migration.up_sql.contains("CREATE TABLE"));
@@ -99,6 +101,7 @@ mod advanced_tests {
             }],
             navigations: vec![],
             primary_keys: vec![std::borrow::Cow::Borrowed("id")],
+            ..EntityTypeMeta::default()
         };
         let migration = engine.generate("Test", &[meta], &None).unwrap();
         assert!(migration.up_sql.contains("CREATE TABLE"));
@@ -146,6 +149,7 @@ mod advanced_tests {
             ],
             navigations: vec![],
             primary_keys: vec![std::borrow::Cow::Borrowed("post_id")],
+            ..EntityTypeMeta::default()
         }];
         let snapshot = engine.create_snapshot("v1", &metas);
         assert_eq!(snapshot.entity_types.len(), 1);
@@ -177,6 +181,7 @@ mod advanced_tests {
             }],
             navigations: vec![],
             primary_keys: vec![std::borrow::Cow::Borrowed("blog_id")],
+            ..EntityTypeMeta::default()
         };
         let post_meta = EntityTypeMeta {
             type_id: std::any::TypeId::of::<i64>(),
@@ -235,6 +240,7 @@ mod advanced_tests {
                 related_entity_meta: None,
             }],
             primary_keys: vec![std::borrow::Cow::Borrowed("post_id")],
+            ..EntityTypeMeta::default()
         };
 
         let migration = engine

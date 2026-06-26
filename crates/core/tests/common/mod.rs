@@ -71,6 +71,7 @@ impl IEntityType for TestItem {
             ],
             navigations: vec![],
             primary_keys: vec![std::borrow::Cow::Borrowed("id")],
+            ..EntityTypeMeta::default()
         }
     }
 }

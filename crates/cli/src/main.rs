@@ -410,6 +410,7 @@ fn snapshot_to_metas(snapshot: &ModelSnapshot) -> Vec<EntityTypeMeta> {
                 .filter(|c| c.is_primary_key)
                 .map(|c| Cow::Owned(c.field_name.clone()))
                 .collect(),
+            ..EntityTypeMeta::default()
         })
         .collect()
 }

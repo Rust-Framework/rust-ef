@@ -90,7 +90,7 @@ pub trait INavigationSetter: IEntityType {
         parent_navigation: &str,
         nested: &[crate::query::IncludePath],
         provider: &dyn crate::provider::IDatabaseProvider,
-        filter_map: Option<&std::collections::HashMap<String, crate::query::BoolExpr>>,
+        filter_map: Option<&std::collections::HashMap<String, crate::query::CompiledFilter>>,
     ) -> EFResult<()> {
         let _ = (parent_navigation, nested, provider, filter_map);
         Ok(())
