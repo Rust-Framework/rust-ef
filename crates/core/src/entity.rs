@@ -81,13 +81,18 @@ pub trait INavigationSetter: IEntityType {
     }
 
     /// Loads nested includes after the parent navigation was populated.
+    ///
+    /// `filter_map` carries per-table query filters (e.g. tenant isolation)
+    /// so that nested navigation loading respects the same filters as
+    /// top-level loading.
     async fn load_nested_includes(
         &mut self,
         parent_navigation: &str,
         nested: &[crate::query::IncludePath],
         provider: &dyn crate::provider::IDatabaseProvider,
+        filter_map: Option<&std::collections::HashMap<String, crate::query::BoolExpr>>,
     ) -> EFResult<()> {
-        let _ = (parent_navigation, nested, provider);
+        let _ = (parent_navigation, nested, provider, filter_map);
         Ok(())
     }
 }

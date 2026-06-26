@@ -169,9 +169,7 @@ async fn delete_across_tenant_filtered_out() {
         tenant_id: 2,
         name: "other-tenant".into(),
     });
-    ctx.set::<TenantItem>()
-        .remove_at(0)
-        .expect("mark deleted");
+    ctx.set::<TenantItem>().remove_at(0).expect("mark deleted");
     let err = ctx.save_changes().await.unwrap_err();
     match err {
         EFError::ConcurrencyConflict(msg) => {
@@ -218,4 +216,3 @@ async fn query_ignore_filters_returns_all_tenants() {
         .expect("ignore-filters query");
     assert_eq!(all.len(), 2, "query_ignore_filters() should see all rows");
 }
-

@@ -28,8 +28,8 @@ impl MySqlProvider {
 
 #[async_trait]
 impl IDatabaseProvider for MySqlProvider {
-    fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
-        Box::new(MySqlSqlGenerator::new())
+    fn sql_generator(&self) -> &'static dyn ISqlGenerator {
+        &MySqlSqlGenerator
     }
 
     async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {

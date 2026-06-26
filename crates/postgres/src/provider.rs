@@ -33,8 +33,8 @@ impl PostgresProvider {
 
 #[async_trait]
 impl IDatabaseProvider for PostgresProvider {
-    fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
-        Box::new(PostgresSqlGenerator::new())
+    fn sql_generator(&self) -> &'static dyn ISqlGenerator {
+        &PostgresSqlGenerator
     }
 
     async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {

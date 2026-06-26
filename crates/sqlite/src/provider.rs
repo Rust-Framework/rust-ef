@@ -28,8 +28,9 @@ impl SqliteProvider {
 
 #[async_trait]
 impl IDatabaseProvider for SqliteProvider {
-    fn sql_generator(&self) -> Box<dyn ISqlGenerator> {
-        Box::new(SqliteSqlGenerator::new())
+    fn sql_generator(&self) -> &'static dyn ISqlGenerator {
+        // Stateless generator: rvalue static promotion gives `&'static`.
+        &SqliteSqlGenerator
     }
 
     async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {

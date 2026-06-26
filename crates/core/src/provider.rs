@@ -314,6 +314,13 @@ pub trait ISqlGenerator: Send + Sync {
     fn select(&self, table: &str, columns: &[&str]) -> String;
     /// Generates an INSERT statement.
     fn insert(&self, table: &str, columns: &[&str], returning: bool) -> String;
+    /// Generates a multi-row INSERT statement with `row_count` value groups
+    /// (`INSERT INTO t (c1, c2) VALUES (?, ?), (?, ?), ...`). Placeholders
+    /// follow the dialect's numbering (`?` for SQLite/MySQL, `$n` for PG).
+    fn insert_batch(&self, table: &str, columns: &[&str], row_count: usize) -> String {
+        let _ = (table, columns, row_count);
+        String::new()
+    }
     /// Generates an UPDATE statement.
     fn update(&self, table: &str, set_columns: &[&str], where_clause: &str) -> String;
     /// Generates a DELETE statement.
@@ -352,7 +359,10 @@ pub trait IAsyncConnection: Send + Sync {
 #[async_trait]
 pub trait IDatabaseProvider: Send + Sync {
     /// Returns the SQL dialect generator for this provider.
-    fn sql_generator(&self) -> Box<dyn ISqlGenerator>;
+    ///
+    /// Implementations are stateless, so a `&'static` reference is returned —
+    /// no heap allocation per call.
+    fn sql_generator(&self) -> &'static dyn ISqlGenerator;
 
     /// Gets an async database connection from the pool.
     async fn get_connection(&self) -> EFResult<Box<dyn IAsyncConnection>>;

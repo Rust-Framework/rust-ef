@@ -13,6 +13,27 @@
 //! `DbContextOptions` stores a `provider_factory` closure injected by the
 //! provider extension methods (`use_sqlite`, `use_postgres`, `use_mysql`).
 //! `DbContext::from_options()` calls this factory to create the provider.
+//!
+//! ## Thread Safety
+//!
+//! `DbContext` is **not** thread-safe — a single instance must not be shared
+//! across threads. This is a design decision (aligned with EFCore), not a
+//! limitation.
+//!
+//! **Correct usage**: create one DI `Scope` per request / operation:
+//! ```rust,ignore
+//! let scope = provider.create_dbcontext_scope();
+//! let ctx = scope.get::<dyn IDbContext>().unwrap();
+//! // Multiple `get` calls within the same scope return the same instance
+//! // (unit-of-work semantics).
+//! ```
+//!
+//! **Anti-pattern**: sharing via `Arc<Mutex<DbContext>>` causes tracking
+//! pollution — Thread A's `save_changes()` would commit Thread B's pending
+//! changes.
+//!
+//! Resolving `dyn IDbContext` directly from the root `ServiceProvider`
+//! degrades to a fresh instance per call (equivalent to transient).
 
 use crate::change_executor::ChangeExecutor;
 use crate::db_set::DbSet;
@@ -290,7 +311,7 @@ impl DbContext {
             if let Some(filter) = self.model_builder.get_query_filter(&type_id) {
                 db_set.set_query_filter(filter.clone());
             }
-            db_set.set_filter_map(Arc::new(self.model_builder.filters_by_table()));
+            db_set.set_filter_map(self.model_builder.filters_by_table());
             Box::new(db_set)
         });
         self.sets

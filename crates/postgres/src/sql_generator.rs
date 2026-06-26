@@ -55,6 +55,34 @@ impl ISqlGenerator for PostgresSqlGenerator {
         )
     }
 
+    fn insert_batch(&self, table: &str, columns: &[&str], row_count: usize) -> String {
+        let cols = columns
+            .iter()
+            .map(|c| self.quote_identifier(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let cols_per_row = columns.len();
+        let mut idx = 1usize;
+        let rows: Vec<String> = (0..row_count)
+            .map(|_| {
+                let ph: Vec<String> = (0..cols_per_row)
+                    .map(|_| {
+                        let p = self.parameter_placeholder(idx);
+                        idx += 1;
+                        p
+                    })
+                    .collect();
+                format!("({})", ph.join(", "))
+            })
+            .collect();
+        format!(
+            "INSERT INTO {} ({}) VALUES {} RETURNING *",
+            self.quote_identifier(table),
+            cols,
+            rows.join(", "),
+        )
+    }
+
     fn update(&self, table: &str, set_columns: &[&str], where_clause: &str) -> String {
         let sets: Vec<String> = set_columns
             .iter()

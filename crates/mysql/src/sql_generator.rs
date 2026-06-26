@@ -39,6 +39,22 @@ impl ISqlGenerator for MySqlSqlGenerator {
         )
     }
 
+    fn insert_batch(&self, table: &str, columns: &[&str], row_count: usize) -> String {
+        let cols = columns
+            .iter()
+            .map(|c| self.quote_identifier(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let row = format!("({})", vec!["?"; columns.len()].join(", "));
+        let all_rows = vec![row; row_count].join(", ");
+        format!(
+            "INSERT INTO {} ({}) VALUES {}",
+            self.quote_identifier(table),
+            cols,
+            all_rows,
+        )
+    }
+
     fn update(&self, table: &str, set_columns: &[&str], where_clause: &str) -> String {
         let sets: Vec<String> = set_columns
             .iter()

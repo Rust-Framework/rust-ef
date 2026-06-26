@@ -3,10 +3,26 @@
 use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use crate::error::EFResult;
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
-use crate::provider::{DbValue, IDatabaseProvider};
-use crate::query::IncludePath;
+use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
+use crate::query::{collect_bool_expr_values, compile_bool_expr, BoolExpr, IncludePath};
 use std::any::TypeId;
 use std::collections::HashMap;
+
+/// Appends a query filter (e.g. tenant_id = ?) to a navigation SQL statement.
+fn apply_filter_to_sql(
+    sql: &mut String,
+    params: &mut Vec<DbValue>,
+    related_table: &str,
+    filter_map: Option<&HashMap<String, BoolExpr>>,
+    gen: &dyn ISqlGenerator,
+) {
+    if let Some(filter) = filter_map.and_then(|m| m.get(related_table)) {
+        let mut idx = params.len() + 1;
+        let filter_sql = compile_bool_expr(filter, gen, &mut idx);
+        params.extend(collect_bool_expr_values(filter));
+        *sql = format!("{} AND ({})", sql, filter_sql);
+    }
+}
 
 /// Builds include paths from navigation field names using entity metadata.
 pub fn include_paths_for<T: IEntityType, S: AsRef<str>>(
@@ -34,10 +50,16 @@ fn include_path_from_meta(meta: &EntityTypeMeta, navigation: &str) -> Option<Inc
 }
 
 /// Loads related entities and fills navigation properties on `entities`.
+///
+/// `filter_map` carries per-table query filters (e.g. tenant isolation). When
+/// present, the filter for each related table is appended (AND'd) to the
+/// secondary SELECT so navigation data is scoped consistently with primary
+/// queries.
 pub async fn load_includes<T>(
     entities: &mut [T],
     includes: &[IncludePath],
     provider: &dyn IDatabaseProvider,
+    filter_map: Option<&HashMap<String, BoolExpr>>,
 ) -> EFResult<()>
 where
     T: IEntityType + IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
@@ -54,15 +76,20 @@ where
         };
 
         if nav.kind == NavigationKind::ManyToMany {
-            load_many_to_many(entities, &include.navigation, nav, provider).await?;
+            load_many_to_many(entities, &include.navigation, nav, provider, filter_map).await?;
         } else {
-            load_scalar_navigation(entities, include, nav, &meta, provider).await?;
+            load_scalar_navigation(entities, include, nav, &meta, provider, filter_map).await?;
         }
 
         if !include.nested.is_empty() {
             for entity in entities.iter_mut() {
                 entity
-                    .load_nested_includes(&include.navigation, &include.nested, provider)
+                    .load_nested_includes(
+                        &include.navigation,
+                        &include.nested,
+                        provider,
+                        filter_map,
+                    )
                     .await?;
             }
         }
@@ -76,6 +103,7 @@ async fn load_scalar_navigation<T>(
     nav: &NavigationMeta,
     meta: &EntityTypeMeta,
     provider: &dyn IDatabaseProvider,
+    filter_map: Option<&HashMap<String, BoolExpr>>,
 ) -> EFResult<()>
 where
     T: IEntitySnapshot + INavigationSetter + IGetKeyValues,
@@ -114,15 +142,17 @@ where
             let placeholders: Vec<String> = (0..parent_ids.len())
                 .map(|i| gen.parameter_placeholder(i + 1))
                 .collect();
-            let sql = format!(
+            let mut sql = format!(
                 "SELECT * FROM {} WHERE {} IN ({})",
                 related_table,
                 fk_column,
                 placeholders.join(", ")
             );
+            let mut params = parent_ids;
+            apply_filter_to_sql(&mut sql, &mut params, related_table, filter_map, gen);
 
             let mut conn = provider.get_connection().await?;
-            let rows = conn.query(&sql, &parent_ids).await?;
+            let rows = conn.query(&sql, &params).await?;
             let grouped = group_rows(&rows, nav.fk_row_index);
 
             for entity in entities.iter_mut() {
@@ -147,15 +177,17 @@ where
             let placeholders: Vec<String> = (0..fk_values.len())
                 .map(|i| gen.parameter_placeholder(i + 1))
                 .collect();
-            let sql = format!(
+            let mut sql = format!(
                 "SELECT * FROM {} WHERE {} IN ({})",
                 related_table,
                 ref_column,
                 placeholders.join(", ")
             );
+            let mut params = fk_values;
+            apply_filter_to_sql(&mut sql, &mut params, related_table, filter_map, gen);
 
             let mut conn = provider.get_connection().await?;
-            let rows = conn.query(&sql, &fk_values).await?;
+            let rows = conn.query(&sql, &params).await?;
             let lookup = index_rows(&rows, nav.pk_row_index);
 
             for entity in entities.iter_mut() {
@@ -179,6 +211,7 @@ async fn load_many_to_many<T>(
     navigation: &str,
     nav: &NavigationMeta,
     provider: &dyn IDatabaseProvider,
+    filter_map: Option<&HashMap<String, BoolExpr>>,
 ) -> EFResult<()>
 where
     T: IEntityType + INavigationSetter + IGetKeyValues,
@@ -263,13 +296,21 @@ where
     let rel_placeholders: Vec<String> = (0..related_ids.len())
         .map(|i| gen.parameter_placeholder(i + 1))
         .collect();
-    let related_sql = format!(
+    let mut related_sql = format!(
         "SELECT * FROM {} WHERE {} IN ({})",
         related_table,
         related_pk,
         rel_placeholders.join(", ")
     );
-    let related_rows = conn.query(&related_sql, &related_ids).await?;
+    let mut related_params = related_ids;
+    apply_filter_to_sql(
+        &mut related_sql,
+        &mut related_params,
+        related_table,
+        filter_map,
+        gen,
+    );
+    let related_rows = conn.query(&related_sql, &related_params).await?;
     let related_by_pk = index_rows(&related_rows, nav.pk_row_index);
 
     for entity in entities.iter_mut() {

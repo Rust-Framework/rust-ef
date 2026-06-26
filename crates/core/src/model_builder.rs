@@ -12,6 +12,8 @@ use crate::query::BoolExpr;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::OnceLock;
 
 // ---------------------------------------------------------------------------
 // EntityConfig  - ?stored configuration overrides
@@ -43,6 +45,11 @@ struct PropertyConfigOverride {
 pub struct ModelBuilder {
     entity_metas: Vec<EntityTypeMeta>,
     configs: HashMap<TypeId, EntityConfig>,
+    /// Cache of `build()` output. Invalidated by any mutation.
+    build_cache: OnceLock<Vec<EntityTypeMeta>>,
+    /// Cache of `filters_by_table()` output, shared via `Arc` so DbSets can
+    /// hold a cheap clone without re-traversing configs on every query.
+    filter_cache: OnceLock<Arc<HashMap<String, BoolExpr>>>,
 }
 
 impl ModelBuilder {
@@ -50,7 +57,31 @@ impl ModelBuilder {
         Self {
             entity_metas: Vec::new(),
             configs: HashMap::new(),
+            build_cache: OnceLock::new(),
+            filter_cache: OnceLock::new(),
         }
+    }
+
+    /// Drops the cached `build()` and `filters_by_table()` results.
+    ///
+    /// Called by every mutating method so that subsequent reads observe the
+    /// new configuration. Must be `&mut self` to enforce exclusive access.
+    fn invalidate_cache(&mut self) {
+        self.build_cache.take();
+        self.filter_cache.take();
+    }
+
+    /// Test-only hook: returns `true` if `build()` has populated its cache.
+    #[doc(hidden)]
+    pub fn build_cache_populated(&self) -> bool {
+        self.build_cache.get().is_some()
+    }
+
+    /// Test-only hook: returns `true` if `filters_by_table()` has populated
+    /// its cache.
+    #[doc(hidden)]
+    pub fn filter_cache_populated(&self) -> bool {
+        self.filter_cache.get().is_some()
     }
 
     pub fn entity<T: IEntityType>(&mut self) -> EntityTypeBuilder<'_, T> {
@@ -58,6 +89,7 @@ impl ModelBuilder {
         let type_id = meta.type_id;
         if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
             self.entity_metas.push(meta);
+            self.invalidate_cache();
         }
         self.configs.entry(type_id).or_default();
         EntityTypeBuilder::new(self, type_id)
@@ -72,6 +104,7 @@ impl ModelBuilder {
         let type_id = meta.type_id;
         if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
             self.entity_metas.push(meta);
+            self.invalidate_cache();
         }
 
         let config = C::default();
@@ -82,10 +115,14 @@ impl ModelBuilder {
     }
 
     pub fn build(&self) -> Vec<EntityTypeMeta> {
-        self.entity_metas
-            .iter()
-            .map(|meta| self.apply_config_to_meta(meta))
-            .collect()
+        self.build_cache
+            .get_or_init(|| {
+                self.entity_metas
+                    .iter()
+                    .map(|meta| self.apply_config_to_meta(meta))
+                    .collect()
+            })
+            .clone()
     }
 
     fn apply_config_to_meta(&self, meta: &EntityTypeMeta) -> EntityTypeMeta {
@@ -128,7 +165,17 @@ impl ModelBuilder {
         result
     }
 
+    /// Escape hatch for direct mutation of `entity_metas`.
+    ///
+    /// **Cache caveat**: this returns a `&mut Vec`, so mutations performed
+    /// through it cannot auto-invalidate `build()` / `filters_by_table()`.
+    /// Callers that mutate via this handle must drop the borrow and perform
+    /// any subsequent Fluent API mutation (or never read the caches again
+    /// in this context). Prefer `register_entity_meta()` / `entity::<T>()`
+    /// for cache-safe registration.
     pub fn entity_metas_mut(&mut self) -> &mut Vec<EntityTypeMeta> {
+        // Note: cannot call invalidate_cache() here because the returned
+        // &mut Vec would conflict. Documented as a manual-invalidation path.
         &mut self.entity_metas
     }
 
@@ -154,6 +201,7 @@ impl ModelBuilder {
         let type_id = meta.type_id;
         if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
             self.entity_metas.push(meta);
+            self.invalidate_cache();
         }
         self.configs.entry(type_id).or_default();
     }
@@ -171,6 +219,7 @@ impl ModelBuilder {
             self.entity_metas.push(meta);
         }
 
+        self.invalidate_cache();
         self
     }
 
@@ -180,22 +229,27 @@ impl ModelBuilder {
             .and_then(|c| c.query_filter.as_ref())
     }
 
-    /// Collects all registered query filters keyed by (effective) table name.
-    /// Used by NavigationLoader to apply tenant isolation to secondary queries.
-    pub fn filters_by_table(&self) -> HashMap<String, BoolExpr> {
-        let mut map = HashMap::new();
-        for meta in &self.entity_metas {
-            if let Some(config) = self.configs.get(&meta.type_id) {
-                if let Some(filter) = &config.query_filter {
-                    let table_name = config
-                        .table_name
-                        .clone()
-                        .unwrap_or_else(|| meta.table_name.to_string());
-                    map.insert(table_name, filter.clone());
+    /// Collects all registered query filters keyed by compile-time table name
+    /// (i.e. `EntityTypeMeta.table_name` from `#[table("...")]`).
+    ///
+    /// This must match the `related_table` stored in navigation metadata, which
+    /// is also the compile-time name — NOT the Fluent API override. If a Fluent
+    /// `to_table()` override renames the table, the navigation SQL and the
+    /// filter lookup both use the compile-time name, staying consistent.
+    pub fn filters_by_table(&self) -> Arc<HashMap<String, BoolExpr>> {
+        self.filter_cache
+            .get_or_init(|| {
+                let mut map = HashMap::new();
+                for meta in &self.entity_metas {
+                    if let Some(config) = self.configs.get(&meta.type_id) {
+                        if let Some(filter) = &config.query_filter {
+                            map.insert(meta.table_name.to_string(), filter.clone());
+                        }
+                    }
                 }
-            }
-        }
-        map
+                Arc::new(map)
+            })
+            .clone()
     }
 
     /// Returns seed rows configured via `EntityTypeBuilder::has_data`.
@@ -236,6 +290,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         if let Some(config) = self.model.configs.get_mut(&self.type_id) {
             config.table_name = Some(name.to_string());
         }
+        self.model.invalidate_cache();
         self
     }
 
@@ -253,6 +308,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         if let Some(config) = self.model.configs.get_mut(&self.type_id) {
             config.primary_key_fields = Some(vec![field_name.to_string()]);
         }
+        self.model.invalidate_cache();
         self
     }
 
@@ -260,6 +316,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         if let Some(config) = self.model.configs.get_mut(&self.type_id) {
             config.primary_key_fields = Some(field_names.iter().map(|s| s.to_string()).collect());
         }
+        self.model.invalidate_cache();
         self
     }
 
@@ -271,6 +328,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         if let Some(config) = self.model.configs.get_mut(&self.type_id) {
             config.primary_key_fields = Some(columns.iter().map(|s| s.to_string()).collect());
         }
+        self.model.invalidate_cache();
         self
     }
 
@@ -291,6 +349,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
                 override_cfg.has_index = Some(true);
             }
         }
+        self.model.invalidate_cache();
         self
     }
 
@@ -302,6 +361,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         if let Some(config) = self.model.configs.get_mut(&self.type_id) {
             config.seed_rows = data.iter().map(|e| e.snapshot()).collect();
         }
+        self.model.invalidate_cache();
         self
     }
 }
@@ -320,6 +380,9 @@ pub struct PropertyBuilder<'a, T, V = ()> {
 
 impl<'a, T, V> PropertyBuilder<'a, T, V> {
     fn override_entry(&mut self) -> &mut PropertyConfigOverride {
+        // Invalidate caches before mutating so a subsequent `build()` /
+        // `filters_by_table()` reflects the new override.
+        self.model.invalidate_cache();
         self.model
             .configs
             .entry(self.type_id)

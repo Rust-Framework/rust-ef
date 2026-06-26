@@ -205,11 +205,11 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                     nested_loader_arms.push(quote! {
                         if parent_navigation == #field_name_str && !nested.is_empty() {
                             let children = self.#field_name.items_mut();
-                            rust_ef::navigation_loader::load_includes(children, nested, provider).await?;
+                            rust_ef::navigation_loader::load_includes(children, nested, provider, filter_map).await?;
                             for path in nested {
                                 if !path.nested.is_empty() {
                                     for child in children.iter_mut() {
-                                        child.load_nested_includes(&path.navigation, &path.nested, provider).await?;
+                                        child.load_nested_includes(&path.navigation, &path.nested, provider, filter_map).await?;
                                     }
                                 }
                             }
@@ -233,10 +233,11 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                                     std::slice::from_mut(related),
                                     nested,
                                     provider,
+                                    filter_map,
                                 ).await?;
                                 for path in nested {
                                     if !path.nested.is_empty() {
-                                        related.load_nested_includes(&path.navigation, &path.nested, provider).await?;
+                                        related.load_nested_includes(&path.navigation, &path.nested, provider, filter_map).await?;
                                     }
                                 }
                             }
@@ -260,10 +261,11 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                                     std::slice::from_mut(related),
                                     nested,
                                     provider,
+                                    filter_map,
                                 ).await?;
                                 for path in nested {
                                     if !path.nested.is_empty() {
-                                        related.load_nested_includes(&path.navigation, &path.nested, provider).await?;
+                                        related.load_nested_includes(&path.navigation, &path.nested, provider, filter_map).await?;
                                     }
                                 }
                             }
@@ -504,6 +506,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 parent_navigation: &str,
                 nested: &[rust_ef::query::IncludePath],
                 provider: &dyn rust_ef::provider::IDatabaseProvider,
+                filter_map: ::core::option::Option<&std::collections::HashMap<String, rust_ef::query::BoolExpr>>,
             ) -> rust_ef::error::EFResult<()> {
                 #( #nested_loader_arms )*
                 Ok(())

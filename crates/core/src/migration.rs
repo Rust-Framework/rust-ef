@@ -916,7 +916,7 @@ impl MigrationEngine {
                 })
                 .collect();
 
-            let sql = seed_insert_sql(self.dialect, meta.table_name.as_ref(), &col_names, &*gen);
+            let sql = seed_insert_sql(self.dialect, meta.table_name.as_ref(), &col_names, gen);
             conn.execute(&sql, &params).await?;
         }
         Ok(())

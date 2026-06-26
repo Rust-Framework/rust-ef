@@ -659,10 +659,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Attaches a global filter map (table_name → BoolExpr) for NavigationLoader.
-    pub(crate) fn with_filter_map(
-        mut self,
-        map: Option<Arc<HashMap<String, BoolExpr>>>,
-    ) -> Self {
+    pub(crate) fn with_filter_map(mut self, map: Option<Arc<HashMap<String, BoolExpr>>>) -> Self {
         self.filter_map = map;
         self
     }
@@ -807,6 +804,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let sub = f(QueryBuilder {
             state: QueryState::new(&self.state.from),
             provider: self.provider.clone(),
+            filter_map: None,
             _phantom: PhantomData,
         });
         let right = sub.state.where_expr.or_else(|| {
@@ -1163,7 +1161,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     pub fn to_sql(&self) -> String {
         if let Some(provider) = &self.provider {
             let gen = provider.sql_generator();
-            self.state.to_sql_with(&*gen)
+            self.state.to_sql_with(gen)
         } else {
             self.state.to_sql()
         }
@@ -1175,7 +1173,7 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     fn compile_state_sql(state: &QueryState, provider: &Arc<dyn IDatabaseProvider>) -> String {
         let gen = provider.sql_generator();
-        state.to_sql_with(&*gen)
+        state.to_sql_with(gen)
     }
 
     /// Executes the query and returns all matching entities.
@@ -1443,9 +1441,9 @@ impl<T: IEntityType> QueryBuilder<T> {
         let gen = provider.sql_generator();
         let where_clause = if let Some(ref expr) = self.state.where_expr {
             let mut param_idx = 1usize;
-            compile_bool_expr(expr, &*gen, &mut param_idx)
+            compile_bool_expr(expr, gen, &mut param_idx)
         } else {
-            build_where_clauses(&self.state.filters, &*gen)
+            build_where_clauses(&self.state.filters, gen)
         };
         let sql = if where_clause.is_empty() {
             format!("DELETE FROM {}", self.state.from)
@@ -1484,11 +1482,11 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
 
     /// Returns the generated SQL.
     pub fn to_sql(&self) -> String {
-        let gen = self
+        let gen: &'static dyn crate::provider::ISqlGenerator = self
             .provider
             .as_ref()
             .map(|p| p.sql_generator())
-            .unwrap_or_else(|| Box::new(PortablePlaceholderGenerator));
+            .unwrap_or(&PortablePlaceholderGenerator);
         let mut param_idx = 1usize;
         let sets: Vec<String> = self
             .updates
@@ -1501,9 +1499,9 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
             .collect();
         let where_clause = if let Some(ref expr) = self.state.where_expr {
             let mut param_idx = param_idx;
-            compile_bool_expr(expr, &*gen, &mut param_idx)
+            compile_bool_expr(expr, gen, &mut param_idx)
         } else {
-            build_where_clause_with_offset(&self.state.filters, &*gen, param_idx)
+            build_where_clause_with_offset(&self.state.filters, gen, param_idx)
         };
         if where_clause.is_empty() {
             format!("UPDATE {} SET {}", self.state.from, sets.join(", "))
@@ -1555,7 +1553,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     pub fn to_sql(&self) -> String {
         if let Some(provider) = &self.provider {
             let gen = provider.sql_generator();
-            self.state.to_sql_with(&*gen)
+            self.state.to_sql_with(gen)
         } else {
             self.state.to_sql()
         }
@@ -1569,7 +1567,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
             )
         })?;
         let gen = provider.sql_generator();
-        let sql = self.state.to_sql_with(&*gen);
+        let sql = self.state.to_sql_with(gen);
         let params = self.state.params().to_vec();
         let mut conn = provider.get_connection().await?;
         conn.query(&sql, &params).await

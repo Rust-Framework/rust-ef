@@ -38,6 +38,24 @@
 //! let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
 //! let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
 //! ```
+//!
+//! ## Scoped Lifetime
+//!
+//! `add_dbcontext` registers the context as **Scoped** — the same instance is
+//! reused within a single DI `Scope`, and different scopes are isolated.
+//! Resolving directly from the root `ServiceProvider` (without creating a
+//! scope) degrades to a fresh instance per call (transient).
+//!
+//! Use `DbContextScopeExt::create_dbcontext_scope()` to create a scope:
+//! ```rust,ignore
+//! let scope = provider.create_dbcontext_scope();
+//! let ctx: Arc<dyn IDbContext> = scope.get();
+//! // Multiple `get` calls within `scope` return the same instance.
+//! ```
+//!
+//! This mirrors EFCore's `ServiceLifetime.Scoped` and is essential for
+//! unit-of-work isolation: each request/operation gets its own `DbContext`,
+//! preventing cross-request tracking pollution.
 
 use crate::db_context::{DbContext, DbContextOptions, DbContextOptionsBuilder, IDbContext};
 use std::sync::Arc;
