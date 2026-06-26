@@ -384,6 +384,17 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             nav_field_consts.push(quote! {
                 pub const #const_name: &'static str = #name_str;
             });
+
+            // G5: Emit `NAV_RELATED_<NAME>` — related entity type name for subquery resolution.
+            let nav_info = detect_navigation_type(field_ty);
+            let related_type_name = type_ident_string(&nav_info.related);
+            let nav_related_const = syn::Ident::new(
+                &format!("NAV_RELATED_{}", name_str.to_uppercase()),
+                field_name.span(),
+            );
+            nav_field_consts.push(quote! {
+                pub const #nav_related_const: &'static str = #related_type_name;
+            });
         }
     }
 
