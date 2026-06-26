@@ -16,3 +16,6 @@ edition = "2021"
 license = "MIT"
 repository = "https://gitcode.com/rf2026/rust-ef"
 authors = ["Start"]
+
+[workspace.dependencies]
+inventory = "0.3"

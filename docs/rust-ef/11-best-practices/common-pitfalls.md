@@ -33,20 +33,40 @@ let expr = linq!(|b| b.rating > 5);
 let expr = linq!(|b: Blog| b.rating > 5);
 ```
 
-## 4. `ensure_created()` 在 `set::<T>()` 之前调用
+## 4. `ensure_created()` 找不到实体（v0.5.1 已修复）
 
-rust-ef 与 EFCore 的关键差异：EFCore 通过 `DbContext` 的 `DbSet<T>` 静态属性预先声明实体类型，模型在 `OnModelCreating` 中构建完备；rust-ef 无静态 `DbSet<T>` 属性，模型通过 `set::<T>()` 调用动态构建（`entity_metas` 在 `set::<T>()` 时填充）。因此 `ensure_created()` 必须在所有 `set::<T>()` 注册完成后调用，否则 `entity_metas` 为空会报 `No entity types registered`。
+**v0.5.1 之前**：必须先调用 `ctx.set::<T>()`，否则 `ensure_created()` 看不到任何实体，会报 `No entity types registered`。
 
 ```rust
-// ❌ 错误：entity_metas 为空，ensure_created 报 "No entity types registered"
+// ❌ v0.5.0：entity_metas 为空，ensure_created 报错
 ctx.ensure_created().await?;
 ctx.set::<Blog>();
 
-// ✅ 正确：先注册所有实体，再建表
+// ✅ v0.5.0：先注册所有实体，再建表
 ctx.set::<Blog>();
 ctx.set::<Post>();
 ctx.ensure_created().await?;
 ```
+
+**v0.5.1 之后**：调用 `ctx.discover_entities()` 即可自动注册所有 `#[derive(EntityType)]` 标注的类型，无需手动 `set::<T>()`：
+
+```rust
+// ✅ v0.5.1：自动发现所有实体并应用 #[entity_config] 配置
+let mut ctx = DbContext::from_options(&options)?;
+ctx.discover_entities()?;
+ctx.ensure_created().await?;
+```
+
+**重要修复**：v0.5.1 同时修复了 `ensure_created()` 绕过 Fluent API 配置的 Bug。之前的版本中，`ctx.model().entity::<Blog>().to_table("blogs2")` 等配置会被 `ensure_created()` 静默忽略；现在 `ensure_created()` 通过 `model_builder.build()` 应用所有 Fluent API 与 `#[entity_config(T)]` 配置覆盖。
+
+**迁移建议**：
+- 现有代码无需修改（`set::<T>()` 仍向后兼容）
+- 新代码推荐使用 `discover_entities()` 简化样板
+- Fluent API 配置现在会真正生效
+
+**调试技巧**：
+- 使用 `inventory::iter::<rust_ef::registration::EntityRegistration>().count()` 查看注册的实体数量
+- 使用 `ctx.model().build()` 检查最终的 `EntityTypeMeta` 列表
 
 ## 5. 在循环里逐条 `save_changes()`
 

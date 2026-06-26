@@ -1,4 +1,10 @@
 //! Blog example — demonstrates core rust-ef features with type-map `DbContext`.
+//!
+//! This example uses the v0.5.1+ auto-registration pattern:
+//! - `#[derive(EntityType)]` automatically registers Blog/Post with `inventory`
+//! - `#[entity_config(Blog)]` applies Fluent API overrides (renamed table & column)
+//! - `ctx.discover_entities()` discovers all registered entities
+//! - `ctx.ensure_created()` applies all configurations and creates the schema
 
 mod context;
 mod entities;
@@ -14,6 +20,32 @@ async fn main() -> Result<(), EFError> {
     println!("=== Rust Entity Framework (rust-ef) Blog Example ===\n");
 
     let mut ctx = create_blog_context().await?;
+
+    println!("[0] Verify #[entity_config] overrides are applied...");
+    {
+        let metas = ctx.model().build();
+        let blog_meta = metas
+            .iter()
+            .find(|m| m.type_name.contains("Blog"))
+            .expect("Blog should be discovered");
+        println!(
+            "    Blog table: {} (renamed from 'blogs' by BlogConfig)",
+            blog_meta.table_name
+        );
+        let url_prop = blog_meta
+            .properties
+            .iter()
+            .find(|p| p.field_name.as_ref() == "url")
+            .expect("url property should exist");
+        println!(
+            "    url column: {} (renamed from 'url' by BlogConfig), max_length: {:?}",
+            url_prop.column_name, url_prop.max_length
+        );
+        assert_eq!(blog_meta.table_name.as_ref(), "blogs_renamed");
+        assert_eq!(url_prop.column_name.as_ref(), "blog_url");
+        assert_eq!(url_prop.max_length, Some(500));
+        println!("    All overrides verified.");
+    }
 
     println!("[1] Adding a new blog...");
     ctx.set::<Blog>().add(Blog {
@@ -64,13 +96,10 @@ async fn main() -> Result<(), EFError> {
     println!("[7] Migration snapshot demo...");
     let engine =
         rust_ef::migration::MigrationEngine::new(rust_ef::migration::MigrationDialect::Sqlite);
-    let migration = engine.generate(
-        "InitialCreate",
-        &[Blog::entity_meta(), Post::entity_meta()],
-        &None,
-    )?;
+    let metas = ctx.model().build();
+    let migration = engine.generate("InitialCreate", &metas, &None)?;
     println!(
-        "    Generated migration SQL ({} chars).",
+        "    Generated migration SQL ({} chars) using configured metas.",
         migration.up_sql.len()
     );
 

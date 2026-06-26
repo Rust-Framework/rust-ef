@@ -179,10 +179,14 @@ mod sqlite_crud {
         let mut conn: Box<dyn IAsyncConnection> =
             arc_provider.get_connection().await.expect("get connection");
         conn.begin_transaction().await.expect("begin tx");
-        let (added, _, _) =
-            rust_ef::db_context::save_one_set(&mut *conn, &*arc_provider, &mut db_set)
-                .await
-                .expect("save");
+        let (added, _, _) = rust_ef::db_context::save_one_set(
+            &mut *conn,
+            &*arc_provider,
+            &mut db_set,
+            &TestItem::entity_meta(),
+        )
+        .await
+        .expect("save");
         conn.commit_transaction().await.expect("commit");
         assert_eq!(added, 2);
         db_set.clear_entries();
@@ -223,9 +227,14 @@ mod sqlite_crud {
 
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
-            .await
-            .unwrap();
+        rust_ef::db_context::save_one_set(
+            &mut *conn,
+            &*provider,
+            &mut db_set,
+            &TestItem::entity_meta(),
+        )
+        .await
+        .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
@@ -272,9 +281,14 @@ mod sqlite_crud {
         }
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
-            .await
-            .unwrap();
+        rust_ef::db_context::save_one_set(
+            &mut *conn,
+            &*provider,
+            &mut db_set,
+            &TestItem::entity_meta(),
+        )
+        .await
+        .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
@@ -305,9 +319,14 @@ mod sqlite_crud {
         }
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
-            .await
-            .unwrap();
+        rust_ef::db_context::save_one_set(
+            &mut *conn,
+            &*provider,
+            &mut db_set,
+            &TestItem::entity_meta(),
+        )
+        .await
+        .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
@@ -351,9 +370,14 @@ mod sqlite_crud {
 
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
-            .await
-            .unwrap();
+        rust_ef::db_context::save_one_set(
+            &mut *conn,
+            &*provider,
+            &mut db_set,
+            &TestItem::entity_meta(),
+        )
+        .await
+        .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 
@@ -390,9 +414,14 @@ mod sqlite_crud {
         }
         let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
         conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(&mut *conn, &*provider, &mut db_set)
-            .await
-            .unwrap();
+        rust_ef::db_context::save_one_set(
+            &mut *conn,
+            &*provider,
+            &mut db_set,
+            &TestItem::entity_meta(),
+        )
+        .await
+        .unwrap();
         conn.commit_transaction().await.unwrap();
         db_set.clear_entries();
 

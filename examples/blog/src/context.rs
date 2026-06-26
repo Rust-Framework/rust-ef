@@ -1,30 +1,30 @@
-//! Application `DbContext` using type-map set storage.
+//! Application `DbContext` using inventory-based auto-registration.
+//!
+//! Demonstrates the v0.5.1+ pattern:
+//! 1. `#[derive(EntityType)]` automatically registers entities with `inventory`
+//! 2. `#[entity_config(Blog)]` registers `BlogConfig` configuration
+//! 3. `ctx.discover_entities()` populates both STORE A (entity_metas) and
+//!    STORE B (model_builder) from the global registry
+//! 4. `ctx.ensure_created()` applies all `#[entity_config]` overrides via
+//!    `model_builder.build()`, then creates the schema
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
-use rust_ef::entity::IEntityType;
 use rust_ef::error::EFResult;
-use rust_ef::migration::{MigrationDialect, MigrationEngine};
-use rust_ef::provider::IDatabaseProvider;
-use rust_ef_sqlite::SqliteProvider;
-use std::sync::Arc;
+use rust_ef_sqlite::DbContextOptionsBuilderExt;
 
-use super::entities::{Blog, Post};
-
-/// Creates an in-memory SQLite `DbContext` with Blog/Post schema.
+/// Creates an in-memory SQLite `DbContext` with auto-discovered schema.
+///
+/// The schema is built from:
+/// - All `#[derive(EntityType)]` types in this crate (Blog, Post)
+/// - All `#[entity_config(T)]` configurations (BlogConfig renames the table
+///   to `blogs_renamed` and the `url` column to `blog_url`)
 pub async fn create_blog_context() -> EFResult<DbContext> {
-    let provider = Arc::new(SqliteProvider::new_in_memory()?);
-    let metas = vec![Blog::entity_meta(), Post::entity_meta()];
-    MigrationEngine::new(MigrationDialect::Sqlite)
-        .ensure_created(&*provider, &metas)
-        .await?;
-
-    let shared = provider.clone();
-    #[allow(clippy::type_complexity)]
-    let factory: Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync> =
-        Arc::new(move |_| Ok(shared.clone() as Arc<dyn IDatabaseProvider>));
-
     let mut builder = DbContextOptionsBuilder::new();
-    builder.connection_string(":memory:");
-    builder.set_provider_factory("sqlite", ":memory:", factory);
-    DbContext::from_options(&builder.build())
+    builder.use_sqlite_in_memory();
+    let mut ctx = DbContext::from_options(&builder.build())?;
+
+    ctx.discover_entities()?;
+    ctx.ensure_created().await?;
+
+    Ok(ctx)
 }

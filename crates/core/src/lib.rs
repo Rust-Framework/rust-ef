@@ -36,12 +36,15 @@ pub mod model_builder;
 pub mod navigation_loader;
 pub mod provider;
 pub mod query;
+pub mod registration;
 pub mod relations;
 pub mod tracking;
 
 pub use async_trait;
 
-pub use rust_ef_macros::{column, linq, EntityType};
+pub use inventory;
+
+pub use rust_ef_macros::{column, entity_config, linq, EntityType};
 
 /// Re-exports of the most commonly used types.
 pub mod prelude {
@@ -66,9 +69,11 @@ pub mod prelude {
     pub use crate::provider::DbValue;
     pub use crate::provider::IDatabaseProvider;
     pub use crate::query::BoolExpr;
+    pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::tracking::ChangeTracker;
     pub use rust_ef_macros::column;
+    pub use rust_ef_macros::entity_config;
     pub use rust_ef_macros::linq;
     pub use rust_ef_macros::EntityType;
 }

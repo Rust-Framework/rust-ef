@@ -23,6 +23,7 @@ use crate::metadata::EntityTypeMeta;
 use crate::migration::MigrationEngine;
 use crate::model_builder::ModelBuilder;
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
+use crate::registration::{EntityConfigRegistration, EntityRegistration};
 use crate::tracking::ChangeTracker;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -155,6 +156,7 @@ trait ErasedSetOps: Send + Sync {
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
     ) -> EFResult<(usize, usize, usize)>;
     fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync));
     fn clear(&self, raw_set: &mut (dyn Any + Send + Sync + 'static));
@@ -188,11 +190,12 @@ where
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
     ) -> EFResult<(usize, usize, usize)> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
             .expect("SetOps type mismatch");
-        save_one_set(conn, provider, db_set).await
+        save_one_set(conn, provider, db_set, meta).await
     }
     fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync)) {
         if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
@@ -253,10 +256,18 @@ impl DbContext {
         self.entity_metas
             .entry(type_id)
             .or_insert_with(T::entity_meta);
+        if !self.model_builder.has_entity(type_id) {
+            self.model_builder.register_entity_meta(T::entity_meta());
+        }
         self.sets.entry(type_id).or_insert_with(|| {
-            let meta = T::entity_meta();
-            let mut db_set =
-                DbSet::<T>::with_provider(meta.table_name.as_ref(), Arc::clone(&self.provider));
+            let table_name = self
+                .model_builder
+                .build()
+                .into_iter()
+                .find(|m| m.type_id == type_id)
+                .map(|m| m.table_name.to_string())
+                .unwrap_or_else(|| T::entity_meta().table_name.to_string());
+            let mut db_set = DbSet::<T>::with_provider(table_name, Arc::clone(&self.provider));
             if let Some(filter) = self.model_builder.get_query_filter(&type_id) {
                 db_set.set_query_filter(filter.clone());
             }
@@ -273,6 +284,41 @@ impl DbContext {
         &mut self.model_builder
     }
 
+    /// Discovers all entity types registered via `#[derive(EntityType)]`
+    /// and applies all `#[entity_config(T)]` configurations to the model builder.
+    ///
+    /// After calling this, `ensure_created()` and `ensure_deleted()` will
+    /// process all discovered entities without requiring manual `set::<T>()`
+    /// calls. Calling `set::<T>()` for discovered entities is idempotent —
+    /// it only creates the `DbSet` instance and `SetOps` saver, since the
+    /// metadata is already present.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut ctx = DbContext::from_options(&options)?;
+    /// ctx.discover_entities()?;
+    /// ctx.ensure_created().await?;
+    /// ```
+    pub fn discover_entities(&mut self) -> EFResult<()> {
+        for reg in inventory::iter::<EntityConfigRegistration> {
+            (reg.apply_fn)(&mut self.model_builder);
+        }
+
+        for reg in inventory::iter::<EntityRegistration> {
+            let meta = reg.meta();
+            let type_id = reg.type_id;
+            self.entity_metas
+                .entry(type_id)
+                .or_insert_with(|| meta.clone());
+            if !self.model_builder.has_entity(type_id) {
+                self.model_builder.register_entity_meta(meta);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Detects changes on all tracked DbSets by comparing property snapshots.
     pub fn detect_changes(&mut self) {
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
@@ -285,13 +331,20 @@ impl DbContext {
         }
     }
 
-    /// Creates all tables for entity types registered via `set::<T>()`.
-    /// Corresponds to EF Core `Database.EnsureCreated()`.
+    /// Creates all tables for registered entity types.
+    ///
+    /// Sources metas from `model_builder.build()`, which applies all Fluent
+    /// API configurations and `#[entity_config(T)]` overrides. Entities are
+    /// discovered automatically via `#[derive(EntityType)]`; call
+    /// `discover_entities()` first, or use `set::<T>()` to register manually.
     pub async fn ensure_created(&self) -> EFResult<()> {
-        let metas: Vec<EntityTypeMeta> = self.entity_metas.values().cloned().collect();
+        let mut metas: Vec<EntityTypeMeta> = self.model_builder.build();
+        if metas.is_empty() {
+            metas = self.entity_metas.values().cloned().collect();
+        }
         if metas.is_empty() {
             return Err(EFError::Configuration(
-                "No entity types registered. Call ctx.set::<T>() before ensure_created().".into(),
+                "No entity types registered. Call ctx.discover_entities() or ctx.set::<T>() before ensure_created().".into(),
             ));
         }
         let dialect = self.provider.migration_dialect();
@@ -299,8 +352,8 @@ impl DbContext {
             .ensure_created(&*self.provider, &metas)
             .await?;
 
-        for (type_id, meta) in &self.entity_metas {
-            let rows = self.model_builder.seed_rows_for(type_id);
+        for meta in &metas {
+            let rows = self.model_builder.seed_rows_for(&meta.type_id);
             if !rows.is_empty() {
                 MigrationEngine::new(dialect)
                     .apply_seed_data(&*self.provider, meta, rows)
@@ -310,13 +363,15 @@ impl DbContext {
         Ok(())
     }
 
-    /// Drops all tables for entity types registered via `set::<T>()`.
-    /// Corresponds to EF Core `Database.EnsureDeleted()`.
+    /// Drops all tables for registered entity types.
     pub async fn ensure_deleted(&self) -> EFResult<()> {
-        let metas: Vec<EntityTypeMeta> = self.entity_metas.values().cloned().collect();
+        let mut metas: Vec<EntityTypeMeta> = self.model_builder.build();
+        if metas.is_empty() {
+            metas = self.entity_metas.values().cloned().collect();
+        }
         if metas.is_empty() {
             return Err(EFError::Configuration(
-                "No entity types registered. Call ctx.set::<T>() before ensure_deleted().".into(),
+                "No entity types registered. Call ctx.discover_entities() or ctx.set::<T>() before ensure_deleted().".into(),
             ));
         }
         let dialect = self.provider.migration_dialect();
@@ -396,6 +451,15 @@ impl IDbContext for DbContext {
                 .detect_changes(set.as_mut());
         }
 
+        // Build configured metas from model_builder so that Fluent API overrides
+        // (to_table, has_column_name, etc.) are respected during save operations.
+        let configured_metas: HashMap<TypeId, EntityTypeMeta> = self
+            .model_builder
+            .build()
+            .into_iter()
+            .map(|m| (m.type_id, m))
+            .collect();
+
         // --- Interceptor: on_saving (pre-commit) ---
         let save_ctx = SaveChangesContext::from_tracker(&self.change_tracker);
         self.interceptor_pipeline.on_saving(&save_ctx).await?;
@@ -410,7 +474,14 @@ impl IDbContext for DbContext {
         for type_id in &type_ids {
             let saver = self.savers.get(type_id).expect("saver not registered");
             let set = self.sets.get_mut(type_id).unwrap();
-            let (a, u, d) = match saver.save(&mut *conn, &*self.provider, set.as_mut()).await {
+            let meta = configured_metas
+                .get(type_id)
+                .or_else(|| self.entity_metas.get(type_id))
+                .expect("meta not found for entity type");
+            let (a, u, d) = match saver
+                .save(&mut *conn, &*self.provider, set.as_mut(), meta)
+                .await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     let _ = conn.rollback_transaction().await;
@@ -464,25 +535,25 @@ pub async fn save_one_set<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
     db_set: &mut DbSet<E>,
+    meta: &EntityTypeMeta,
 ) -> EFResult<(usize, usize, usize)>
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow,
 {
-    let meta = E::entity_meta();
     let added: Vec<(&E, &EntityTypeMeta)> = db_set
         .tracked_by_state(crate::entity::EntityState::Added)
         .into_iter()
-        .map(|(e, _)| (e, &meta))
+        .map(|(e, _)| (e, meta))
         .collect();
     let modified: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
         .tracked_by_state(crate::entity::EntityState::Modified)
         .into_iter()
-        .map(|(e, orig)| (e, &meta, orig))
+        .map(|(e, orig)| (e, meta, orig))
         .collect();
     let deleted: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
         .tracked_by_state(crate::entity::EntityState::Deleted)
         .into_iter()
-        .map(|(e, orig)| (e, &meta, orig))
+        .map(|(e, orig)| (e, meta, orig))
         .collect();
     let mut ac = 0usize;
     let mut uc = 0usize;

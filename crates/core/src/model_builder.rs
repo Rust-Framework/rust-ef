@@ -137,6 +137,27 @@ impl ModelBuilder {
         self.entity_metas.iter().find(|m| m.type_id == type_id)
     }
 
+    /// Returns `true` if an entity with the given `type_id` is already
+    /// registered in STORE B.
+    pub fn has_entity(&self, type_id: TypeId) -> bool {
+        self.entity_metas.iter().any(|m| m.type_id == type_id)
+    }
+
+    /// Registers an entity meta directly, without going through
+    /// `entity::<T>()`. Used by `DbContext::discover_entities()` to populate
+    /// STORE B from `inventory::iter::<EntityRegistration>()`.
+    ///
+    /// Ensures a corresponding `EntityConfig` entry exists so that subsequent
+    /// Fluent API calls (`to_table`, `property_named`, etc.) have somewhere
+    /// to write their overrides.
+    pub fn register_entity_meta(&mut self, meta: EntityTypeMeta) {
+        let type_id = meta.type_id;
+        if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
+            self.entity_metas.push(meta);
+        }
+        self.configs.entry(type_id).or_default();
+    }
+
     /// Registers a global query filter for entity type `T`.
     ///
     /// Accepts a `BoolExpr` produced by `linq!(filter |b: T| ...)`.

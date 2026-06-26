@@ -1,15 +1,18 @@
 //! Entity type definitions -- Blog and Post.
 //!
 //! These demonstrate the core entity definition pattern with
-//! `#[derive(EntityType)]` and attribute-based configuration.
+//! `#[derive(EntityType)]` and attribute-based configuration,
+//! plus the `#[entity_config(T)]` attribute for separating configuration
+//! from entity definition (EFCore `IEntityTypeConfiguration<T>` pattern).
 
 use rust_ef::prelude::*;
 
 /// Represents a Blog -- analogous to EFCore's Blog entity.
 ///
 /// # Attributes
-/// - `#[derive(EntityType)]`: Auto-implements IEntityType trait
-/// - `#[table("blogs")]`: Maps to the `blogs` table
+/// - `#[derive(EntityType)]`: Auto-implements IEntityType trait + registers
+///   with `inventory` for automatic discovery via `DbContext::discover_entities()`
+/// - `#[table("blogs")]`: Maps to the `blogs` table (overridden by `BlogConfig`)
 /// - `#[primary_key]`: Primary key (EFCore: `[Key]`)
 /// - `#[auto_increment]`: Auto-increment / identity column
 /// - `#[required]`: NOT NULL constraint (EFCore: `[Required]`)
@@ -36,6 +39,39 @@ pub struct Blog {
     /// (EFCore: `public ICollection<Post> Posts { get; set; }`)
     #[navigation]
     pub posts: HasMany<Post>,
+}
+
+/// Configuration for `Blog` -- separated from entity definition.
+///
+/// Mirrors EFCore's `IEntityTypeConfiguration<Blog>` pattern:
+/// ```csharp
+/// public class BlogConfiguration : IEntityTypeConfiguration<Blog>
+/// {
+///     public void Configure(EntityTypeBuilder<Blog> builder)
+///     {
+///         builder.ToTable("blogs_renamed");
+///         builder.Property(b => b.Url).HasColumnName("blog_url").HasMaxLength(500);
+///     }
+/// }
+/// ```
+///
+/// The `#[entity_config(Blog)]` attribute emits an `inventory::submit!`
+/// registering this configuration, which `DbContext::discover_entities()`
+/// automatically discovers and applies before `ensure_created()` builds
+/// the schema.
+#[derive(Default)]
+pub struct BlogConfig;
+
+#[entity_config(Blog)]
+impl IEntityTypeConfiguration<Blog> for BlogConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
+        entity.to_table("blogs_renamed");
+        entity
+            .property_named("url")
+            .has_column_name("blog_url")
+            .has_max_length(500);
+        entity.property_named("rating").has_index();
+    }
 }
 
 /// Represents a Post -- analogous to EFCore's Post entity.

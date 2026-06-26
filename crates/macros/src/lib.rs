@@ -2,6 +2,7 @@
 
 mod column_macro;
 mod entity;
+mod entity_config;
 mod linq;
 
 use proc_macro::TokenStream;
@@ -44,4 +45,28 @@ pub fn column(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn linq(input: TokenStream) -> TokenStream {
     linq::expand_linq(input)
+}
+
+/// Attribute macro for `impl IEntityTypeConfiguration<T>` blocks.
+///
+/// Emits an `inventory::submit!` registering the configuration for automatic
+/// discovery by `DbContext::ensure_created()`. The argument is the entity
+/// type `T`; the config type is taken from the `impl`'s `Self` type.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Default)]
+/// pub struct BlogConfig;
+///
+/// #[entity_config(Blog)]
+/// impl IEntityTypeConfiguration<Blog> for BlogConfig {
+///     fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
+///         entity.to_table("blogs_renamed");
+///     }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn entity_config(args: TokenStream, input: TokenStream) -> TokenStream {
+    entity_config::expand_entity_config(args, input)
 }

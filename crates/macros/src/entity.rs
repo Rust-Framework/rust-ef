@@ -509,6 +509,14 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 Ok(())
             }
         }
+
+        rust_ef::inventory::submit!({
+            rust_ef::registration::EntityRegistration {
+                type_id: std::any::TypeId::of::<#struct_name>(),
+                type_name: stringify!(#struct_name),
+                meta_fn: <#struct_name as rust_ef::entity::IEntityType>::entity_meta,
+            }
+        });
     };
 
     TokenStream::from(expanded)
