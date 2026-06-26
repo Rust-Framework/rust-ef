@@ -291,7 +291,16 @@ fn parse_query(input: syn::parse::ParseStream) -> syn::Result<QueryInput> {
         if input.peek(Token![|]) {
             // Typed closure: source is a QueryBuilder
             if is_source_expr(&first) {
-                let (entity, where_param, where_body) = parse_typed_closure(input)?;
+                // G4: Allow both typed (`|b: T| body`) and untyped (`|b| body`)
+                // closures. For untyped, the entity type is inferred from the
+                // source expression's turbofish (e.g. `ctx.set::<Blog>()`).
+                // If the source has no turbofish (e.g. `db_set.query()`), fall
+                // back to requiring a typed closure.
+                let source_entity = source_entity_type(&first).ok();
+                let (entity, where_param, where_body) = match source_entity {
+                    Some(ref se) => parse_closure_with_inference(input, se)?,
+                    None => parse_typed_closure(input)?,
+                };
                 let order = parse_optional_order(input)?;
                 let clauses = parse_optional_clauses(input)?;
                 return Ok(QueryInput {
@@ -421,6 +430,31 @@ fn parse_typed_closure(input: syn::parse::ParseStream) -> syn::Result<(Type, Ide
     let _close: Token![|] = input.parse()?;
     let body = parse_expr_until_fat_arrow_or_semi(input)?;
     Ok((entity, param, body))
+}
+
+/// G4: Parses a closure that may be typed (`|b: T| body`) or untyped
+/// (`|b| body`). When untyped, the entity type is taken from `fallback`
+/// (extracted from the source expression's turbofish).
+fn parse_closure_with_inference(
+    input: syn::parse::ParseStream,
+    fallback: &Type,
+) -> syn::Result<(Type, Ident, Expr)> {
+    let _open: Token![|] = input.parse()?;
+    let param: Ident = input.parse()?;
+
+    if input.peek(Token![:]) {
+        // Typed closure: |param: Type| body
+        let _colon: Token![:] = input.parse()?;
+        let entity: Type = input.parse()?;
+        let _close: Token![|] = input.parse()?;
+        let body = parse_expr_until_fat_arrow_or_semi(input)?;
+        Ok((entity, param, body))
+    } else {
+        // Untyped closure: |param| body — entity type inferred from source
+        let _close: Token![|] = input.parse()?;
+        let body = parse_expr_until_fat_arrow_or_semi(input)?;
+        Ok((fallback.clone(), param, body))
+    }
 }
 
 /// Parses `|param| body` — returns (param, body). Entity type inferred from context.

@@ -68,7 +68,7 @@ pub mod prelude {
     };
     pub use crate::provider::DbValue;
     pub use crate::provider::IDatabaseProvider;
-    pub use crate::query::BoolExpr;
+    pub use crate::query::{BoolExpr, LinqSource, ParseFromDb};
     pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::tracking::ChangeTracker;

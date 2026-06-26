@@ -1604,11 +1604,196 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         let mut conn = provider.get_connection().await?;
         conn.query(&sql, &params).await
     }
+
+    // -------------------------------------------------------------------
+    // G3: Strongly-typed projection terminal methods.
+    //
+    // Each `to_list_typed_n::<V0, ...>` method executes the projection
+    // query, then parses each column value via `ParseFromDb` into the
+    // corresponding type parameter, returning `Vec<(V0, ...)>`.
+    // -------------------------------------------------------------------
+
+    async fn fetch_rows(self) -> EFResult<Vec<Vec<String>>> {
+        self.to_list().await
+    }
+
+    /// Single-column typed projection → `Vec<V0>`.
+    pub async fn to_list_typed_1<V0>(self) -> EFResult<Vec<V0>>
+    where
+        V0: ParseFromDb,
+    {
+        let rows = self.fetch_rows().await?;
+        rows.into_iter()
+            .map(|row| {
+                parse_column::<V0>(row.first().ok_or_else(|| {
+                    crate::error::EFError::Query("projection row has no columns".into())
+                })?)
+            })
+            .collect()
+    }
+
+    /// Two-column typed projection → `Vec<(V0, V1)>`.
+    pub async fn to_list_typed_2<V0, V1>(self) -> EFResult<Vec<(V0, V1)>>
+    where
+        V0: ParseFromDb,
+        V1: ParseFromDb,
+    {
+        let rows = self.fetch_rows().await?;
+        rows.into_iter()
+            .map(|row| {
+                let c0 = row.first().ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 0".into())
+                })?;
+                let c1 = row.get(1).ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 1".into())
+                })?;
+                Ok((parse_column::<V0>(c0)?, parse_column::<V1>(c1)?))
+            })
+            .collect()
+    }
+
+    /// Three-column typed projection → `Vec<(V0, V1, V2)>`.
+    pub async fn to_list_typed_3<V0, V1, V2>(self) -> EFResult<Vec<(V0, V1, V2)>>
+    where
+        V0: ParseFromDb,
+        V1: ParseFromDb,
+        V2: ParseFromDb,
+    {
+        let rows = self.fetch_rows().await?;
+        rows.into_iter()
+            .map(|row| {
+                let c0 = row.first().ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 0".into())
+                })?;
+                let c1 = row.get(1).ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 1".into())
+                })?;
+                let c2 = row.get(2).ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 2".into())
+                })?;
+                Ok((
+                    parse_column::<V0>(c0)?,
+                    parse_column::<V1>(c1)?,
+                    parse_column::<V2>(c2)?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Four-column typed projection → `Vec<(V0, V1, V2, V3)>`.
+    pub async fn to_list_typed_4<V0, V1, V2, V3>(self) -> EFResult<Vec<(V0, V1, V2, V3)>>
+    where
+        V0: ParseFromDb,
+        V1: ParseFromDb,
+        V2: ParseFromDb,
+        V3: ParseFromDb,
+    {
+        let rows = self.fetch_rows().await?;
+        rows.into_iter()
+            .map(|row| {
+                let c0 = row.first().ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 0".into())
+                })?;
+                let c1 = row.get(1).ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 1".into())
+                })?;
+                let c2 = row.get(2).ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 2".into())
+                })?;
+                let c3 = row.get(3).ok_or_else(|| {
+                    crate::error::EFError::Query("projection row missing column 3".into())
+                })?;
+                Ok((
+                    parse_column::<V0>(c0)?,
+                    parse_column::<V1>(c1)?,
+                    parse_column::<V2>(c2)?,
+                    parse_column::<V3>(c3)?,
+                ))
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Marker trait implemented by query source types (`QueryBuilder<T>`, `DbSet<T>`).
+///
+/// `LinqSource` enables the `linq!` macro to accept untyped closures
+/// (`|b| ...`) when the source expression carries entity type information
+/// via turbofish (e.g. `ctx.set::<Blog>()`). The macro extracts the type
+/// from the source and generates a typed closure internally.
+pub trait LinqSource {}
+
+impl<T: IEntityType> LinqSource for QueryBuilder<T> {}
+impl<T: IEntityType> LinqSource for crate::db_set::DbSet<T> {}
+
+/// Parses a `&str` column value from the database into a Rust type.
+///
+/// Unlike `FromStr`, this trait handles database-specific representations:
+/// - `bool`: accepts `"0"`/`"1"` (SQLite/MySQL) as well as `"true"`/`"false"`
+/// - Numeric types: fall back to `FromStr`
+/// - `String`: returns the value as-is
+pub trait ParseFromDb: Sized {
+    fn parse_from_db(s: &str) -> EFResult<Self>;
+}
+
+impl ParseFromDb for bool {
+    fn parse_from_db(s: &str) -> EFResult<Self> {
+        match s {
+            "1" | "true" | "t" | "TRUE" | "T" => Ok(true),
+            "0" | "false" | "f" | "FALSE" | "F" | "" => Ok(false),
+            _ => Err(crate::error::EFError::Query(format!(
+                "failed to parse '{}' as bool",
+                s
+            ))),
+        }
+    }
+}
+
+impl ParseFromDb for i32 {
+    fn parse_from_db(s: &str) -> EFResult<Self> {
+        s.parse().map_err(|e| {
+            crate::error::EFError::Query(format!("failed to parse '{}' as i32: {}", s, e))
+        })
+    }
+}
+
+impl ParseFromDb for i64 {
+    fn parse_from_db(s: &str) -> EFResult<Self> {
+        s.parse().map_err(|e| {
+            crate::error::EFError::Query(format!("failed to parse '{}' as i64: {}", s, e))
+        })
+    }
+}
+
+impl ParseFromDb for f64 {
+    fn parse_from_db(s: &str) -> EFResult<Self> {
+        s.parse().map_err(|e| {
+            crate::error::EFError::Query(format!("failed to parse '{}' as f64: {}", s, e))
+        })
+    }
+}
+
+impl ParseFromDb for f32 {
+    fn parse_from_db(s: &str) -> EFResult<Self> {
+        s.parse().map_err(|e| {
+            crate::error::EFError::Query(format!("failed to parse '{}' as f32: {}", s, e))
+        })
+    }
+}
+
+impl ParseFromDb for String {
+    fn parse_from_db(s: &str) -> EFResult<Self> {
+        Ok(s.to_string())
+    }
+}
+
+/// Parses a `&str` column value into `V` via `ParseFromDb`.
+fn parse_column<V: ParseFromDb>(s: &str) -> EFResult<V> {
+    V::parse_from_db(s)
+}
 
 fn filters_to_and_expr(filters: &[FilterCondition]) -> BoolExpr {
     filters

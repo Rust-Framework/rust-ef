@@ -354,6 +354,16 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             column_consts.push(quote! {
                 pub const #const_name: &'static str = #col_name;
             });
+
+            // G3.1: Emit `FIELD_TYPE_<NAME>` — the Rust type name as a `&str`
+            // for introspection (debugging, typed projection validation).
+            let type_const_name = syn::Ident::new(
+                &format!("FIELD_TYPE_{}", field_name.to_string().to_uppercase()),
+                field_name.span(),
+            );
+            column_consts.push(quote! {
+                pub const #type_const_name: &'static str = stringify!(#field_ty);
+            });
         }
     }
 
