@@ -8,6 +8,7 @@ use crate::entity::{IEntitySnapshot, IEntityType, IGetKeyValues};
 use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, PropertyMeta};
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
+use crate::query::{collect_bool_expr_values, compile_bool_expr, BoolExpr};
 use std::collections::HashMap;
 
 /// Executes INSERT/UPDATE/DELETE for tracked entities within a transaction.
@@ -72,11 +73,16 @@ impl ChangeExecutor {
 
     /// Executes UPDATE statements for all modified entities.
     /// Uses original snapshots for optimistic concurrency tokens in the WHERE clause.
+    ///
+    /// When `query_filter` is `Some`, the filter (e.g. a tenant-id predicate)
+    /// is AND-ed into the WHERE clause so updates cannot cross the filter
+    /// boundary (multi-tenant / soft-delete isolation).
     #[allow(clippy::type_complexity)]
     pub async fn execute_updates<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
+        query_filter: Option<&BoolExpr>,
     ) -> EFResult<usize>
     where
         E: IEntityType + IEntitySnapshot + IGetKeyValues,
@@ -105,13 +111,22 @@ impl ChangeExecutor {
                 .filter(|p| p.is_concurrency_token)
                 .collect();
 
-            let (where_clause, where_params) = build_where_with_concurrency(
+            let (mut where_clause, mut where_params) = build_where_with_concurrency(
                 &*gen,
                 &keys,
                 &concurrency_tokens,
                 *original,
                 set_cols.len() + 1,
             )?;
+
+            // Append the query filter (e.g. tenant_id = ?) to the WHERE clause.
+            // Filter param placeholders are indexed after SET cols + existing WHERE params.
+            if let Some(filter) = query_filter {
+                let mut idx = set_cols.len() + where_params.len() + 1;
+                let filter_sql = compile_bool_expr(filter, &*gen, &mut idx);
+                where_params.extend(collect_bool_expr_values(filter));
+                where_clause = format!("({}) AND ({})", where_clause, filter_sql);
+            }
 
             let sql = gen.update(meta.table_name.as_ref(), &set_cols, &where_clause);
 
@@ -144,11 +159,15 @@ impl ChangeExecutor {
     }
 
     /// Executes DELETE statements for all deleted entities.
+    ///
+    /// When `query_filter` is `Some`, the filter is AND-ed into the WHERE
+    /// clause so deletes cannot cross the filter boundary.
     #[allow(clippy::type_complexity)]
     pub async fn execute_deletes<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
         entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
+        query_filter: Option<&BoolExpr>,
     ) -> EFResult<usize>
     where
         E: IEntityType + IGetKeyValues,
@@ -169,8 +188,16 @@ impl ChangeExecutor {
                 .filter(|p| p.is_concurrency_token)
                 .collect();
 
-            let (where_clause, where_params) =
+            let (mut where_clause, mut where_params) =
                 build_where_with_concurrency(&*gen, &keys, &concurrency_tokens, *original, 1)?;
+
+            // Append the query filter to the WHERE clause.
+            if let Some(filter) = query_filter {
+                let mut idx = where_params.len() + 1;
+                let filter_sql = compile_bool_expr(filter, &*gen, &mut idx);
+                where_params.extend(collect_bool_expr_values(filter));
+                where_clause = format!("({}) AND ({})", where_clause, filter_sql);
+            }
 
             let sql = gen.delete(meta.table_name.as_ref(), &where_clause);
             let rows = conn.execute(&sql, &where_params).await?;

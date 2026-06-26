@@ -21,7 +21,7 @@
 //! ```
 
 use crate::error::{EFError, EFResult};
-use crate::tracking::{ChangeTracker, EntityEntry};
+use crate::tracking::EntityEntryView;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -30,14 +30,15 @@ use std::sync::Arc;
 
 /// Read-only snapshot of the save operation, passed to interceptors.
 ///
-/// Provides access to the change tracker state at the moment of
-/// interception. This is an owned snapshot so interceptors cannot
-/// mutate the actual pending changes, and the borrow does not block
-/// subsequent mutating operations on `ChangeTracker`.
+/// Built from the actual pending entries across all `DbSet`s (the real save
+/// data source), so interceptors see a snapshot consistent with what
+/// `save_changes()` will commit. This is an owned snapshot so interceptors
+/// cannot mutate the pending changes, and the borrow does not block
+/// subsequent mutating operations on `DbContext`.
 #[derive(Debug, Clone)]
 pub struct SaveChangesContext {
-    /// All tracked entries before the save.
-    entries: Vec<EntityEntry>,
+    /// All pending entries before the save.
+    entries: Vec<EntityEntryView>,
     /// Number of entries that will be added.
     added_count: usize,
     /// Number of entries that will be modified.
@@ -47,14 +48,21 @@ pub struct SaveChangesContext {
 }
 
 impl SaveChangesContext {
-    /// Creates a context from the current change tracker state.
-    ///
-    /// This takes an owned snapshot �?no borrow is retained.
-    pub fn from_tracker(tracker: &ChangeTracker) -> Self {
-        let entries = tracker.entries();
-        let added_count = tracker.count_by_state(crate::entity::EntityState::Added);
-        let modified_count = tracker.count_by_state(crate::entity::EntityState::Modified);
-        let deleted_count = tracker.count_by_state(crate::entity::EntityState::Deleted);
+    /// Creates a context from the pending entries aggregated across all
+    /// `DbSet`s. Counts are derived from each entry's `state`.
+    pub fn from_views(entries: Vec<EntityEntryView>) -> Self {
+        let added_count = entries
+            .iter()
+            .filter(|e| e.state == crate::entity::EntityState::Added)
+            .count();
+        let modified_count = entries
+            .iter()
+            .filter(|e| e.state == crate::entity::EntityState::Modified)
+            .count();
+        let deleted_count = entries
+            .iter()
+            .filter(|e| e.state == crate::entity::EntityState::Deleted)
+            .count();
 
         Self {
             entries,
@@ -64,8 +72,8 @@ impl SaveChangesContext {
         }
     }
 
-    /// Returns all tracked entity entries at the time of interception.
-    pub fn entries(&self) -> &[EntityEntry] {
+    /// Returns all pending entity entries at the time of interception.
+    pub fn entries(&self) -> &[EntityEntryView] {
         &self.entries
     }
 

@@ -180,6 +180,24 @@ impl ModelBuilder {
             .and_then(|c| c.query_filter.as_ref())
     }
 
+    /// Collects all registered query filters keyed by (effective) table name.
+    /// Used by NavigationLoader to apply tenant isolation to secondary queries.
+    pub fn filters_by_table(&self) -> HashMap<String, BoolExpr> {
+        let mut map = HashMap::new();
+        for meta in &self.entity_metas {
+            if let Some(config) = self.configs.get(&meta.type_id) {
+                if let Some(filter) = &config.query_filter {
+                    let table_name = config
+                        .table_name
+                        .clone()
+                        .unwrap_or_else(|| meta.table_name.to_string());
+                    map.insert(table_name, filter.clone());
+                }
+            }
+        }
+        map
+    }
+
     /// Returns seed rows configured via `EntityTypeBuilder::has_data`.
     pub fn seed_rows_for(&self, type_id: &TypeId) -> &[HashMap<String, DbValue>] {
         self.configs

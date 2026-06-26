@@ -8,6 +8,7 @@
 use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use crate::error::EFResult;
 use crate::provider::{DbValue, DbValueConvertError, IDatabaseProvider};
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -629,6 +630,7 @@ where
 pub struct QueryBuilder<T: IEntityType> {
     state: QueryState,
     provider: Option<Arc<dyn IDatabaseProvider>>,
+    filter_map: Option<Arc<HashMap<String, BoolExpr>>>,
     _phantom: PhantomData<T>,
 }
 
@@ -638,6 +640,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         Self {
             state: QueryState::new(table_name),
             provider: None,
+            filter_map: None,
             _phantom: PhantomData,
         }
     }
@@ -650,8 +653,18 @@ impl<T: IEntityType> QueryBuilder<T> {
         Self {
             state: QueryState::new(table_name),
             provider: Some(provider),
+            filter_map: None,
             _phantom: PhantomData,
         }
+    }
+
+    /// Attaches a global filter map (table_name → BoolExpr) for NavigationLoader.
+    pub(crate) fn with_filter_map(
+        mut self,
+        map: Option<Arc<HashMap<String, BoolExpr>>>,
+    ) -> Self {
+        self.filter_map = map;
+        self
     }
 
     /// Returns a reference to the accumulated query state.
@@ -1182,7 +1195,13 @@ impl<T: IEntityType> QueryBuilder<T> {
         let rows = conn.query(&sql, &params).await?;
         let mut entities = crate::entity::materialize_entities::<T>(&rows)?;
         if !includes.is_empty() {
-            crate::navigation_loader::load_includes(&mut entities, &includes, &**provider).await?;
+            crate::navigation_loader::load_includes(
+                &mut entities,
+                &includes,
+                &**provider,
+                self.filter_map.as_deref(),
+            )
+            .await?;
         }
         Ok(entities)
     }
@@ -1570,7 +1589,7 @@ fn filters_to_and_expr(filters: &[FilterCondition]) -> BoolExpr {
         .unwrap_or(BoolExpr::Raw("1=1".to_string()))
 }
 
-fn compile_bool_expr(
+pub(crate) fn compile_bool_expr(
     expr: &BoolExpr,
     gen: &dyn crate::provider::ISqlGenerator,
     param_idx: &mut usize,
@@ -1602,7 +1621,7 @@ fn compile_bool_expr(
 /// self-contained `FilterCondition`s (those produced by `linq!(filter |b: T| ...)`
 /// Form C). Returns an empty vec for expressions whose values are already
 /// tracked in `QueryState::parameters` (in-builder conditions).
-fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
+pub(crate) fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
     match expr {
         BoolExpr::Filter(f) => f.values().to_vec(),
         BoolExpr::Raw(_) => Vec::new(),

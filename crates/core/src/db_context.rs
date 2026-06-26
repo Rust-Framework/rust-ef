@@ -24,7 +24,7 @@ use crate::migration::MigrationEngine;
 use crate::model_builder::ModelBuilder;
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
 use crate::registration::{EntityConfigRegistration, EntityRegistration};
-use crate::tracking::ChangeTracker;
+use crate::tracking::{ChangeTracker, EntityEntryView};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::future::Future;
@@ -160,6 +160,10 @@ trait ErasedSetOps: Send + Sync {
     ) -> EFResult<(usize, usize, usize)>;
     fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync));
     fn clear(&self, raw_set: &mut (dyn Any + Send + Sync + 'static));
+    /// Collects type-erased views of all pending entries in the set, used to
+    /// build `SaveChangesContext` from the real save data source (`DbSet.entries`)
+    /// rather than the legacy (empty) `change_tracker`.
+    fn collect_entries(&self, raw_set: &(dyn Any + Send + Sync)) -> Vec<EntityEntryView>;
 }
 
 struct SetOps<E> {
@@ -206,6 +210,21 @@ where
         if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
             db_set.clear_entries();
         }
+    }
+    fn collect_entries(&self, raw_set: &(dyn Any + Send + Sync)) -> Vec<EntityEntryView> {
+        let Some(db_set) = raw_set.downcast_ref::<DbSet<E>>() else {
+            return Vec::new();
+        };
+        let type_name = E::entity_meta().type_name.to_string();
+        db_set
+            .entries
+            .iter()
+            .map(|e| EntityEntryView {
+                type_id: TypeId::of::<E>(),
+                type_name: type_name.clone(),
+                state: e.state,
+            })
+            .collect()
     }
 }
 
@@ -271,6 +290,7 @@ impl DbContext {
             if let Some(filter) = self.model_builder.get_query_filter(&type_id) {
                 db_set.set_query_filter(filter.clone());
             }
+            db_set.set_filter_map(Arc::new(self.model_builder.filters_by_table()));
             Box::new(db_set)
         });
         self.sets
@@ -329,6 +349,20 @@ impl DbContext {
                 }
             }
         }
+    }
+
+    /// Builds the interceptor `SaveChangesContext` from the actual pending
+    /// entries across all `DbSet`s (the real save data source), instead of
+    /// the legacy `change_tracker` which is never populated by `DbSet::add`.
+    /// This keeps interceptor snapshots consistent with what will be committed.
+    fn build_save_context(&self) -> SaveChangesContext {
+        let mut views: Vec<EntityEntryView> = Vec::new();
+        for (type_id, set) in &self.sets {
+            if let Some(saver) = self.savers.get(type_id) {
+                views.extend(saver.collect_entries(set.as_ref()));
+            }
+        }
+        SaveChangesContext::from_views(views)
     }
 
     /// Creates all tables for registered entity types.
@@ -461,7 +495,9 @@ impl IDbContext for DbContext {
             .collect();
 
         // --- Interceptor: on_saving (pre-commit) ---
-        let save_ctx = SaveChangesContext::from_tracker(&self.change_tracker);
+        // Build the context from the actual pending entries across all DbSets
+        // (the real save data source), not the legacy (empty) change_tracker.
+        let save_ctx = self.build_save_context();
         self.interceptor_pipeline.on_saving(&save_ctx).await?;
 
         let mut conn = self.provider.get_connection().await?;
@@ -540,6 +576,8 @@ pub async fn save_one_set<E>(
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow,
 {
+    let query_filter = db_set.query_filter();
+
     let added: Vec<(&E, &EntityTypeMeta)> = db_set
         .tracked_by_state(crate::entity::EntityState::Added)
         .into_iter()
@@ -562,10 +600,10 @@ where
         ac = ChangeExecutor::execute_inserts(conn, provider, &added, |_, _| {}).await?;
     }
     if !modified.is_empty() {
-        uc = ChangeExecutor::execute_updates(conn, provider, &modified).await?;
+        uc = ChangeExecutor::execute_updates(conn, provider, &modified, query_filter).await?;
     }
     if !deleted.is_empty() {
-        dc = ChangeExecutor::execute_deletes(conn, provider, &deleted).await?;
+        dc = ChangeExecutor::execute_deletes(conn, provider, &deleted, query_filter).await?;
     }
     Ok((ac, uc, dc))
 }

@@ -66,6 +66,7 @@ pub struct DbSet<T: IEntityType> {
     table_name: String,
     provider: Option<Arc<dyn IDatabaseProvider>>,
     query_filter: Option<BoolExpr>,
+    filter_map: Option<Arc<HashMap<String, BoolExpr>>>,
 }
 
 pub struct TrackedEntry<T: IEntityType> {
@@ -82,6 +83,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
             table_name: table_name.into(),
             provider: None,
             query_filter: None,
+            filter_map: None,
         }
     }
 
@@ -94,11 +96,24 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
             table_name: table_name.into(),
             provider: Some(provider),
             query_filter: None,
+            filter_map: None,
         }
     }
 
     pub fn set_query_filter(&mut self, filter: BoolExpr) {
         self.query_filter = Some(filter);
+    }
+
+    /// Sets the global filter map (table_name → BoolExpr) used by
+    /// NavigationLoader to scope secondary queries.
+    pub fn set_filter_map(&mut self, map: Arc<HashMap<String, BoolExpr>>) {
+        self.filter_map = Some(map);
+    }
+
+    /// Returns the configured query filter, if any. Used by `save_one_set`
+    /// to apply tenant isolation to UPDATE/DELETE WHERE clauses.
+    pub(crate) fn query_filter(&self) -> Option<&BoolExpr> {
+        self.query_filter.as_ref()
     }
 
     pub fn set_provider(&mut self, provider: Arc<dyn IDatabaseProvider>) {
@@ -137,9 +152,19 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
         IDbSet::is_empty(self)
     }
 
-    /// Convenience inherent method �?delegates to `IQueryable::query`.
+    /// Convenience inherent method — delegates to `IQueryable::query`.
     pub fn query(&self) -> QueryBuilder<T> {
         IQueryable::query(self)
+    }
+
+    /// Returns a query builder that bypasses the configured query filter.
+    /// Use for administrative / cross-tenant queries.
+    pub fn query_ignore_filters(&self) -> QueryBuilder<T> {
+        let qb = match &self.provider {
+            Some(p) => QueryBuilder::with_provider(&self.table_name, p.clone()),
+            None => QueryBuilder::new(&self.table_name),
+        };
+        qb.with_filter_map(self.filter_map.clone())
     }
 
     pub fn attach(&mut self, entity: T) {
@@ -253,7 +278,7 @@ impl<T: IEntityType> IQueryable<T> for DbSet<T> {
         if let Some(ref filter) = self.query_filter {
             qb = qb.apply_query_filter(filter.clone());
         }
-        qb
+        qb.with_filter_map(self.filter_map.clone())
     }
 }
 

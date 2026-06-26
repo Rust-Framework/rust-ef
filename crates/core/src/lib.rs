@@ -52,7 +52,7 @@ pub mod prelude {
         DbContext, DbContextOptions, DbContextOptionsBuilder, IDbContext, SaveChangesResult,
     };
     pub use crate::db_set::{DbSet, IDbSet};
-    pub use crate::di::DbContextServiceCollectionExt;
+    pub use crate::di::{DbContextScopeExt, DbContextServiceCollectionExt};
     pub use crate::entity::{
         EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
     };

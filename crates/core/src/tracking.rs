@@ -30,6 +30,20 @@ pub struct EntityEntry {
     pub modified_properties: Vec<String>,
 }
 
+/// Lightweight, type-erased view of a pending entity entry used to build
+/// `SaveChangesContext` from `DbSet.entries` (the real save data source).
+///
+/// Unlike `EntityEntry`, this carries no `entry_id` / `modified_properties`
+/// (which only have meaning inside `ChangeTracker`). It exists so that
+/// interceptors receive a snapshot consistent with what `save_changes()`
+/// will actually commit, instead of the legacy (empty) `change_tracker`.
+#[derive(Debug, Clone)]
+pub struct EntityEntryView {
+    pub type_id: std::any::TypeId,
+    pub type_name: String,
+    pub state: EntityState,
+}
+
 /// Internal tracker entry storing the entity, its state, and original snapshots.
 struct TrackerEntry {
     id: u64,
