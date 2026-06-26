@@ -73,7 +73,8 @@ enum MigrationCommands {
         #[arg(long, default_value = "Migrations")]
         dir: PathBuf,
     },
-    /// Revert the last applied migration
+    /// Revert applied migrations. Without --target, reverts only the last.
+    /// With --target <Name>, reverts all migrations after <Name> (exclusive).
     Revert {
         #[arg(long)]
         connection: String,
@@ -81,11 +82,22 @@ enum MigrationCommands {
         provider: ProviderArg,
         #[arg(long, default_value = "Migrations")]
         dir: PathBuf,
-    },
-    /// Write a migration SQL script to stdout
-    Script {
+        /// Revert all migrations applied after this one (exclusive).
         #[arg(long)]
-        name: String,
+        target: Option<String>,
+    },
+    /// Write migration SQL script to stdout.
+    /// Use --name <Name> for a single migration, or --from/--to for a range.
+    Script {
+        /// Print a single migration's up/down SQL by name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Generate a range script starting after this migration (exclusive).
+        #[arg(long)]
+        from: Option<String>,
+        /// Generate a range script ending at this migration (inclusive).
+        #[arg(long)]
+        to: Option<String>,
         #[arg(long, default_value = "Migrations")]
         dir: PathBuf,
     },
@@ -158,8 +170,14 @@ async fn main() -> Result<(), EFError> {
                 connection,
                 provider,
                 dir,
-            } => cmd_revert(&connection, provider, &dir).await,
-            MigrationCommands::Script { name, dir } => cmd_script(&name, &dir),
+                target,
+            } => cmd_revert(&connection, provider, &dir, target.as_deref()).await,
+            MigrationCommands::Script {
+                name,
+                from,
+                to,
+                dir,
+            } => cmd_script(name.as_deref(), from.as_deref(), to.as_deref(), &dir),
         },
         Commands::Scaffold { command } => match command {
             ScaffoldCommands::DbContext {
@@ -244,31 +262,61 @@ async fn cmd_list(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EFR
     Ok(())
 }
 
-async fn cmd_revert(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EFResult<()> {
+async fn cmd_revert(
+    connection: &str,
+    provider: ProviderArg,
+    dir: &PathBuf,
+    target: Option<&str>,
+) -> EFResult<()> {
     let p = create_provider(connection, provider)?;
     let dialect = p.migration_dialect();
     let store = MigrationStore::new(dir);
     let migrations = store.load_all()?;
     let engine = MigrationEngine::new(dialect);
-    match engine.revert_last(&*p, &migrations).await? {
-        Some(id) => {
-            println!("Reverted migration '{}'.", id);
+    match target {
+        Some(t) => {
+            let reverted = engine.revert_to_target(&*p, &migrations, Some(t)).await?;
+            if reverted.is_empty() {
+                println!("No migrations to revert after '{}'.", t);
+            } else {
+                println!("Reverted {} migration(s):", reverted.len());
+                for id in &reverted {
+                    println!("  - {}", id);
+                }
+            }
             Ok(())
         }
-        None => {
-            println!("No applied migrations to revert.");
-            Ok(())
-        }
+        None => match engine.revert_last(&*p, &migrations).await? {
+            Some(id) => {
+                println!("Reverted migration '{}'.", id);
+                Ok(())
+            }
+            None => {
+                println!("No applied migrations to revert.");
+                Ok(())
+            }
+        },
     }
 }
 
-fn cmd_script(name: &str, dir: &PathBuf) -> EFResult<()> {
+fn cmd_script(
+    name: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
+    dir: &PathBuf,
+) -> EFResult<()> {
     let store = MigrationStore::new(dir);
-    let migration = store.load(name)?;
-    println!("-- Up: {}", migration.id);
-    println!("{}", migration.up_sql);
-    println!("-- Down: {}", migration.id);
-    println!("{}", migration.down_sql);
+    if let Some(n) = name {
+        let migration = store.load(n)?;
+        println!("-- Up: {}", migration.id);
+        println!("{}", migration.up_sql);
+        println!("-- Down: {}", migration.id);
+        println!("{}", migration.down_sql);
+        return Ok(());
+    }
+    let migrations = store.load_all()?;
+    let sql = MigrationEngine::generate_script(&migrations, from, to)?;
+    print!("{}", sql);
     Ok(())
 }
 
@@ -398,8 +446,8 @@ fn snapshot_to_metas(snapshot: &ModelSnapshot) -> Vec<EntityTypeMeta> {
                     is_foreign_key: c.is_foreign_key,
                     is_concurrency_token: false,
                     max_length: c.max_length,
-                    is_unique: false,
-                    has_index: false,
+                    is_unique: c.is_unique,
+                    has_index: c.has_index,
                     is_not_mapped: false,
                 })
                 .collect(),

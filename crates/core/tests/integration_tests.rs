@@ -129,6 +129,8 @@ mod tests {
             is_auto_increment: false,
             fk_referenced_table: None,
             fk_referenced_column: None,
+            has_index: false,
+            is_unique: false,
         };
         assert_eq!(MigrationDialect::Postgres.map_column_type(&col), "BYTEA");
         assert_eq!(MigrationDialect::MySql.map_column_type(&col), "BLOB");
@@ -149,6 +151,8 @@ mod tests {
             is_auto_increment: false,
             fk_referenced_table: None,
             fk_referenced_column: None,
+            has_index: false,
+            is_unique: false,
         };
         let sql = engine.generate_alter_column_sql("posts", "title", &col);
         assert!(sql.contains("MODIFY COLUMN"));
@@ -168,6 +172,8 @@ mod tests {
             is_auto_increment: true,
             fk_referenced_table: None,
             fk_referenced_column: None,
+            has_index: false,
+            is_unique: false,
         };
         assert_eq!(MigrationDialect::Postgres.map_column_type(&col), "SERIAL");
         assert_eq!(

@@ -36,7 +36,7 @@ pub struct SnapshotEntityType {
 }
 
 /// Serialized form of PropertyMeta for snapshot storage.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SnapshotColumn {
     pub field_name: String,
     pub column_name: String,
@@ -50,6 +50,10 @@ pub struct SnapshotColumn {
     pub fk_referenced_table: Option<String>,
     /// Referenced column when `is_foreign_key` is true.
     pub fk_referenced_column: Option<String>,
+    /// Non-unique index on this column.
+    pub has_index: bool,
+    /// Unique constraint/index on this column.
+    pub is_unique: bool,
 }
 
 /// Specifies the database SQL dialect for migration generation.
@@ -135,6 +139,16 @@ pub(crate) enum SchemaChange {
         column: String,
         referenced_table: String,
     },
+    CreateIndex {
+        table: String,
+        column: String,
+        is_unique: bool,
+    },
+    DropIndex {
+        table: String,
+        column: String,
+        is_unique: bool,
+    },
 }
 
 /// The migration engine ?compares old and new model snapshots to generate
@@ -202,6 +216,8 @@ impl MigrationEngine {
                             is_auto_increment: p.is_auto_increment,
                             fk_referenced_table: fk_table,
                             fk_referenced_column: fk_col,
+                            has_index: p.has_index,
+                            is_unique: p.is_unique,
                         }
                     })
                     .collect(),
@@ -262,6 +278,7 @@ impl MigrationEngine {
                 columns: et.columns.clone(),
             });
             Self::append_create_table_fks(&mut changes, &et.table_name, &et.columns);
+            Self::append_create_table_indexes(&mut changes, &et.table_name, &et.columns);
         }
 
         // Tables present in both ?compare columns
@@ -284,12 +301,14 @@ impl MigrationEngine {
             let old_col_names: HashSet<&str> = old_cols.keys().copied().collect();
             let new_col_names: HashSet<&str> = new_cols.keys().copied().collect();
 
-            // Added columns
+            // Added columns (with indexes if configured)
             for col_name in new_col_names.difference(&old_col_names) {
+                let col = new_cols[col_name];
                 changes.push(SchemaChange::AddColumn {
                     table: table.clone(),
-                    column: new_cols[col_name].clone(),
+                    column: (*col).clone(),
                 });
+                changes.extend(diff_indexes(table, &SnapshotColumn::default(), col));
             }
 
             // Foreign keys (after add-column, before drop-column)
@@ -303,12 +322,16 @@ impl MigrationEngine {
                 });
             }
 
-            // Altered columns (present in both, but attributes differ)
+            // Altered columns and index changes (present in both)
             for col_name in old_col_names.intersection(&new_col_names) {
                 let old_col = old_cols[col_name];
                 let new_col = new_cols[col_name];
 
-                if old_col != new_col {
+                // Index state changes → CreateIndex/DropIndex
+                changes.extend(diff_indexes(table, old_col, new_col));
+
+                // Structural changes (excluding index fields) → AlterColumn
+                if !columns_structurally_equal(old_col, new_col) {
                     changes.push(SchemaChange::AlterColumn {
                         table: table.clone(),
                         column_name: col_name.to_string(),
@@ -338,6 +361,29 @@ impl MigrationEngine {
             }
         }
     }
+
+    /// Emits `CreateIndex` changes for indexed columns in a newly created table.
+    fn append_create_table_indexes(
+        changes: &mut Vec<SchemaChange>,
+        table: &str,
+        columns: &[SnapshotColumn],
+    ) {
+        for col in columns {
+            if col.is_unique {
+                changes.push(SchemaChange::CreateIndex {
+                    table: table.to_string(),
+                    column: col.column_name.clone(),
+                    is_unique: true,
+                });
+            } else if col.has_index {
+                changes.push(SchemaChange::CreateIndex {
+                    table: table.to_string(),
+                    column: col.column_name.clone(),
+                    is_unique: false,
+                });
+            }
+        }
+    }
 }
 
 fn fk_target(col: &SnapshotColumn) -> Option<(String, String)> {
@@ -348,6 +394,11 @@ fn fk_target(col: &SnapshotColumn) -> Option<(String, String)> {
         col.fk_referenced_table.clone()?,
         col.fk_referenced_column.clone()?,
     ))
+}
+
+/// Standard index name used by CreateIndex/DropIndex SQL generation.
+fn index_name(table: &str, column: &str) -> String {
+    format!("ix_{}_{}", table, column)
 }
 
 fn fk_reference_for_property(
@@ -438,11 +489,72 @@ fn diff_foreign_keys(
     changes
 }
 
+/// Compares two columns for structural equality, ignoring index state
+/// (`has_index` / `is_unique`). Index changes are handled separately by
+/// `diff_indexes` so they emit `CreateIndex`/`DropIndex` instead of
+/// `AlterColumn`.
+fn columns_structurally_equal(a: &SnapshotColumn, b: &SnapshotColumn) -> bool {
+    a.field_name == b.field_name
+        && a.column_name == b.column_name
+        && a.type_name == b.type_name
+        && a.is_primary_key == b.is_primary_key
+        && a.is_required == b.is_required
+        && a.is_foreign_key == b.is_foreign_key
+        && a.max_length == b.max_length
+        && a.is_auto_increment == b.is_auto_increment
+        && a.fk_referenced_table == b.fk_referenced_table
+        && a.fk_referenced_column == b.fk_referenced_column
+}
+
+/// Returns `CreateIndex`/`DropIndex` changes when a column's index state
+/// transitions between None / NonUnique / Unique.
+fn diff_indexes(table: &str, old: &SnapshotColumn, new: &SnapshotColumn) -> Vec<SchemaChange> {
+    let old_kind = index_kind(old);
+    let new_kind = index_kind(new);
+    if old_kind == new_kind {
+        return Vec::new();
+    }
+    let mut changes = Vec::new();
+    if old_kind != IndexKind::None {
+        changes.push(SchemaChange::DropIndex {
+            table: table.to_string(),
+            column: new.column_name.clone(),
+            is_unique: old_kind == IndexKind::Unique,
+        });
+    }
+    if new_kind != IndexKind::None {
+        changes.push(SchemaChange::CreateIndex {
+            table: table.to_string(),
+            column: new.column_name.clone(),
+            is_unique: new_kind == IndexKind::Unique,
+        });
+    }
+    changes
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IndexKind {
+    None,
+    NonUnique,
+    Unique,
+}
+
+fn index_kind(col: &SnapshotColumn) -> IndexKind {
+    if col.is_unique {
+        IndexKind::Unique
+    } else if col.has_index {
+        IndexKind::NonUnique
+    } else {
+        IndexKind::None
+    }
+}
+
 impl MigrationEngine {
     fn initial_create_with_fks(&self, current: &ModelSnapshot) -> Vec<SchemaChange> {
         let mut changes = self.initial_create(current);
         for et in &current.entity_types {
             Self::append_create_table_fks(&mut changes, &et.table_name, &et.columns);
+            Self::append_create_table_indexes(&mut changes, &et.table_name, &et.columns);
         }
         changes
     }
@@ -454,6 +566,11 @@ impl MigrationEngine {
     /// Standard foreign-key constraint name used by Add/DropForeignKey.
     pub fn foreign_key_name(table: &str, column: &str, referenced_table: &str) -> String {
         format!("fk_{}_{}_{}", table, column, referenced_table)
+    }
+
+    /// Standard index name used by CreateIndex/DropIndex.
+    pub fn index_name(table: &str, column: &str) -> String {
+        format!("ix_{}_{}", table, column)
     }
 
     pub fn generate_alter_column_sql(
@@ -622,6 +739,33 @@ impl MigrationEngine {
                         )),
                     }
                 }
+                SchemaChange::CreateIndex {
+                    table,
+                    column,
+                    is_unique,
+                } => {
+                    let unique_kw = if *is_unique { "UNIQUE " } else { "" };
+                    let idx_name = index_name(table, column);
+                    sql.push_str(&format!(
+                        "CREATE {unique_kw}INDEX {} ON {} ({});\n",
+                        q(&idx_name),
+                        q(table),
+                        q(column)
+                    ));
+                }
+                SchemaChange::DropIndex {
+                    table,
+                    column,
+                    is_unique: _,
+                } => {
+                    let idx_name = index_name(table, column);
+                    match self.dialect {
+                        MigrationDialect::MySql => {
+                            sql.push_str(&format!("DROP INDEX {} ON {};\n", q(&idx_name), q(table)))
+                        }
+                        _ => sql.push_str(&format!("DROP INDEX IF EXISTS {};\n", q(&idx_name))),
+                    }
+                }
             }
         }
 
@@ -705,6 +849,33 @@ impl MigrationEngine {
                     sql.push_str(&format!(
                         "-- WARNING: Cannot restore foreign key constraint {} on {}.{}\n",
                         q(&Self::foreign_key_name(table, column, referenced_table)),
+                        q(table),
+                        q(column)
+                    ));
+                }
+                SchemaChange::CreateIndex {
+                    table,
+                    column,
+                    is_unique: _,
+                } => {
+                    let idx_name = index_name(table, column);
+                    match self.dialect {
+                        MigrationDialect::MySql => {
+                            sql.push_str(&format!("DROP INDEX {} ON {};\n", q(&idx_name), q(table)))
+                        }
+                        _ => sql.push_str(&format!("DROP INDEX IF EXISTS {};\n", q(&idx_name))),
+                    }
+                }
+                SchemaChange::DropIndex {
+                    table,
+                    column,
+                    is_unique,
+                } => {
+                    let unique_kw = if *is_unique { "UNIQUE " } else { "" };
+                    let idx_name = index_name(table, column);
+                    sql.push_str(&format!(
+                        "CREATE {unique_kw}INDEX {} ON {} ({});\n",
+                        q(&idx_name),
                         q(table),
                         q(column)
                     ));
@@ -847,6 +1018,111 @@ impl MigrationEngine {
         })?;
         self.revert(provider, migration).await?;
         Ok(Some(last_id))
+    }
+
+    /// Reverts all migrations applied strictly after `target` (exclusive),
+    /// leaving the database at `target`'s state. Returns the reverted ids in
+    /// the order they were reverted (most-recent first).
+    ///
+    /// If `target` is `None`, reverts ALL applied migrations.
+    /// Returns an error if `target` is not currently applied.
+    pub async fn revert_to_target(
+        &self,
+        provider: &dyn crate::provider::IDatabaseProvider,
+        migrations: &[Migration],
+        target: Option<&str>,
+    ) -> EFResult<Vec<String>> {
+        let applied = self.get_applied_migrations(provider).await?;
+        let applied_ids: Vec<&str> = applied.iter().map(|e| e.migration_id.as_str()).collect();
+
+        let to_revert: Vec<String> = match target {
+            Some(t) => {
+                let idx = applied_ids.iter().position(|id| *id == t).ok_or_else(|| {
+                    crate::error::EFError::Migration(format!(
+                        "target migration '{t}' is not applied"
+                    ))
+                })?;
+                applied_ids[idx + 1..]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
+            }
+            None => applied_ids.iter().map(|s| s.to_string()).collect(),
+        };
+
+        let mut reverted = Vec::with_capacity(to_revert.len());
+        for id in to_revert.iter().rev() {
+            let migration = migrations.iter().find(|m| m.id == *id).ok_or_else(|| {
+                crate::error::EFError::Migration(format!(
+                    "applied migration '{id}' not found in local migration set"
+                ))
+            })?;
+            self.revert(provider, migration).await?;
+            reverted.push(id.clone());
+        }
+        Ok(reverted)
+    }
+
+    /// Generates a combined SQL script transitioning the database from the
+    /// `from` migration state to the `to` migration state.
+    ///
+    /// Semantics (mirroring `dotnet ef migrations script`):
+    /// - `from` is exclusive: the DB is assumed to already be at `from`.
+    /// - `to` is inclusive: the script brings the DB up to and including `to`.
+    /// - `from = None`: start from an empty database (before any migration).
+    /// - `to = None`: end at the latest migration.
+    /// - When `from` precedes `to`: emits Up SQL for migrations in `(from, to]`.
+    /// - When `from` follows `to`: emits Down SQL for migrations in `(to, from]`.
+    /// - When `from == to`: emits a no-op comment.
+    pub fn generate_script(
+        migrations: &[Migration],
+        from: Option<&str>,
+        to: Option<&str>,
+    ) -> EFResult<String> {
+        // Resolve from/to to indices. from=None means "before first migration" (-1).
+        // to=None means "after last migration" (migrations.len() - 1).
+        let from_idx: i64 = match from {
+            Some(f) => migrations.iter().position(|m| m.id == f).ok_or_else(|| {
+                crate::error::EFError::Migration(format!(
+                    "from migration '{f}' not found in local set"
+                ))
+            })? as i64,
+            None => -1,
+        };
+        let to_idx: i64 = match to {
+            Some(t) => migrations.iter().position(|m| m.id == t).ok_or_else(|| {
+                crate::error::EFError::Migration(format!(
+                    "to migration '{t}' not found in local set"
+                ))
+            })? as i64,
+            None => migrations.len() as i64 - 1,
+        };
+
+        let mut sql = String::new();
+        if from_idx < to_idx {
+            // Forward: up scripts for migrations in (from_idx, to_idx].
+            sql.push_str("-- Migration script (forward)\n\n");
+            let start = (from_idx + 1) as usize;
+            let end = (to_idx + 1) as usize; // exclusive
+            for m in &migrations[start..end] {
+                sql.push_str(&format!("-- Up: {}\n", m.id));
+                sql.push_str(&m.up_sql.replace("{migration_id}", &m.id));
+                sql.push('\n');
+            }
+        } else if from_idx > to_idx {
+            // Reverse: down scripts for migrations in (to_idx, from_idx].
+            sql.push_str("-- Migration script (reverse)\n\n");
+            let start = to_idx as usize + 1; // inclusive
+            let end = from_idx as usize + 1; // exclusive
+            for m in migrations[start..end].iter().rev() {
+                sql.push_str(&format!("-- Down: {}\n", m.id));
+                sql.push_str(&m.down_sql.replace("{migration_id}", &m.id));
+                sql.push('\n');
+            }
+        } else {
+            sql.push_str("-- Nothing to do (from == to)\n");
+        }
+        Ok(sql)
     }
 
     /// Generates and applies the initial schema for the given entity types.
@@ -1124,7 +1400,7 @@ fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
                 out.push(',');
             }
             out.push_str(&format!(
-                "        {{\"field_name\":\"{}\",\"column_name\":\"{}\",\"type_name\":\"{}\",\"is_primary_key\":{},\"is_required\":{},\"is_foreign_key\":{},\"max_length\":{},\"is_auto_increment\":{},\"fk_referenced_table\":{},\"fk_referenced_column\":{}}}\n",
+                "        {{\"field_name\":\"{}\",\"column_name\":\"{}\",\"type_name\":\"{}\",\"is_primary_key\":{},\"is_required\":{},\"is_foreign_key\":{},\"max_length\":{},\"is_auto_increment\":{},\"fk_referenced_table\":{},\"fk_referenced_column\":{},\"has_index\":{},\"is_unique\":{}}}\n",
                 col.field_name.replace('"', "\\\""),
                 col.column_name.replace('"', "\\\""),
                 col.type_name.replace('"', "\\\""),
@@ -1140,7 +1416,9 @@ fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
                 col.fk_referenced_column
                     .as_ref()
                     .map(|s| format!("\"{}\"", s.replace('"', "\\\"")))
-                    .unwrap_or_else(|| "null".into())
+                    .unwrap_or_else(|| "null".into()),
+                col.has_index,
+                col.is_unique
             ));
         }
         out.push_str("      ]\n    }\n");
@@ -1186,6 +1464,8 @@ fn snapshot_from_json(text: &str) -> EFResult<Option<ModelSnapshot>> {
                                 col_chunk,
                                 "fk_referenced_column",
                             ),
+                            has_index: col_chunk.contains("\"has_index\":true"),
+                            is_unique: col_chunk.contains("\"is_unique\":true"),
                         });
                     }
                 }
