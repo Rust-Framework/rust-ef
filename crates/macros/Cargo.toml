@@ -15,3 +15,9 @@ proc-macro = true
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+
+[features]
+default = []
+chrono = []
+uuid = []
+decimal = []

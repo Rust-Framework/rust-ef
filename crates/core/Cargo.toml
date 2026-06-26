@@ -16,6 +16,8 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"], optional = true }
 chrono = { version = "0.4", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+rust_decimal = { version = "1", optional = true }
 inventory = { workspace = true }
 
 [dev-dependencies]
@@ -26,4 +28,6 @@ rust-ef-mysql = { path = "../mysql" }
 [features]
 default = []
 serde = ["dep:serde"]
-chrono = ["dep:chrono"]
+chrono = ["dep:chrono", "rust-ef-macros/chrono"]
+uuid = ["dep:uuid", "rust-ef-macros/uuid"]
+decimal = ["dep:rust_decimal", "rust-ef-macros/decimal"]

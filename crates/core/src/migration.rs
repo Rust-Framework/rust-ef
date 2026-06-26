@@ -75,30 +75,84 @@ impl MigrationDialect {
 
     /// Map a Rust type name to the dialect-specific column type.
     pub fn map_column_type(&self, col: &SnapshotColumn) -> String {
-        let base = match (col.type_name.as_str(), col.max_length) {
-            ("i32", _) if col.is_auto_increment => match self {
-                MigrationDialect::Postgres => "SERIAL",
-                MigrationDialect::MySql => "INT AUTO_INCREMENT",
-                MigrationDialect::Sqlite => "INTEGER",
-            },
-            ("i64", _) if col.is_auto_increment => match self {
-                MigrationDialect::Postgres => "BIGSERIAL",
-                MigrationDialect::MySql => "BIGINT AUTO_INCREMENT",
-                MigrationDialect::Sqlite => "INTEGER",
-            },
-            ("i16", _) => "SMALLINT",
-            ("i32", _) => "INTEGER",
-            ("i64", _) => "BIGINT",
-            ("f32", _) => "REAL",
-            ("f64", _) => "DOUBLE PRECISION",
-            ("bool", _) => "BOOLEAN",
-            ("String", Some(n)) => return format!("VARCHAR({})", n),
-            ("String", None) => "TEXT",
-            ("Vec<u8>", _) => match self {
-                MigrationDialect::Postgres => "BYTEA",
-                MigrationDialect::MySql | MigrationDialect::Sqlite => "BLOB",
-            },
-            _ => "TEXT",
+        // type_name comes from std::any::type_name::<T>() which returns
+        // fully-qualified paths (e.g. "alloc::string::String"). Use ends_with
+        // / contains matching to handle both simple and qualified names.
+        let tn = col.type_name.as_str();
+
+        // Auto-increment handling (must be checked before plain i32/i64)
+        if col.is_auto_increment {
+            if tn.ends_with("i32") {
+                return match self {
+                    MigrationDialect::Postgres => "SERIAL".into(),
+                    MigrationDialect::MySql => "INT AUTO_INCREMENT".into(),
+                    MigrationDialect::Sqlite => "INTEGER".into(),
+                };
+            }
+            if tn.ends_with("i64") {
+                return match self {
+                    MigrationDialect::Postgres => "BIGSERIAL".into(),
+                    MigrationDialect::MySql => "BIGINT AUTO_INCREMENT".into(),
+                    MigrationDialect::Sqlite => "INTEGER".into(),
+                };
+            }
+        }
+
+        let base: &str = if tn.ends_with("i16") {
+            "SMALLINT"
+        } else if tn.ends_with("i32") {
+            "INTEGER"
+        } else if tn.ends_with("i64") {
+            "BIGINT"
+        } else if tn.ends_with("f32") {
+            "REAL"
+        } else if tn.ends_with("f64") {
+            "DOUBLE PRECISION"
+        } else if tn.ends_with("bool") {
+            "BOOLEAN"
+        } else if tn.ends_with("String") {
+            return match col.max_length {
+                Some(n) => format!("VARCHAR({})", n),
+                None => "TEXT".into(),
+            };
+        } else if tn.ends_with("Vec<u8>") {
+            return match self {
+                MigrationDialect::Postgres => "BYTEA".into(),
+                MigrationDialect::MySql | MigrationDialect::Sqlite => "BLOB".into(),
+            };
+        } else if tn.contains("NaiveDateTime") {
+            return match self {
+                MigrationDialect::Postgres => "TIMESTAMP".into(),
+                MigrationDialect::MySql => "DATETIME".into(),
+                MigrationDialect::Sqlite => "TEXT".into(),
+            };
+        } else if tn.contains("NaiveDate") {
+            return match self {
+                MigrationDialect::Postgres => "DATE".into(),
+                MigrationDialect::MySql => "DATE".into(),
+                MigrationDialect::Sqlite => "TEXT".into(),
+            };
+        } else if tn.contains("DateTime") {
+            // chrono::DateTime<Utc> → TIMESTAMPTZ (PG) / DATETIME (MySQL) / TEXT (SQLite)
+            return match self {
+                MigrationDialect::Postgres => "TIMESTAMPTZ".into(),
+                MigrationDialect::MySql => "DATETIME".into(),
+                MigrationDialect::Sqlite => "TEXT".into(),
+            };
+        } else if tn.contains("Uuid") {
+            return match self {
+                MigrationDialect::Postgres => "UUID".into(),
+                MigrationDialect::MySql => "CHAR(36)".into(),
+                MigrationDialect::Sqlite => "TEXT".into(),
+            };
+        } else if tn.contains("Decimal") {
+            return match self {
+                MigrationDialect::Postgres => "NUMERIC".into(),
+                MigrationDialect::MySql => "DECIMAL(38,18)".into(),
+                MigrationDialect::Sqlite => "TEXT".into(),
+            };
+        } else {
+            "TEXT"
         };
         base.to_string()
     }

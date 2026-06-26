@@ -118,6 +118,13 @@
               "summary": "#[index]、#[unique]、#[concurrency_check]",
               "readingTime": 10,
               "difficulty": "intermediate"
+            },
+            {
+              "id": "type-mapping",
+              "title": "类型映射参考表",
+              "summary": "Rust ↔ DbValue ↔ 三方数据库列类型与可选 feature",
+              "readingTime": 10,
+              "difficulty": "intermediate"
             }
           ]
         },

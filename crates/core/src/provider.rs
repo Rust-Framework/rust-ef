@@ -98,6 +98,43 @@ impl From<Vec<u8>> for DbValue {
         DbValue::Bytes(v)
     }
 }
+
+// --- Feature-gated From impls for chrono / uuid / decimal ---
+
+#[cfg(feature = "chrono")]
+impl From<chrono::DateTime<chrono::Utc>> for DbValue {
+    fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
+        DbValue::String(dt.to_rfc3339())
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl From<chrono::NaiveDateTime> for DbValue {
+    fn from(ndt: chrono::NaiveDateTime) -> Self {
+        DbValue::String(ndt.to_string())
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl From<chrono::NaiveDate> for DbValue {
+    fn from(nd: chrono::NaiveDate) -> Self {
+        DbValue::String(nd.to_string())
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl From<uuid::Uuid> for DbValue {
+    fn from(u: uuid::Uuid) -> Self {
+        DbValue::String(u.to_string())
+    }
+}
+
+#[cfg(feature = "decimal")]
+impl From<rust_decimal::Decimal> for DbValue {
+    fn from(d: rust_decimal::Decimal) -> Self {
+        DbValue::String(d.to_string())
+    }
+}
 impl<T> From<Option<T>> for DbValue
 where
     T: Into<DbValue>,

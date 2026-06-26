@@ -34,7 +34,7 @@ User Application
 
 ```toml
 [dependencies]
-rust-ef = "0.3"
+rust-ef = { version = "0.3", features = ["chrono", "uuid", "decimal"] }
 rust-ef-sqlite = "0.3"
 rust-dicore = "0.2"
 tokio = { version = "1", features = ["full"] }
@@ -43,13 +43,16 @@ tokio = { version = "1", features = ["full"] }
 rust-ef-cli = "0.3"
 ```
 
-## Feature 规划（未来版本）
+## 可选 Feature（v0.5 已实现）
 
-| Feature | 说明 |
-|---------|------|
-| `chrono` | `DateTime` / `NaiveDate` 映射 |
-| `uuid` | UUID 类型支持 |
-| `decimal` | `rust_decimal` 集成 |
+| Feature | 说明 | 依赖 |
+|---------|------|------|
+| `chrono` | `DateTime<Utc>` / `NaiveDateTime` / `NaiveDate` 映射 | `chrono` crate |
+| `uuid` | `uuid::Uuid` 类型支持 | `uuid` crate（含 `v4`） |
+| `decimal` | `rust_decimal::Decimal` 高精度小数 | `rust_decimal` crate |
+| `serde` | `DbValue` 等类型的 Serde 序列化 | `serde` crate |
+
+启用方式：在 `rust-ef` 的 features 中声明对应 feature，宏与核心库会自动启用对应的 `From` impl 与 `from_row` 解析分支。详见 [类型映射参考表](../03-entity-design/type-mapping.md)。
 
 ## 小结
 

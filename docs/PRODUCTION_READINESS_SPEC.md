@@ -3,15 +3,15 @@
 > 版本: v0.5 — 基于 2026-06-26 审计结果  
 > 包名: `rust-ef`（workspace: `crates/core`）  
 > 目标: 逐步推进至 v1.0 生产就绪状态  
-> **当前阶段: RC 1 接近完成（约 92% 就绪度）**
+> **当前阶段: RC 1 接近完成（约 94% 就绪度）**
 
 ---
 
 ## 执行摘要
 
-rust-ef v0.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器。在 **SQLite** 上有完整的 CRUD 集成测试（187 个测试全绿）。
+rust-ef v0.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持。在 **SQLite** 上有完整的 CRUD 集成测试（194 个测试全绿）。
 
-**已具备通用生产条件**（SQLite 场景），剩余缺口：chrono/uuid/decimal 类型支持、Lazy Loading、CI 多库 matrix。
+**已具备通用生产条件**（SQLite 场景），剩余缺口：Lazy Loading、CI 多库 matrix。
 
 | 场景 | 建议 |
 |------|------|
@@ -25,10 +25,10 @@ rust-ef v0.5 已具备 EF Core 风格 ORM 的**核心骨架**：类型映射式 
 ## 里程碑总览
 
 ```
-Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► 当前 v0.5 (~92%) ──► 1.0
+Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► 当前 v0.5 (~94%) ──► 1.0
                                                     ↑
                                             RC1 核心项已完成
-                                            剩余: 类型扩展 / CI / Lazy Loading
+                                            剩余: CI / Lazy Loading
 ```
 
 ---
@@ -57,6 +57,7 @@ Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► 当前 v
 | `ensure_created` / `ensure_deleted` | ✅ | 集成测试覆盖 |
 | `remove_range` / `load_all` | ✅ | `db_set.rs` |
 | 乐观并发 `#[concurrency_check]` | ✅ | UPDATE/DELETE WHERE 含 token |
+| chrono / uuid / decimal 类型支持 | ✅ | 可选 feature（`chrono` / `uuid` / `decimal`） |
 
 ### 查询
 
@@ -105,7 +106,7 @@ Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► 当前 v
 
 | 能力 | 状态 |
 |------|:----:|
-| 单元 + 集成测试（187） | ✅ |
+| 单元 + 集成测试（194） | ✅ |
 | GitHub Actions CI | ✅ |
 | CLI（migration add/apply/revert/list/script） | ✅ |
 | mdBook 用户文档 | ✅ |
@@ -369,15 +370,21 @@ jobs:
 
 ## 3.3 类型扩展
 
-### 现状
+### 现状（v0.5）
 
-`DbValue` 仅支持: Null / 数值 / bool / String / Bytes
+`DbValue` 核心 9 变体保持不变（Null/Bool/I16/I32/I64/F32/F64/String/Bytes），通过可选 feature 在 `String` 变体上承载 chrono/uuid/decimal 文本表示，避免破坏既有 ABI。
 
-### 需求
+### 已实现
 
-- [ ] `chrono` feature：DateTime / NaiveDate 映射
-- [ ] UUID 类型
-- [ ] Decimal（rust_decimal 可选）
+- [x] `chrono` feature：`DateTime<Utc>` / `NaiveDateTime` / `NaiveDate` 映射（RFC3339 / `"YYYY-MM-DD HH:MM:SS"` / `"YYYY-MM-DD"`）
+- [x] `uuid` feature：`uuid::Uuid` 类型支持（含 `v4`）
+- [x] `decimal` feature：`rust_decimal::Decimal` 高精度小数
+- [x] 三方方言 DDL 映射（PG `TIMESTAMPTZ`/`UUID`/`NUMERIC`；MySQL `DATETIME`/`CHAR(36)`/`DECIMAL(38,18)`；SQLite 统一 `TEXT`）
+- [x] 6 个集成测试（`extended_types_tests.rs`，feature 组合门控）
+
+### 待完善
+
+- [ ] Provider 原生参数绑定（目前经 `String` 中转，PostgreSQL 原生 `TIMESTAMPTZ`/`UUID` 参数为后续优化项）
 
 ---
 
@@ -414,7 +421,8 @@ jobs:
 | 乐观并发 | 元数据 | 元数据 | ✅ 生效 | 测试 |
 | CLI Migration | ❌ | ❌ | ✅ 三库 | 三库 |
 | Provider 集成测试 | SQLite | SQLite | ✅ 三库 | 三库 |
-| 测试数量 | 19 | 46 | **187** | 200+ |
+| chrono/uuid/decimal | ❌ | ❌ | ✅ 可选 feature | 原生参数 |
+| 测试数量 | 19 | 46 | **194** | 200+ |
 | CI | ❌ | ❌ | SQLite | 三库 |
 | 文档 | 计划 | README | ✅ mdBook | mdBook |
 
@@ -431,10 +439,10 @@ jobs:
   ✅ 子查询/关联过滤（any/none/all）
   ✅ 全局查询过滤器 + query_ignore_filters
   ✅ 软删除/审计拦截器示例 + 文档
+  ✅ 3.3 chrono / uuid / decimal 类型支持（可选 feature）
 
 P0 — 1.0 GA blocker:
   3.2 GitHub Actions CI 三库 matrix
-  3.3 chrono / uuid / decimal 类型支持
 
 P1 — 1.0 polish:
   1.2  linq! 类型推断
@@ -442,6 +450,7 @@ P1 — 1.0 polish:
   1.4  事务回滚 + 复合主键集成测试
   3.4  性能基准
   Lazy Loading（可选）
+  Provider 原生 chrono/uuid 参数绑定（目前经 String 中转）
 ```
 
 ---
@@ -453,12 +462,12 @@ P1 — 1.0 polish:
 3. **拦截器只读**：`SaveChangesContext` 不含实体引用，无法在拦截器中改字段；软删除/时间戳需手动标记
 4. **`from_row` 基于 `Vec<String>`**：大结果集性能与类型安全有限
 5. **DbContext DI 为 Transient**：长生命周期场景需自行管理 scope
-6. **无 chrono / uuid / decimal 类型**：用 `i64`（epoch）/ `String` 中转
+6. **chrono/uuid/decimal 经 `String` 中转**：可选 feature 已支持类型映射，但 Provider 参数绑定仍走文本通道，未利用 PG 原生 `TIMESTAMPTZ`/`UUID` 参数类型
 7. **无 CTE / Window 函数**：复杂分析查询需退回原始 SQL
 
 ---
 
-# 附录：测试清单（当前 187 个）
+# 附录：测试清单（当前 194 个）
 
 | 文件 | 数量 | 覆盖 |
 |------|:----:|------|
@@ -478,8 +487,9 @@ P1 — 1.0 polish:
 | `batch_dml_tests.rs` | — | 批量 INSERT / DELETE |
 | `navigation_perf_tests.rs` | — | NavigationLoader 优化 |
 | `connection_pool_tests.rs` | — | 连接池配置 |
+| `extended_types_tests.rs` | 6 | chrono/uuid/decimal 类型映射（feature 门控） |
 | 其他（单元 + 集成） | 100+ | 类型映射、DI、拦截器等 |
 
 ---
 
-*下次审计建议触发条件：chrono/uuid 类型支持落地、Lazy Loading 实现、或版本升至 1.0。*
+*下次审计建议触发条件：CI 三库 matrix 落地、Lazy Loading 实现、或版本升至 1.0。*

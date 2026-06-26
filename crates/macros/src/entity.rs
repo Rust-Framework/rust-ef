@@ -802,6 +802,27 @@ fn generate_scalar_parse(type_str: &str, _ty: &Type, idx: syn::Index) -> proc_ma
         "Vec < u8 >" | "Vec<u8>" => quote! {
             values[#idx].as_bytes().to_vec()
         },
+        // chrono types — order matters: NaiveDateTime before DateTime, NaiveDate before Date
+        _ if cfg!(feature = "chrono") && type_str.contains("NaiveDateTime") => quote! {
+            ::chrono::NaiveDateTime::parse_from_str(&values[#idx], "%Y-%m-%d %H:%M:%S%.f")
+                .unwrap_or_default()
+        },
+        _ if cfg!(feature = "chrono") && type_str.contains("NaiveDate") => quote! {
+            values[#idx].parse::<::chrono::NaiveDate>().unwrap_or_default()
+        },
+        _ if cfg!(feature = "chrono") && type_str.contains("DateTime") => quote! {
+            ::chrono::DateTime::parse_from_rfc3339(&values[#idx])
+                .map(|dt| dt.with_timezone(&::chrono::Utc))
+                .unwrap_or_default()
+        },
+        // uuid::Uuid
+        _ if cfg!(feature = "uuid") && type_str.contains("Uuid") => quote! {
+            values[#idx].parse::<::uuid::Uuid>().unwrap_or_default()
+        },
+        // rust_decimal::Decimal
+        _ if cfg!(feature = "decimal") && type_str.contains("Decimal") => quote! {
+            values[#idx].parse::<::rust_decimal::Decimal>().unwrap_or_default()
+        },
         _ => {
             // Default to String for unknown types
             quote! {
