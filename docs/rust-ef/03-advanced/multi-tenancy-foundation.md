@@ -41,7 +41,7 @@ let ctx = Arc::new(Mutex::new(ctx));
 
 ```rust
 let mut ctx = DbContext::from_options(&options)?;
-ctx.discover_entities()?;
+// from_options() 已自动调用 discover_entities()，无需手动注册
 
 // 注册租户隔离过滤器（tenant_id = 1）
 ctx.model().has_query_filter::<Blog>(

@@ -52,6 +52,23 @@ pub struct Product {
 
 该字段不映射到数据库列，仅存在于内存中。常用于计算属性或临时状态。
 
+### `#[context("key")]`（v1.1.0）
+
+将实体标记到指定的 keyed `DbContext`。未标注时，实体归属于默认上下文（`context_key = None`）。用于多数据库场景下隔离不同上下文的实体。
+
+```rust
+#[derive(Debug, Clone, EntityType)]
+#[context("logs")]
+#[table("log_entries")]
+pub struct LogEntry {
+    #[primary_key]
+    pub id: i32,
+    pub message: String,
+}
+```
+
+配合 `#[entity(T, "key")]` 配置和 `add_dbcontext_keyed` 使用，详见 [多数据库 Keyed 注册](../10-di-interceptors/keyed-databases.md)。
+
 ## 设计要点
 
 | 实践 | 说明 |

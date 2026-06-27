@@ -23,9 +23,9 @@ let query = set.query().filter(|qb| {
 | ~~无子查询~~ | ✅ v0.5 已实现 `any`/`none`/`all`（EXISTS/NOT EXISTS） | — |
 | ~~无关联过滤~~ | ✅ v0.5 已支持基于导航元数据的子查询过滤 | — |
 | ~~日期/UUID/Decimal 类型~~ | ✅ v0.5 已通过可选 feature 支持（`chrono` / `uuid` / `decimal`） | — |
-| **无 CTE / Window 函数** | 不支持 `WITH` 和 `ROW_NUMBER()` | 使用原始 SQL 或存储过程 |
+| ~~无 CTE / Window 函数~~ | ✅ v1.1 已支持 `WITH` 和 `ROW_NUMBER()` 等 10 种窗口函数（见 [CTE 与 Window 函数](cte-window-functions.md)） | — |
 | **linq! 需显式类型** | `|b: Blog|` 不能省略 | 必须标注实体类型 |
-| **无 Lazy Loading** | 必须显式 `include` | — |
+| ~~无 Lazy Loading~~ | ✅ v1.1 已支持 opt-in 按需加载（见 [Lazy Loading](../04-relationships/lazy-loading.md)） | — |
 | **拦截器只读** | `SaveChangesContext` 不含实体引用，无法在拦截器中改字段 | 手动标记 + 拦截器审计（见软删除/审计示例） |
 
 ## 何时退回原始 SQL

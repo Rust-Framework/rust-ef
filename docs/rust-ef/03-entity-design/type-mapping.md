@@ -35,7 +35,7 @@ chrono / uuid / decimal 通过可选 feature 启用。开启后，`DbValue::Stri
 
 ```toml
 [dependencies]
-rust-ef = { version = "0.3", features = ["chrono", "uuid", "decimal"] }
+rust-ef = { version = "1.1", features = ["chrono", "uuid", "decimal"] }
 ```
 
 Feature 通过 `rust-ef-macros` 透传到派生宏，宏根据 `cfg!(feature = "...")` 生成对应的 `from_row` 解析分支。

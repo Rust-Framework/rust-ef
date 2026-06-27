@@ -45,6 +45,27 @@ pub struct Post {
 }
 ```
 
+### Fluent Configuration (auto-discovered)
+
+`#[derive(EntityType)]` auto-registers entities at compile time. `DbContext::from_options()` automatically discovers all registered entities and applies `#[entity(T)]` configurations — no manual `discover_entities()` call needed.
+
+```rust
+#[derive(Default)]
+pub struct BlogConfig;
+
+#[entity(Blog)]
+impl IEntityTypeConfiguration<Blog> for BlogConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
+        entity.to_table("blogs_v2");
+        entity.property_named("url").has_column_name("blog_url");
+        entity.has_data(vec![
+            Blog { blog_id: 1, url: "https://example.com".into(), rating: 5,
+                   posts: HasMany::default() },
+        ]);
+    }
+}
+```
+
 ### DI Registration + Usage (Single DB)
 
 ```rust
@@ -71,9 +92,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Multi-DB (Keyed Registration)
+### Multi-DB (Keyed Registration + Entity Isolation)
+
+Tag entities with `#[context("key")]` to isolate them per keyed `DbContext`. `#[entity(T, "key")]` applies configurations to the matching context only.
 
 ```rust
+// Default context entity — no #[context] attribute
+#[derive(Debug, Clone, EntityType)]
+#[table("blogs")]
+pub struct Blog { /* ... */ }
+
+// Keyed context entity — tagged for "logs" context
+#[derive(Debug, Clone, EntityType)]
+#[context("logs")]
+#[table("log_entries")]
+pub struct LogEntry { /* ... */ }
+
+// Register two keyed DbContexts
 let provider = ServiceCollection::new()
     .add_dbcontext_keyed::<DbContext>("primary", |options| {
         options.use_postgres("host=primary/db");
@@ -86,6 +121,7 @@ let provider = ServiceCollection::new()
 
 let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
 let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+// primary manages Blog; logs manages LogEntry — isolated by context_key
 ```
 
 ### SaveChanges Interceptors
@@ -156,7 +192,23 @@ let blogs = linq!(ctx.set::<Blog>(); include b.posts then b.comments)
     .await?;
 ```
 
-> There is **no Lazy Loading**. Always use `linq!(...; include ...)` when you need related data.
+### Navigation (Lazy Loading, opt-in since v1.1)
+
+```rust
+// Enable lazy loading at the options level
+let mut options = DbContextOptionsBuilder::new();
+options.use_sqlite("app.db").use_lazy_loading(true);
+let mut ctx = DbContext::from_options(&options.build())?;
+
+let blogs = ctx.set::<Blog>().query().to_list().await?;
+for blog in &blogs {
+    // Navigation loaded on first access; subsequent reads hit cache
+    let posts = blog.posts.load().await?;
+    println!("{}: {} posts", blog.url, posts.len());
+}
+```
+
+> Lazy Loading is **opt-in** (`use_lazy_loading(true)`, default `false`). When disabled, use `linq!(...; include ...)` for eager loading.
 
 ### Bulk Update
 
@@ -294,10 +346,11 @@ FromDbContextOptions (DI bridge)
 
 | Category | Feature |
 |----------|---------|
-| **Entity** | `#[derive(EntityType)]` with 12 attributes, navigation types |
-| **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation |
+| **Entity** | `#[derive(EntityType)]` with 13 attributes, navigation types, auto-discovery |
+| **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation, IN/NOT IN subqueries |
+| **Advanced Query** | CTE (`linq!(with ...)` syntax sugar), Window functions (10 kinds), Lazy Loading (opt-in) |
 | **Persistence** | `save_changes()`, parameterized queries, transactions |
-| **DI** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`, `Arc<dyn IDbContext>` |
+| **DI** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`, `Arc<dyn IDbContext>`, multi-DB context key isolation |
 | **Interception** | `ISaveChangesInterceptor` ??on_saving/on_saved/on_save_failed hooks |
 | **Migrations** | Model diff, Up/Down SQL, history tracking, `MigrationStore` |
 | **CLI** | `rust-ef-cli`: `migration init/add/apply/revert/list/script`, `scaffold dbcontext` |
@@ -319,6 +372,7 @@ FromDbContextOptions (DI bridge)
 | `#[not_mapped]` | `[NotMapped]` |
 | `#[index]` / `#[unique]` | `[Index]` |
 | `#[concurrency_check]` | `[ConcurrencyCheck]` |
+| `#[context("key")]` | Multi-DB context key isolation (v1.1) |
 
 ---
 

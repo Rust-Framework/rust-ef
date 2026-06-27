@@ -35,40 +35,32 @@ let expr = linq!(|b: Blog| b.rating > 5);
 
 **原因**：`linq!` 是 `proc_macro`（函数式过程宏），在编译的**解析后、类型检查前**阶段执行。宏需要实体类型来将字段引用（如 `b.rating`）编译为列常量（如 `Blog::COLUMN_RATING`），但此阶段类型检查尚未运行，宏无法从上下文推断闭包参数的类型。这是 Rust 过程宏系统的根本限制，1.0 不会改变。Form B 的 source 也必须含 `::<Type>` turbofish，原因相同。
 
-## 4. `ensure_created()` 找不到实体（v0.5.1 已修复）
+## 4. `ensure_created()` 找不到实体（v1.1.0 已自动修复）
 
 **v0.5.1 之前**：必须先调用 `ctx.set::<T>()`，否则 `ensure_created()` 看不到任何实体，会报 `No entity types registered`。
 
-```rust
-// ❌ v0.5.0：entity_metas 为空，ensure_created 报错
-ctx.ensure_created().await?;
-ctx.set::<Blog>();
+**v0.5.1 之后**：调用 `ctx.discover_entities()` 即可自动注册所有 `#[derive(EntityType)]` 标注的类型。
 
-// ✅ v0.5.0：先注册所有实体，再建表
-ctx.set::<Blog>();
-ctx.set::<Post>();
-ctx.ensure_created().await?;
-```
-
-**v0.5.1 之后**：调用 `ctx.discover_entities()` 即可自动注册所有 `#[derive(EntityType)]` 标注的类型，无需手动 `set::<T>()`：
+**v1.1.0 之后**：`DbContext::from_options()` **自动**调用 `discover_entities()`，无需任何手动调用：
 
 ```rust
-// ✅ v0.5.1：自动发现所有实体并应用 #[entity] 配置
+// ✅ v1.1.0 推荐写法：from_options 自动发现 + 应用配置
 let mut ctx = DbContext::from_options(&options)?;
-ctx.discover_entities()?;
-ctx.ensure_created().await?;
+ctx.ensure_created().await?;  // 元数据已就绪，直接建表
 ```
+
+> 手动调用 `ctx.discover_entities()` 仍兼容（幂等空操作），但不再需要。
 
 **重要修复**：v0.5.1 同时修复了 `ensure_created()` 绕过 Fluent API 配置的 Bug。之前的版本中，`ctx.model().entity::<Blog>().to_table("blogs2")` 等配置会被 `ensure_created()` 静默忽略；现在 `ensure_created()` 通过 `model_builder.build()` 应用所有 Fluent API 与 `#[entity(T)]` 配置覆盖。
 
 **迁移建议**：
-- 现有代码无需修改（`set::<T>()` 仍向后兼容）
-- 新代码推荐使用 `discover_entities()` 简化样板
+- 现有代码无需修改（`set::<T>()` 和手动 `discover_entities()` 均向后兼容）
+- 新代码推荐直接 `from_options()` + `ensure_created()`，无需手动注册
 - Fluent API 配置现在会真正生效
 
 **调试技巧**：
-- 使用 `inventory::iter::<rust_ef::registration::EntityRegistration>().count()` 查看注册的实体数量
-- 使用 `ctx.model().build()` 检查最终的 `EntityTypeMeta` 列表
+- 使用 `ctx.entity_metas_contains::<Blog>()` 检查实体是否已发现
+- 使用 `ctx.model_builder().build()` 检查最终的 `EntityTypeMeta` 列表
 
 ## 5. 在循环里逐条 `save_changes()`
 
@@ -89,12 +81,24 @@ ctx.save_changes().await?;
 ## 6. 导航属性为空因为没 `include`
 
 ```rust
-// ❌ posts 为空
+// ❌ posts 为空（Lazy Loading 未开启时）
 let blogs = ctx.set::<Blog>().query().to_list().await?;
 
-// ✅ 正确：用 linq! 的 include 子句显式预加载
+// ✅ 方式一：用 linq! 的 include 子句显式预加载（Eager Loading）
 let blogs = linq!(ctx.set::<Blog>(); include b.posts).to_list().await?;
+
+// ✅ 方式二：v1.1.0 开启 Lazy Loading 后按需加载
+let mut options = DbContextOptionsBuilder::new();
+options.use_sqlite("app.db").use_lazy_loading(true);
+let mut ctx = DbContext::from_options(&options.build())?;
+
+let blogs = ctx.set::<Blog>().query().to_list().await?;
+for blog in &blogs {
+    let posts = blog.posts.load().await?;  // 首次访问时加载
+}
 ```
+
+详见 [Eager Loading](../04-relationships/eager-loading.md) 与 [Lazy Loading](../04-relationships/lazy-loading.md)。
 
 ## 7. `execute_delete()` 误删全表
 

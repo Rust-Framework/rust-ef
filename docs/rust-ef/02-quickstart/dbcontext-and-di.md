@@ -11,10 +11,10 @@ use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 let mut builder = DbContextOptionsBuilder::new();
 builder.use_sqlite("app.db");
 let mut ctx = DbContext::from_options(&builder.build())?;
+// from_options() 自动发现所有 #[derive(EntityType)] 标注的实体
+// 并应用所有 #[entity(T)] 配置 —— 无需手动调用 discover_entities()
 
-// 注册实体类型
-ctx.set::<Blog>();
-ctx.ensure_created().await?;
+ctx.ensure_created().await?;  // 直接建表，元数据已就绪
 ```
 
 ## DI 注册（推荐）
@@ -56,8 +56,9 @@ let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
 
 | 点 | 说明 |
 |---|------|
+| `from_options()` 自动发现实体 | 自动调用 `discover_entities()`，无需手动注册元数据 |
 | `set::<T>()` 是 lazy 的 | 首次调用时创建 DbSet，重复调用返回同一实例 |
-| `ensure_created()` 需在 `set` 之后 | 需要知道已注册哪些实体类型才能生成 DDL |
+| `ensure_created()` 可直接调用 | 元数据已在 `from_options()` 中自动就绪 |
 | `Arc<dyn IDbContext>` 是 object-safe 的 | 支持 DI 容器的 trait object 解析 |
 
 下一节：[第一个 CRUD 流程](first-crud.md)

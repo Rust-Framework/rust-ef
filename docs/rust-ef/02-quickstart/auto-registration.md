@@ -1,6 +1,6 @@
-# 自动实体注册
+# 自动实体注册与发现
 
-rust-ef v0.5.1 引入了基于 `inventory` 的编译期自动注册机制，对齐 EFCore 的 `IEntityTypeConfiguration<T>` 配置分离模式，同时修复了 `ensure_created()` 绕过 Fluent API 配置的历史 Bug。
+rust-ef 提供基于 `inventory` 的编译期自动注册机制，对齐 EFCore 的 `IEntityTypeConfiguration<T>` 配置分离模式。**v1.1.0 起，`DbContext::from_options()` 自动调用 `discover_entities()`**，开发者只需写好实体和配置，框架自动完成元数据注册——无需任何手动调用。
 
 ## 核心机制
 
@@ -8,12 +8,13 @@ rust-ef v0.5.1 引入了基于 `inventory` 的编译期自动注册机制，对�
 |------|------|
 | `#[derive(EntityType)]` | 自动调用 `inventory::submit!` 注册 `EntityRegistration`（含 `meta_fn` 函数指针） |
 | `#[entity(T)]` | 属性宏，应用于 `impl IEntityTypeConfiguration<T>` 块，自动注册 `EntityConfigRegistration` |
-| `DbContext::discover_entities()` | 运行时迭代 `inventory::iter`，将注册表内容填充到 STORE A 与 STORE B |
-| `DbContext::ensure_created()` | 调用 `model_builder.build()` 应用所有 Fluent API 覆盖 |
+| `DbContext::from_options()` | **自动**调用 `discover_entities()`，发现所有注册的实体并应用配置 |
+| `DbContext::discover_entities()` | 运行时迭代 `inventory::iter`，填充实体元数据与 Fluent API 配置（幂等，可重复调用） |
+| `DbContext::ensure_created()` | 调用 `model_builder.build()` 应用所有 Fluent API 覆盖后建表 |
 
-## 基本用法
+## 基本用法（v1.1.0 推荐模式）
 
-定义实体类型时，`#[derive(EntityType)]` 会自动将其注册到全局注册表：
+定义实体类型时，`#[derive(EntityType)]` 会自动将其注册到全局注册表。`DbContext::from_options()` 自动发现所有注册的实体：
 
 ```rust
 use rust_ef::prelude::*;
@@ -27,14 +28,14 @@ pub struct Blog {
     pub url: String,
 }
 
+// from_options() 自动发现 Blog —— 无需手动 discover_entities()
 let mut ctx = DbContext::from_options(&options)?;
-ctx.discover_entities()?;       // 自动发现 Blog
-ctx.ensure_created().await?;
+ctx.ensure_created().await?;  // 元数据已就绪，直接建表
 ```
 
-> **注**：`DbContext::from_options()` 现已自动调用 `discover_entities()`，上例中的 `ctx.discover_entities()?;` 可省略（手动调用仍兼容，且为幂等空操作）。
+无需再为每个实体类型手动调用 `ctx.set::<Blog>()` 或 `ctx.discover_entities()`。
 
-无需再为每个实体类型手动调用 `ctx.set::<Blog>()`。
+> **注**：手动调用 `ctx.discover_entities()` 仍然兼容（幂等空操作），但 v1.1.0 起不再需要。
 
 ## 配置分离（IEntityTypeConfiguration）
 
@@ -61,18 +62,98 @@ impl IEntityTypeConfiguration<Blog> for BlogConfig {
 }
 ```
 
-调用 `ctx.discover_entities()` 时，所有 `#[entity(T)]` 配置会自动应用到 `ModelBuilder`，确保 `ensure_created()` 创建的表结构与配置一致。
+`DbContext::from_options()` 自动发现所有 `#[entity(T)]` 配置并应用到 `ModelBuilder`，确保 `ensure_created()` 创建的表结构与配置一致。
+
+## 多数据库上下文隔离（v1.1.0）
+
+当应用使用多个 keyed `DbContext` 时，可通过 `#[context("key")]` 属性将实体标记到指定上下文，`#[entity(T, "key")]` 将配置应用到指定上下文：
+
+```rust
+// 默认上下文实体 —— 无 #[context] 属性，context_key = None
+#[derive(EntityType)]
+#[table("blogs")]
+pub struct Blog {
+    #[primary_key]
+    pub id: i32,
+    pub url: String,
+}
+
+// Keyed 上下文实体 —— 标记到 "logs" 上下文
+#[derive(EntityType)]
+#[context("logs")]
+#[table("log_entries")]
+pub struct LogEntry {
+    #[primary_key]
+    pub id: i32,
+    pub message: String,
+}
+
+// 默认上下文的配置
+#[derive(Default)]
+pub struct BlogConfig;
+
+#[entity(Blog)]
+impl IEntityTypeConfiguration<Blog> for BlogConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
+        entity.to_table("blogs_v2");
+    }
+}
+
+// Keyed 上下文的配置 —— 第二参数指定 "logs"
+#[derive(Default)]
+pub struct LogEntryConfig;
+
+#[entity(LogEntry, "logs")]
+impl IEntityTypeConfiguration<LogEntry> for LogEntryConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, LogEntry>) {
+        entity.property_named("message").has_index();
+    }
+}
+```
+
+注册两个 keyed DbContext：
+
+```rust
+let provider = ServiceCollection::new()
+    .add_dbcontext_keyed::<DbContext>("primary", |options| {
+        options.use_postgres("host=primary/db");
+    })
+    .add_dbcontext_keyed::<DbContext>("logs", |options| {
+        options.use_sqlite("logs.db");
+    })
+    .build()
+    .unwrap();
+
+// "primary" 上下文只管理 Blog（context_key = None）
+// "logs" 上下文只管理 LogEntry（context_key = Some("logs")）
+let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
+let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+```
+
+### 过滤规则
+
+`discover_entities()` 按 `context_key` 过滤：
+
+| 实体的 `context_key` | DbContext 的 `context_key` | 是否注册到该 DbContext |
+|----------------------|---------------------------|----------------------|
+| `None`（默认） | `None`（默认上下文） | ✅ |
+| `None`（默认） | `Some("logs")` | ❌ |
+| `Some("logs")` | `None`（默认上下文） | ❌ |
+| `Some("logs")` | `Some("logs")` | ✅ |
+
+这确保每个 `DbContext` 只管理属于自己的实体，避免跨数据库污染。
 
 ## 关键约定
 
 1. **属性宏参数是实体类型**：`#[entity(Blog)]` 指定实体类型 `Blog`，而非配置类型 `BlogConfig`
-2. **配置类型必须实现 `Default`**：宏生成的 `apply_fn` 通过 `Default::default()` 实例化配置
-3. **闭包不捕获环境变量**：`apply_fn` 通过函数指针 + `Default::default()` 工作，可隐式转换为 `fn(&mut ModelBuilder)`
+2. **可选第二参数指定上下文 key**：`#[entity(Blog, "logs")]` 将配置应用到 "logs" 上下文
+3. **配置类型必须实现 `Default`**：宏生成的 `apply_fn` 通过 `Default::default()` 实例化配置
+4. **闭包不捕获环境变量**：`apply_fn` 通过函数指针 + `Default::default()` 工作，可隐式转换为 `fn(&mut ModelBuilder)`
 
 ## 与 `set::<T>()` 的关系
 
-| 场景 | `discover_entities()` | `set::<T>()` |
-|------|------------------------|--------------|
+| 场景 | `from_options()` 自动发现 | `set::<T>()` |
+|------|--------------------------|--------------|
 | 填充元数据 | ✅ 所有 `#[derive(EntityType)]` 类型 | ✅ 仅指定类型 |
 | 应用 Fluent API | ✅ 通过 `#[entity]` | ✅ 通过 `ctx.model().entity::<T>()` |
 | 创建 `DbSet<T>` 实例 | ❌ 不创建（用于 CRUD 时仍需 `set`） | ✅ 创建 |
@@ -83,9 +164,8 @@ impl IEntityTypeConfiguration<Blog> for BlogConfig {
 **典型用法**：
 
 ```rust
-let mut ctx = DbContext::from_options(&options)?;
-ctx.discover_entities()?;       // 注册元数据
-ctx.ensure_created().await?;    // 建表（应用所有配置）
+let mut ctx = DbContext::from_options(&options)?;  // 自动发现 + 应用配置
+ctx.ensure_created().await?;                        // 建表
 
 // CRUD 操作仍需按需调用 set::<T>()
 let blog = Blog { id: 0, url: "...".into(), rating: 1 };
@@ -96,6 +176,7 @@ ctx.save_changes().await?;
 ## 向后兼容
 
 - `ctx.set::<T>()` 仍然可用，行为幂等
+- 手动调用 `ctx.discover_entities()` 仍然兼容（v1.1.0 起为幂等空操作）
 - 不调用 `discover_entities()` 时，旧代码行为兼容
 - **重要**：v0.5.1 修复了 `ensure_created()` 绕过 Fluent API 配置的 Bug。即使不使用 `discover_entities()`，通过 `ctx.model().entity::<T>().to_table("...")` 配置的覆盖现在会真正生效
 
@@ -107,15 +188,22 @@ ctx.save_changes().await?;
 use rust_ef::registration::EntityRegistration;
 
 for reg in inventory::iter::<EntityRegistration> {
-    println!("registered: {} ({:?})", reg.type_name, reg.type_id);
+    println!("registered: {} ({:?}) context_key={:?}", reg.type_name, reg.type_id, reg.context_key);
 }
+```
+
+### 检查 DbContext 是否已发现某实体
+
+```rust
+let ctx = DbContext::from_options(&options)?;
+assert!(ctx.entity_metas_contains::<Blog>());
 ```
 
 ### 检查最终的 EntityTypeMeta
 
 ```rust
-ctx.discover_entities()?;
-let metas = ctx.model().build();
+let ctx = DbContext::from_options(&options)?;
+let metas = ctx.model_builder().build();
 for meta in &metas {
     println!("{}: table={}", meta.type_name, meta.table_name);
 }
@@ -124,8 +212,8 @@ for meta in &metas {
 ### 检查 Fluent API 配置是否应用
 
 ```rust
-ctx.discover_entities()?;
-let metas = ctx.model().build();
+let ctx = DbContext::from_options(&options)?;
+let metas = ctx.model_builder().build();
 let blog_meta = metas.iter()
     .find(|m| m.type_name.contains("Blog"))
     .expect("Blog should be discovered");
@@ -143,7 +231,7 @@ assert_eq!(blog_meta.table_name.as_ref(), "blogs_v2");
            type_id: std::any::TypeId::of::<Blog>(),
            type_name: stringify!(Blog),
            meta_fn: <Blog as IEntityType>::entity_meta,
-           context_key: None,
+           context_key: None,  // 或 Some("logs") if #[context("logs")]
        }
    });
    ```
@@ -161,7 +249,7 @@ assert_eq!(blog_meta.table_name.as_ref(), "blogs_v2");
                let mut entity_builder = EntityTypeBuilder::new(builder, TypeId::of::<Blog>());
                BlogConfig::configure(&config, &mut entity_builder);
            },
-           context_key: None,
+           context_key: None,  // 或 Some("logs") if #[entity(Blog, "logs")]
        }
    });
    ```
@@ -170,8 +258,8 @@ assert_eq!(blog_meta.table_name.as_ref(), "blogs_v2");
 
 ### 运行时
 
-1. `ctx.discover_entities()` 迭代 `inventory::iter::<EntityConfigRegistration>` 应用配置
-2. 迭代 `inventory::iter::<EntityRegistration>` 填充 STORE A 与 STORE B
+1. `DbContext::from_options()` 自动调用 `discover_entities()`
+2. `discover_entities()` 按 `context_key` 过滤后，迭代 `EntityConfigRegistration` 应用配置，再迭代 `EntityRegistration` 填充元数据
 3. `ctx.ensure_created()` 调用 `model_builder.build()` 应用所有 `EntityConfig` 覆盖
 4. `MigrationEngine` 使用应用覆盖后的 metas 创建表
 
@@ -179,4 +267,5 @@ assert_eq!(blog_meta.table_name.as_ref(), "blogs_v2");
 
 - [inventory crate 文档](https://docs.rs/inventory/latest/inventory/)
 - [EFCore IEntityTypeConfiguration&lt;T&gt;](https://learn.microsoft.com/en-us/dotnet/api/microsoft.entityframeworkcore.ientitytypeconfiguration-1)
+- [多数据库 Keyed 注册](../10-di-interceptors/keyed-databases.md)
 - [常见陷阱与排查第 4 点](../11-best-practices/common-pitfalls.md)

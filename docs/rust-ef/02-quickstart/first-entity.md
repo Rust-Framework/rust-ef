@@ -38,6 +38,7 @@ pub struct Blog {
 | `#[index]` | 普通索引 | `[Index]` |
 | `#[unique]` | 唯一索引 | `[Index(IsUnique = true)]` |
 | `#[concurrency_check]` | 并发标记 | `[ConcurrencyCheck]` |
+| `#[context("key")]` | 多数据库上下文隔离（v1.1） | — |
 
 ## 带关系的实体
 

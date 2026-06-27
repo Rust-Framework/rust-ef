@@ -16,7 +16,7 @@
   - [定义第一个实体](./02-quickstart/first-entity.md)
   - [DbContext 与 DI 注册](./02-quickstart/dbcontext-and-di.md)
   - [第一个 CRUD 流程](./02-quickstart/first-crud.md)
-  - [自动注册与 discover_entities](./02-quickstart/auto-registration.md)
+  - [自动注册与实体发现](./02-quickstart/auto-registration.md)
 
 ---
 
@@ -32,6 +32,7 @@
   - [一对多与 BelongsTo / HasMany](./04-relationships/one-to-many.md)
   - [多对多与 Join 实体](./04-relationships/many-to-many.md)
   - [Eager Loading：Include 与 ThenInclude](./04-relationships/eager-loading.md)
+  - [Lazy Loading：按需加载（v1.1）](./04-relationships/lazy-loading.md)
 
 ---
 
@@ -47,6 +48,7 @@
   - [聚合函数：SUM / AVG / MIN / MAX](./06-advanced-query/aggregation.md)
   - [GROUP BY 与 HAVING](./06-advanced-query/group-by-having.md)
   - [JOIN 查询](./06-advanced-query/join-queries.md)
+  - [CTE 与 Window 函数（v1.1）](./06-advanced-query/cte-window-functions.md)
   - [全局查询过滤器](./06-advanced-query/global-query-filters.md)
   - [原始 SQL 与已知限制](./06-advanced-query/raw-sql-limitations.md)
 

@@ -42,7 +42,7 @@ let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.published;
 
 ## 限制
 
-- **无 Lazy Loading**：必须显式 `include`，否则导航属性为空
+- **Lazy Loading 默认关闭**：不开启时必须显式 `include`，否则导航属性为空。v1.1.0 起可通过 `use_lazy_loading(true)` 开启按需加载（详见 [Lazy Loading](../04-relationships/lazy-loading.md)）
 - **不支持循环 Include**：如 `Blog -> Post -> Blog` 会导致无限递归，需手动处理
 
 ## 设计要点
