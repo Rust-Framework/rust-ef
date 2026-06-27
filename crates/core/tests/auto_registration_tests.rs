@@ -1,7 +1,7 @@
 //! Tests for inventory-based automatic entity registration.
 //!
 //! Verifies that `#[derive(EntityType)]` emits `inventory::submit!` for
-//! `EntityRegistration`, that `#[entity_config(T)]` emits
+//! `EntityRegistration`, that `#[entity(T)]` emits
 //! `EntityConfigRegistration`, and that `DbContext::discover_entities()`
 //! populates both STORE A and STORE B from the global registry.
 
@@ -33,7 +33,7 @@ pub struct OtherEntity {
 #[derive(Default)]
 pub struct SimpleEntityConfig;
 
-#[entity_config(SimpleEntity)]
+#[entity(SimpleEntity)]
 impl IEntityTypeConfiguration<SimpleEntity> for SimpleEntityConfig {
     fn configure(&self, entity: &mut EntityTypeBuilder<'_, SimpleEntity>) {
         entity.to_table("auto_reg_renamed");
@@ -104,7 +104,7 @@ fn test_model_builder_build_applies_config() {
     assert_eq!(
         simple_meta.table_name.as_ref(),
         "auto_reg_renamed",
-        "to_table override from #[entity_config] should be applied"
+        "to_table override from #[entity] should be applied"
     );
 
     let name_prop = simple_meta
@@ -140,7 +140,7 @@ fn test_other_entity_keeps_default_table_name() {
     assert_eq!(
         other_meta.table_name.as_ref(),
         "auto_reg_other",
-        "Entities without #[entity_config] should keep their #[table] name"
+        "Entities without #[entity] should keep their #[table] name"
     );
 }
 

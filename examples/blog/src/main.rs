@@ -2,7 +2,7 @@
 //!
 //! This example uses the v0.5.1+ auto-registration pattern:
 //! - `#[derive(EntityType)]` automatically registers Blog/Post with `inventory`
-//! - `#[entity_config(Blog)]` applies Fluent API overrides (renamed table & column)
+//! - `#[entity(Blog)]` applies Fluent API overrides (renamed table & column)
 //! - `ctx.discover_entities()` discovers all registered entities
 //! - `ctx.ensure_created()` applies all configurations and creates the schema
 
@@ -21,7 +21,7 @@ async fn main() -> Result<(), EFError> {
 
     let mut ctx = create_blog_context().await?;
 
-    println!("[0] Verify #[entity_config] overrides are applied...");
+    println!("[0] Verify #[entity] overrides are applied...");
     {
         let metas = ctx.model().build();
         let blog_meta = metas

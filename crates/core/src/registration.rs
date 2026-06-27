@@ -5,7 +5,7 @@
 //! `DbContext` discovers these at runtime via
 //! `inventory::iter::<EntityRegistration>()` (see `DbContext::discover_entities`).
 //!
-//! Similarly, `#[entity_config(T)]` applied to `impl IEntityTypeConfiguration<T>`
+//! Similarly, `#[entity(T)]` applied to `impl IEntityTypeConfiguration<T>`
 //! blocks emits an [`EntityConfigRegistration`], whose `apply_fn` is invoked by
 //! `DbContext::discover_entities()` to apply Fluent API overrides to the
 //! `ModelBuilder`.
@@ -24,6 +24,10 @@ pub struct EntityRegistration {
     pub type_id: TypeId,
     pub type_name: &'static str,
     pub meta_fn: fn() -> EntityTypeMeta,
+    /// Which DbContext key this entity belongs to.
+    /// `None` = default context; `Some("key")` = keyed context.
+    /// Set by `#[context("key")]` on the entity struct.
+    pub context_key: Option<&'static str>,
 }
 
 impl EntityRegistration {
@@ -36,7 +40,7 @@ inventory::collect!(EntityRegistration);
 
 /// Type-erased registration for an `IEntityTypeConfiguration<T>` impl block.
 ///
-/// Emitted by the `#[entity_config(T)]` attribute macro. The `apply_fn`
+/// Emitted by the `#[entity(T)]` attribute macro. The `apply_fn`
 /// instantiates the configuration via `Default::default()` and invokes
 /// `IEntityTypeConfiguration::configure(&mut EntityTypeBuilder)` on a
 /// freshly-borrowed `ModelBuilder`.
@@ -45,6 +49,10 @@ pub struct EntityConfigRegistration {
     pub type_id: TypeId,
     pub type_name: &'static str,
     pub apply_fn: fn(&mut ModelBuilder),
+    /// Which DbContext key this configuration applies to.
+    /// `None` = default context; `Some("key")` = keyed context.
+    /// Set by `#[entity(T, "key")]` attribute's optional second argument.
+    pub context_key: Option<&'static str>,
 }
 
 impl std::fmt::Debug for EntityConfigRegistration {

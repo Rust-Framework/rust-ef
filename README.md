@@ -14,8 +14,8 @@ Interface-oriented, EFCore-inspired ORM for Rust ??`IDbContext` / `IDbSet<T>` / 
 
 ```toml
 [dependencies]
-rust-ef = "1.0"
-rust-ef-sqlite = "1.0"
+rust-ef = "1.1"
+rust-ef-sqlite = "1.1"
 rust-dicore = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```

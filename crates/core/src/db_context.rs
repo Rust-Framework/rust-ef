@@ -69,6 +69,7 @@ pub struct DbContextOptions {
     ///
     /// Defaults to `false` (opt-in) to preserve v1.0 eager-only behavior.
     pub(crate) lazy_loading_enabled: bool,
+    pub(crate) context_key: Option<String>,
 }
 
 impl std::fmt::Debug for DbContextOptions {
@@ -90,6 +91,9 @@ impl DbContextOptions {
     pub fn lazy_loading_enabled(&self) -> bool {
         self.lazy_loading_enabled
     }
+    pub fn context_key(&self) -> Option<&str> {
+        self.context_key.as_deref()
+    }
     pub fn create_provider(&self) -> EFResult<Arc<dyn IDatabaseProvider>> {
         let factory = self.provider_factory.as_ref().ok_or_else(|| {
             crate::error::EFError::Configuration(
@@ -109,6 +113,7 @@ impl Default for DbContextOptions {
             provider_factory: None,
             interceptors: Vec::new(),
             lazy_loading_enabled: false,
+            context_key: None,
         }
     }
 }
@@ -184,6 +189,15 @@ impl DbContextOptionsBuilder {
     /// ```
     pub fn use_lazy_loading(&mut self, enabled: bool) -> &mut Self {
         self.inner.lazy_loading_enabled = enabled;
+        self
+    }
+
+    /// Sets the context key used to filter entities and configurations
+    /// during `DbContext::discover_entities()`. Set automatically by
+    /// `add_dbcontext_keyed`; `None` (the default) selects the default
+    /// context.
+    pub fn context_key(&mut self, key: impl Into<String>) -> &mut Self {
+        self.inner.context_key = Some(key.into());
         self
     }
 
@@ -294,13 +308,14 @@ pub struct DbContext {
     provider: Arc<dyn IDatabaseProvider>,
     interceptor_pipeline: InterceptorPipeline,
     lazy_loading_enabled: bool,
+    context_key: Option<String>,
 }
 
 impl DbContext {
     /// Creates the context from options (uses the provider factory stored in options).
     pub fn from_options(options: &DbContextOptions) -> EFResult<Self> {
         let provider = options.create_provider()?;
-        Ok(Self {
+        let mut ctx = Self {
             sets: HashMap::new(),
             savers: HashMap::new(),
             entity_metas: HashMap::new(),
@@ -309,7 +324,13 @@ impl DbContext {
             provider,
             interceptor_pipeline: InterceptorPipeline::new(options.interceptors.clone()),
             lazy_loading_enabled: options.lazy_loading_enabled,
-        })
+            context_key: options.context_key.clone(),
+        };
+        // Auto-discover all entities registered via #[derive(EntityType)] and
+        // apply all #[entity(T)] configurations. This is idempotent — manual
+        // discover_entities() calls after from_options() are safe no-ops.
+        ctx.discover_entities()?;
+        Ok(ctx)
     }
 
     pub fn set<T>(&mut self) -> &mut DbSet<T>
@@ -360,8 +381,19 @@ impl DbContext {
         &mut self.model_builder
     }
 
+    /// Returns a read-only reference to the model builder.
+    pub fn model_builder(&self) -> &ModelBuilder {
+        &self.model_builder
+    }
+
+    /// Returns `true` if an entity of type `T` has been discovered and
+    /// registered in the entity metadata map.
+    pub fn entity_metas_contains<T: IEntityType>(&self) -> bool {
+        self.entity_metas.contains_key(&TypeId::of::<T>())
+    }
+
     /// Discovers all entity types registered via `#[derive(EntityType)]`
-    /// and applies all `#[entity_config(T)]` configurations to the model builder.
+    /// and applies all `#[entity(T)]` configurations to the model builder.
     ///
     /// After calling this, `ensure_created()` and `ensure_deleted()` will
     /// process all discovered entities without requiring manual `set::<T>()`
@@ -373,22 +405,30 @@ impl DbContext {
     ///
     /// ```rust,ignore
     /// let mut ctx = DbContext::from_options(&options)?;
-    /// ctx.discover_entities()?;
+    /// // discover_entities() is called automatically by from_options()
     /// ctx.ensure_created().await?;
     /// ```
     pub fn discover_entities(&mut self) -> EFResult<()> {
+        let my_key = self.context_key.as_deref();
+
+        // Apply Fluent configurations matching this context's key.
         for reg in inventory::iter::<EntityConfigRegistration> {
-            (reg.apply_fn)(&mut self.model_builder);
+            if reg.context_key == my_key {
+                (reg.apply_fn)(&mut self.model_builder);
+            }
         }
 
+        // Register entity metadata for entities matching this context's key.
         for reg in inventory::iter::<EntityRegistration> {
-            let meta = reg.meta();
-            let type_id = reg.type_id;
-            self.entity_metas
-                .entry(type_id)
-                .or_insert_with(|| meta.clone());
-            if !self.model_builder.has_entity(type_id) {
-                self.model_builder.register_entity_meta(meta);
+            if reg.context_key == my_key {
+                let meta = reg.meta();
+                let type_id = reg.type_id;
+                self.entity_metas
+                    .entry(type_id)
+                    .or_insert_with(|| meta.clone());
+                if !self.model_builder.has_entity(type_id) {
+                    self.model_builder.register_entity_meta(meta);
+                }
             }
         }
 
@@ -424,7 +464,7 @@ impl DbContext {
     /// Creates all tables for registered entity types.
     ///
     /// Sources metas from `model_builder.build()`, which applies all Fluent
-    /// API configurations and `#[entity_config(T)]` overrides. Entities are
+    /// API configurations and `#[entity(T)]` overrides. Entities are
     /// discovered automatically via `#[derive(EntityType)]`; call
     /// `discover_entities()` first, or use `set::<T>()` to register manually.
     pub async fn ensure_created(&self) -> EFResult<()> {

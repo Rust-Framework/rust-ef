@@ -12,6 +12,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
     let struct_name_str = struct_name.to_string();
 
     let table_name = extract_table_name(&input.attrs);
+    let context_key_tokens = extract_context_key(&input.attrs);
 
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
@@ -571,6 +572,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 type_id: std::any::TypeId::of::<#struct_name>(),
                 type_name: stringify!(#struct_name),
                 meta_fn: <#struct_name as rust_ef::entity::IEntityType>::entity_meta,
+                context_key: #context_key_tokens,
             }
         });
     };
@@ -724,6 +726,21 @@ fn extract_table_name(attrs: &[syn::Attribute]) -> String {
         }
     }
     String::new()
+}
+
+/// Extracts the optional `#[context("key")]` attribute for multi-database
+/// scenarios. Returns `None` for the default context, `Some("key")` for a
+/// keyed context.
+fn extract_context_key(attrs: &[syn::Attribute]) -> Option<proc_macro2::TokenStream> {
+    for attr in attrs {
+        if attr.path().is_ident("context") {
+            if let Ok(lit_str) = attr.parse_args::<LitStr>() {
+                let key = lit_str.value();
+                return Some(quote! { ::core::option::Option::Some(#key) });
+            }
+        }
+    }
+    Some(quote! { ::core::option::Option::None })
 }
 
 fn has_attr(attrs: &[syn::Attribute], name: &str) -> bool {

@@ -138,6 +138,7 @@ impl DbContextServiceCollectionExt for ::rust_dicore::ServiceCollection {
     {
         let mut builder = DbContextOptionsBuilder::new();
         configure(&mut builder);
+        builder.context_key(key);
         let options = Arc::new(builder.build());
 
         self.keyed_scoped(key, move |_| {

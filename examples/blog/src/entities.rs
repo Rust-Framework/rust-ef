@@ -2,7 +2,7 @@
 //!
 //! These demonstrate the core entity definition pattern with
 //! `#[derive(EntityType)]` and attribute-based configuration,
-//! plus the `#[entity_config(T)]` attribute for separating configuration
+//! plus the `#[entity(T)]` attribute for separating configuration
 //! from entity definition (EFCore `IEntityTypeConfiguration<T>` pattern).
 
 use rust_ef::prelude::*;
@@ -55,14 +55,14 @@ pub struct Blog {
 /// }
 /// ```
 ///
-/// The `#[entity_config(Blog)]` attribute emits an `inventory::submit!`
+/// The `#[entity(Blog)]` attribute emits an `inventory::submit!`
 /// registering this configuration, which `DbContext::discover_entities()`
 /// automatically discovers and applies before `ensure_created()` builds
 /// the schema.
 #[derive(Default)]
 pub struct BlogConfig;
 
-#[entity_config(Blog)]
+#[entity(Blog)]
 impl IEntityTypeConfiguration<Blog> for BlogConfig {
     fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
         entity.to_table("blogs_renamed");

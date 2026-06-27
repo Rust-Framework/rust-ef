@@ -2,7 +2,7 @@
 //!
 //! These tests verify the end-to-end flow:
 //! 1. `#[derive(EntityType)]` emits `inventory::submit!`
-//! 2. `#[entity_config(T)]` emits `inventory::submit!`
+//! 2. `#[entity(T)]` emits `inventory::submit!`
 //! 3. `ctx.discover_entities()` populates STORE A and STORE B
 //! 4. `ctx.ensure_created()` applies Fluent API overrides (renamed table)
 //! 5. `ctx.set::<T>()` is idempotent after discovery
@@ -34,7 +34,7 @@ pub struct DiscOther {
 #[derive(Default)]
 pub struct DiscSimpleConfig;
 
-#[entity_config(DiscSimple)]
+#[entity(DiscSimple)]
 impl IEntityTypeConfiguration<DiscSimple> for DiscSimpleConfig {
     fn configure(&self, entity: &mut EntityTypeBuilder<'_, DiscSimple>) {
         entity.to_table("disc_int_renamed");

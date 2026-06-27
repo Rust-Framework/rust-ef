@@ -53,13 +53,13 @@ ctx.ensure_created().await?;
 **v0.5.1 之后**：调用 `ctx.discover_entities()` 即可自动注册所有 `#[derive(EntityType)]` 标注的类型，无需手动 `set::<T>()`：
 
 ```rust
-// ✅ v0.5.1：自动发现所有实体并应用 #[entity_config] 配置
+// ✅ v0.5.1：自动发现所有实体并应用 #[entity] 配置
 let mut ctx = DbContext::from_options(&options)?;
 ctx.discover_entities()?;
 ctx.ensure_created().await?;
 ```
 
-**重要修复**：v0.5.1 同时修复了 `ensure_created()` 绕过 Fluent API 配置的 Bug。之前的版本中，`ctx.model().entity::<Blog>().to_table("blogs2")` 等配置会被 `ensure_created()` 静默忽略；现在 `ensure_created()` 通过 `model_builder.build()` 应用所有 Fluent API 与 `#[entity_config(T)]` 配置覆盖。
+**重要修复**：v0.5.1 同时修复了 `ensure_created()` 绕过 Fluent API 配置的 Bug。之前的版本中，`ctx.model().entity::<Blog>().to_table("blogs2")` 等配置会被 `ensure_created()` 静默忽略；现在 `ensure_created()` 通过 `model_builder.build()` 应用所有 Fluent API 与 `#[entity(T)]` 配置覆盖。
 
 **迁移建议**：
 - 现有代码无需修改（`set::<T>()` 仍向后兼容）

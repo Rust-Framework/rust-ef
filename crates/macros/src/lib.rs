@@ -22,7 +22,8 @@ use proc_macro::TokenStream;
         index,
         unique,
         through,
-        concurrency_check
+        concurrency_check,
+        context
     )
 )]
 pub fn derive_entity_type(input: TokenStream) -> TokenStream {
@@ -50,23 +51,34 @@ pub fn linq(input: TokenStream) -> TokenStream {
 /// Attribute macro for `impl IEntityTypeConfiguration<T>` blocks.
 ///
 /// Emits an `inventory::submit!` registering the configuration for automatic
-/// discovery by `DbContext::ensure_created()`. The argument is the entity
-/// type `T`; the config type is taken from the `impl`'s `Self` type.
+/// discovery by `DbContext::from_options()`. The first argument is the entity
+/// type `T`; the config type is taken from the `impl`'s `Self` type. An
+/// optional second argument specifies the DbContext key for multi-database
+/// scenarios.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```ignore
 /// #[derive(Default)]
 /// pub struct BlogConfig;
 ///
-/// #[entity_config(Blog)]
+/// // Default context
+/// #[entity(Blog)]
 /// impl IEntityTypeConfiguration<Blog> for BlogConfig {
 ///     fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
 ///         entity.to_table("blogs_renamed");
 ///     }
 /// }
+///
+/// // Keyed context ("logs" database)
+/// #[entity(LogEntry, "logs")]
+/// impl LogEntryConfig for IEntityTypeConfiguration<LogEntry> {
+///     fn configure(&self, entity: &mut EntityTypeBuilder<'_, LogEntry>) {
+///         entity.to_table("app_logs");
+///     }
+/// }
 /// ```
 #[proc_macro_attribute]
-pub fn entity_config(args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn entity(args: TokenStream, input: TokenStream) -> TokenStream {
     entity_config::expand_entity_config(args, input)
 }

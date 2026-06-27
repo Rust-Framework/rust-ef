@@ -45,7 +45,7 @@ pub use async_trait;
 
 pub use inventory;
 
-pub use rust_ef_macros::{column, entity_config, linq, EntityType};
+pub use rust_ef_macros::{column, entity, linq, EntityType};
 
 /// Re-exports of the most commonly used types.
 pub mod prelude {
@@ -78,7 +78,7 @@ pub mod prelude {
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::tracking::ChangeTracker;
     pub use rust_ef_macros::column;
-    pub use rust_ef_macros::entity_config;
+    pub use rust_ef_macros::entity;
     pub use rust_ef_macros::linq;
     pub use rust_ef_macros::EntityType;
 }

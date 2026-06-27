@@ -7,7 +7,7 @@ rust-ef v0.5.1 引入了基于 `inventory` 的编译期自动注册机制，对�
 | 组件 | 作用 |
 |------|------|
 | `#[derive(EntityType)]` | 自动调用 `inventory::submit!` 注册 `EntityRegistration`（含 `meta_fn` 函数指针） |
-| `#[entity_config(T)]` | 属性宏，应用于 `impl IEntityTypeConfiguration<T>` 块，自动注册 `EntityConfigRegistration` |
+| `#[entity(T)]` | 属性宏，应用于 `impl IEntityTypeConfiguration<T>` 块，自动注册 `EntityConfigRegistration` |
 | `DbContext::discover_entities()` | 运行时迭代 `inventory::iter`，将注册表内容填充到 STORE A 与 STORE B |
 | `DbContext::ensure_created()` | 调用 `model_builder.build()` 应用所有 Fluent API 覆盖 |
 
@@ -32,6 +32,8 @@ ctx.discover_entities()?;       // 自动发现 Blog
 ctx.ensure_created().await?;
 ```
 
+> **注**：`DbContext::from_options()` 现已自动调用 `discover_entities()`，上例中的 `ctx.discover_entities()?;` 可省略（手动调用仍兼容，且为幂等空操作）。
+
 无需再为每个实体类型手动调用 `ctx.set::<Blog>()`。
 
 ## 配置分离（IEntityTypeConfiguration）
@@ -42,7 +44,7 @@ ctx.ensure_created().await?;
 #[derive(Default)]
 pub struct BlogConfig;
 
-#[entity_config(Blog)]
+#[entity(Blog)]
 impl IEntityTypeConfiguration<Blog> for BlogConfig {
     fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
         entity.to_table("blogs_v2");
@@ -59,11 +61,11 @@ impl IEntityTypeConfiguration<Blog> for BlogConfig {
 }
 ```
 
-调用 `ctx.discover_entities()` 时，所有 `#[entity_config(T)]` 配置会自动应用到 `ModelBuilder`，确保 `ensure_created()` 创建的表结构与配置一致。
+调用 `ctx.discover_entities()` 时，所有 `#[entity(T)]` 配置会自动应用到 `ModelBuilder`，确保 `ensure_created()` 创建的表结构与配置一致。
 
 ## 关键约定
 
-1. **属性宏参数是实体类型**：`#[entity_config(Blog)]` 指定实体类型 `Blog`，而非配置类型 `BlogConfig`
+1. **属性宏参数是实体类型**：`#[entity(Blog)]` 指定实体类型 `Blog`，而非配置类型 `BlogConfig`
 2. **配置类型必须实现 `Default`**：宏生成的 `apply_fn` 通过 `Default::default()` 实例化配置
 3. **闭包不捕获环境变量**：`apply_fn` 通过函数指针 + `Default::default()` 工作，可隐式转换为 `fn(&mut ModelBuilder)`
 
@@ -72,7 +74,7 @@ impl IEntityTypeConfiguration<Blog> for BlogConfig {
 | 场景 | `discover_entities()` | `set::<T>()` |
 |------|------------------------|--------------|
 | 填充元数据 | ✅ 所有 `#[derive(EntityType)]` 类型 | ✅ 仅指定类型 |
-| 应用 Fluent API | ✅ 通过 `#[entity_config]` | ✅ 通过 `ctx.model().entity::<T>()` |
+| 应用 Fluent API | ✅ 通过 `#[entity]` | ✅ 通过 `ctx.model().entity::<T>()` |
 | 创建 `DbSet<T>` 实例 | ❌ 不创建（用于 CRUD 时仍需 `set`） | ✅ 创建 |
 | 创建 `SetOps` saver | ❌ 不创建 | ✅ 创建 |
 | 用于 `ensure_created()` | ✅ 足够 | ✅ 足够 |
@@ -141,11 +143,12 @@ assert_eq!(blog_meta.table_name.as_ref(), "blogs_v2");
            type_id: std::any::TypeId::of::<Blog>(),
            type_name: stringify!(Blog),
            meta_fn: <Blog as IEntityType>::entity_meta,
+           context_key: None,
        }
    });
    ```
 
-2. `#[entity_config(Blog)]` 在 `impl` 块后追加：
+2. `#[entity(Blog)]` 在 `impl` 块后追加：
    ```rust
    rust_ef::inventory::submit!({
        rust_ef::registration::EntityConfigRegistration {
@@ -158,6 +161,7 @@ assert_eq!(blog_meta.table_name.as_ref(), "blogs_v2");
                let mut entity_builder = EntityTypeBuilder::new(builder, TypeId::of::<Blog>());
                BlogConfig::configure(&config, &mut entity_builder);
            },
+           context_key: None,
        }
    });
    ```

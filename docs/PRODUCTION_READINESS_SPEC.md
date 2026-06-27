@@ -1,17 +1,17 @@
 # rust-ef 生产就绪技术规格说明书
 
-> 版本: v1.1 — 基于 2026-06-27 v1.1 Query Fidelity 审计结果（含发布评审修复）  
+> 版本: v1.1.0 — 基于 2026-06-27 v1.1 Query Fidelity + 实体自动发现审计结果（含发布评审修复）  
 > 包名: `rust-ef`（workspace: `crates/core`）  
-> 目标: v1.1 查询保真度迭代  
-> **当前阶段: v1.1 已达成（Lazy Loading + IN/NOT IN 子查询 + CTE/Window 函数 + PG 方言修复 + 发布评审通过）**
+> 目标: v1.1 查询保真度迭代 + 元数据注册自动化  
+> **当前阶段: v1.1.0 已达成（Lazy Loading + IN/NOT IN 子查询 + CTE/Window 函数 + PG 方言修复 + 实体自动发现 + 多数据库上下文 + 发布评审通过）**
 
 ---
 
 ## 执行摘要
 
-rust-ef v1.1 已具备 EF Core 风格 ORM 的**完整生产就绪能力**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持、exists_by_id/exists_by_key 存在性检查、事务回滚与复合主键 CRUD 集成测试。v1.1 新增 Lazy Loading（opt-in）、IN/NOT IN 标量子查询、CTE 与 Window 函数支持（含 `linq!(with ...)` 语法糖），并修复 PostgreSQL HAVING 占位符、LIMIT/OFFSET 方言及多 typed CTE `$N` 占位符冲突 bug。在 **SQLite / PostgreSQL / MySQL** 上有完整的 CRUD 集成测试（272 个测试全绿），CI 三库 matrix 已就位。mdBook 在线文档已部署至 GitHub Pages，安全审计通过，API 稳定无 deprecated 残留，Criterion 性能基准就绪。
+rust-ef v1.1.0 已具备 EF Core 风格 ORM 的**完整生产就绪能力**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持、exists_by_id/exists_by_key 存在性检查、事务回滚与复合主键 CRUD 集成测试。v1.1 新增 Lazy Loading（opt-in）、IN/NOT IN 标量子查询、CTE 与 Window 函数支持（含 `linq!(with ...)` 语法糖），并修复 PostgreSQL HAVING 占位符、LIMIT/OFFSET 方言及多 typed CTE `$N` 占位符冲突 bug。v1.1.0 进一步引入**实体自动发现**（`DbContext::from_options()` 自动调用 `discover_entities()`，开发者无需手动注册元数据）与**多数据库上下文 key**（`#[context("key")]` + `#[entity(T, "key")]` 按 key 隔离实体），并将 `#[entity_config(T)]` 重命名为 `#[entity(T)]`（无 deprecated 别名，干净利索）。在 **SQLite / PostgreSQL / MySQL** 上有完整的 CRUD 集成测试（278 个测试全绿），CI 三库 matrix 已就位。mdBook 在线文档已部署至 GitHub Pages，安全审计通过，API 稳定无 deprecated 残留，Criterion 性能基准就绪。
 
-**v1.1 全部验收标准通过**，剩余项为 v1.2+ 范围的规模扩展（L2 缓存、读写分离、分库分表）与生态集成（GraphQL）。
+**v1.1.0 全部验收标准通过**，剩余项为 v1.2+ 范围的规模扩展（L2 缓存、读写分离、分库分表）与生态集成（GraphQL）。
 
 | 场景 | 建议 |
 |------|------|
@@ -568,6 +568,53 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 
 ---
 
+## 3.9 v1.1.0 实体自动发现 + 多数据库上下文发布评审（2026-06-27）
+
+**状态: ✅ 通过**
+
+本次评审在 v1.1.0 entity auto-discovery + multi-database context key 功能落地后进行。目标是验证「开发者只需写好实体和配置，框架自动完成元数据注册」的设计目标是否达成，并确认 API 干净利索、符合发布要求。
+
+### 评审准则与结果
+
+| 准则 | 结果 | 说明 |
+|------|:----:|------|
+| 测试全绿 | ✅ | 278 个测试通过（含 6 个新增多数据库上下文测试） |
+| Clippy 零 warning | ✅ | `cargo clippy --workspace --all-features -- -D warnings` |
+| fmt 一致 | ✅ | `cargo fmt --all -- --check` |
+| Bench 编译 | ✅ | `cargo bench --workspace --no-run` 3 个基准可执行 |
+| 无 deprecated 残留 | ✅ | `entity_config` 已彻底移除，无别名残留 |
+| API 表面完整 | ✅ | `#[entity(T)]` / `#[entity(T, "key")]` / `#[context("key")]` 三态覆盖 |
+| 文档一致 | ✅ | CHANGELOG / SPEC / mdBook 同步 v1.1.0 |
+
+### 设计目标验证
+
+| 设计目标 | 验证方式 | 结果 |
+|---------|---------|:----:|
+| 标记 `#[derive(EntityType)]` 后框架自动发现实体 | `DbContext::from_options()` 自动调用 `discover_entities()`，无需手动注册 | ✅ |
+| 标记 `#[entity(T)]` 后框架自动应用 Fluent 配置 | `discover_entities()` 遍历 `EntityConfigRegistration` 调用 `apply_fn` | ✅ |
+| 多数据库上下文按 key 隔离实体 | `#[context("key")]` 标记实体 + `discover_entities()` 按 `context_key` 过滤 | ✅ |
+| 默认上下文（`None` key）与 keyed 上下文互不干扰 | 6 个测试覆盖默认/keyed 过滤 + 配置隔离 | ✅ |
+| API 干净利索，无 deprecated 别名 | `entity_config` 完全移除，重命名为 `entity` | ✅ |
+| 调用幂等安全 | `from_options()` 后再调用 `discover_entities()` 为 no-op | ✅ |
+
+### 新增 API 表面
+
+- **`#[entity(T)]`** / **`#[entity(T, "key")]`** — 属性宏（重命名自 `entity_config`），第二参数可选指定上下文 key
+- **`#[context("key")]`** — `#[derive(EntityType)]` 辅助属性，标记实体归属的 keyed 上下文
+- **`DbContextOptionsBuilder::context_key(key)`** — 设置上下文 key（`add_dbcontext_keyed` 自动调用）
+- **`DbContext::model_builder()`** — 只读访问器，返回 `&ModelBuilder`
+- **`DbContext::entity_metas_contains::<T>()`** — 类型检查方法，判断实体是否已注册
+
+### 验收标准
+
+- [x] 7 项评审准则全部通过
+- [x] 6 项设计目标全部验证通过
+- [x] 278 个测试全绿，clippy/fmt/bench 全部通过
+- [x] `entity_config` 无 deprecated 别名残留（干净利索）
+- [x] CHANGELOG 与 SPEC 同步更新
+
+---
+
 # 验收矩阵（v1.0 GA 快照）
 
 | 能力 | v0.2 Alpha | v0.3.5 | v0.5 RC 1 | v1.0 GA | v1.1 |
@@ -585,7 +632,8 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 | CTE / Window 函数 | ❌ | ❌ | ❌ | ❌ | ✅ 10 种窗口函数 + CTE（含 `linq!(with ...)` 语法糖） |
 | PG HAVING/LIMIT 修复 | ❌ | ❌ | ❌ | ❌ | ✅ |
 | PG 多 typed CTE `$N` 修复 | ❌ | ❌ | ❌ | ❌ | ✅ |
-| 测试数量 | 19 | 46 | 208 | 209 | **272** |
+| 实体自动发现 / 多数据库上下文 | ❌ | ❌ | ❌ | ❌ | ✅ `#[entity(T)]` + `#[context("key")]` |
+| 测试数量 | 19 | 46 | 208 | 209 | **278** |
 | CI | ❌ | ❌ | ✅ 三库 matrix | ✅ 三库 matrix | ✅ 三库 matrix |
 | 文档 | 计划 | README | ✅ mdBook | ✅ mdBook + GitHub Pages | ✅ mdBook + GitHub Pages |
 | 性能基准 | ❌ | ❌ | ❌ | ✅ criterion（3 benches） | ✅ criterion（3 benches） |
@@ -631,6 +679,9 @@ v1.1 已完成:
   ✅ CTE / Window 函数（WITH 子句 + ROW_NUMBER/RANK/SUM/LAG 等 10 种窗口函数）
   ✅ PostgreSQL HAVING 占位符 bug 修复（? → $N 共享 param_idx）
   ✅ PostgreSQL LIMIT/OFFSET 方言 bug 修复（gen.pagination() 委托）
+  ✅ 实体自动发现（DbContext::from_options() 自动调用 discover_entities()）
+  ✅ 多数据库上下文 key（#[context("key")] + #[entity(T, "key")] + 按 key 过滤）
+  ✅ #[entity_config] → #[entity] 重命名（无 deprecated 别名，干净利索）
 
 v1.2+ 范围（规模扩展）:
   二级缓存（IQueryInterceptor + CachingProvider）
@@ -656,7 +707,7 @@ v1.3+ 范围（生态集成）:
 
 ---
 
-# 附录：测试清单（当前 272 个）
+# 附录：测试清单（当前 278 个）
 
 | 文件 | 数量 | 覆盖 |
 |------|:----:|------|
@@ -674,6 +725,7 @@ v1.3+ 范围（生态集成）:
 | `lazy_loading_tests.rs` | 7 | Lazy Loading opt-in / HasMany / BelongsTo（v1.1） |
 | `window_function_tests.rs` | 12 | Window 函数 SQL 生成 + 执行 + CTE raw 模式（v1.1） |
 | `cte_syntax_tests.rs` | 13 | CTE 语法糖 SQL 生成 + 执行 + 参数顺序 + PG 多 CTE 占位符回归（v1.1） |
+| `multi_db_context_tests.rs` | 6 | 多数据库上下文 key 过滤 + Fluent 配置隔离（v1.1.0） |
 | `migration_cli_tests.rs` | 13 | revert_to_target / generate_script |
 | `index_diff_tests.rs` | 10 | CreateIndex / DropIndex diff |
 | `model_builder_cache_tests.rs` | — | OnceLock 元数据缓存 |
