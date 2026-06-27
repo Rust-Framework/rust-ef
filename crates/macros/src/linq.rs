@@ -138,6 +138,19 @@ enum LinqClause {
         order_by: Vec<(Expr, bool)>,
         alias: String,
     },
+    /// `with <name> as |param: Type| <body>` — typed CTE definition.
+    ///
+    /// The closure body is compiled to a `BoolExpr` via `compile_bool_expr`
+    /// and the CTE body (`SELECT * FROM <table> WHERE <expr>`) is generated
+    /// at `to_sql_with` time with provider-correct placeholders.
+    With {
+        name: String,
+        entity: Type,
+        param: Ident,
+        body: Expr,
+    },
+    /// `from <name>` — query from a CTE name or named source.
+    From { name: String },
 }
 
 /// Macro-side AST for `HAVING` expressions.
@@ -592,6 +605,8 @@ impl Parse for LinqClause {
                 Ok(LinqClause::Skip(n))
             }
             "window" => parse_window_rest(input),
+            "with" => parse_with_rest(input),
+            "from" => parse_from_rest(input),
             other => Err(syn::Error::new(
                 keyword.span(),
                 format!("unknown linq! clause: `{}`", other),
@@ -872,6 +887,52 @@ fn is_window_field_boundary(input: syn::parse::ParseStream) -> bool {
     } else {
         false
     }
+}
+
+/// `with <name> as |param: Type| <body>`
+///
+/// Defines a typed CTE whose WHERE clause is compiled from the closure body
+/// into a `BoolExpr` at expansion time. The CTE body
+/// `SELECT * FROM <table> WHERE <expr>` is generated at `to_sql_with` time
+/// with provider-correct placeholders (`?` or `$N`).
+///
+/// Examples:
+///   `with high_earners as |e: Employee| e.salary > 85000`
+///   `with active_users as |u: User| u.active == true && u.age > 18`
+fn parse_with_rest(input: syn::parse::ParseStream) -> syn::Result<LinqClause> {
+    // 1. CTE name.
+    let name: Ident = input.parse()?;
+
+    // 2. `as` keyword (Rust keyword — parse via Token![as]).
+    let _: Token![as] = input.parse()?;
+
+    // 3. Typed closure: |param: Type| body
+    //    Reuse the same parsing logic as `parse_typed_closure`, but collect
+    //    body tokens until `;` (clause separator) to avoid greedy Expr parsing.
+    let _open: Token![|] = input.parse()?;
+    let param: Ident = input.parse()?;
+    let _colon: Token![:] = input.parse()?;
+    let entity: Type = input.parse()?;
+    let _close: Token![|] = input.parse()?;
+
+    // Parse body until `;` (the clause separator is already stripped by
+    // `collect_until_semi`, but we still stop at `;` for safety).
+    let body = parse_expr_until_fat_arrow_or_semi(input)?;
+
+    Ok(LinqClause::With {
+        name: name.to_string(),
+        entity,
+        param,
+        body,
+    })
+}
+
+/// `from <name>` — query from a CTE name or named table source.
+fn parse_from_rest(input: syn::parse::ParseStream) -> syn::Result<LinqClause> {
+    let name: Ident = input.parse()?;
+    Ok(LinqClause::From {
+        name: name.to_string(),
+    })
 }
 
 /// Converts a parsed `syn::Expr` into a `HavingExprAst`.
@@ -1257,6 +1318,33 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
                         #alias_str,
                     )
                 };
+            }
+            LinqClause::With {
+                name,
+                entity,
+                param,
+                body,
+            } => {
+                // Create a separate LinqCtx for the CTE's entity type so that
+                // field references in the closure body (e.g. `e.salary`)
+                // resolve to the CTE entity's column constants, not the main
+                // query's entity.
+                let cte_ctx = LinqCtx::single(entity, Some(param));
+                let bool_expr_code = compile_bool_expr(&cte_ctx, body)?;
+                let name_str = name.as_str();
+                // `<Entity>::TABLE` is a `&'static str` constant emitted by
+                // `#[derive(EntityType)]`.
+                chain = quote! {
+                    #chain .with_cte_typed(
+                        #name_str,
+                        <#entity>::TABLE,
+                        #bool_expr_code,
+                    )
+                };
+            }
+            LinqClause::From { name } => {
+                let name_str = name.as_str();
+                chain = quote! { #chain .from_cte(#name_str) };
             }
             LinqClause::InnerJoin {
                 params,

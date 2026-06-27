@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] — 2026-06-27 — Query Fidelity
 
 Enhances query expressiveness with lazy loading, native type binding fixes,
-dialect bug fixes, IN/NOT IN subqueries, and CTE / window function support.
+dialect bug fixes, IN/NOT IN subqueries, CTE / window function support, and
+CTE syntax sugar for the `linq!` macro.
 
 ### Added — v1.1
 
@@ -24,11 +25,20 @@ dialect bug fixes, IN/NOT IN subqueries, and CTE / window function support.
   syntax in `linq!` macro (Forms A/B and C). New `BoolExpr::InSubquery` /
   `BoolExpr::NotInSubquery` variants and `InSubquerySpec` struct. 6 integration
   tests in `in_subquery_tests.rs`.
-- **CTE (Common Table Expressions)**: `QueryBuilder::with_cte_internal(name,
-  sql, params, columns)` and `QueryBuilder::from_cte(name)` methods. CTE
-  parameters are prepended to the query parameter vector; `WITH name AS (...)`
-  prefix emitted before SELECT. Explicit column lists supported
-  (`WITH name (c1, c2) AS (...)`).
+- **CTE (Common Table Expressions)**: Two usage modes:
+  - **Runtime API (raw mode)**: `QueryBuilder::with_cte_internal(name, sql,
+    params, columns)` and `QueryBuilder::from_cte(name)`. CTE parameters are
+    prepended to the query parameter vector; `WITH name AS (...)` prefix
+    emitted before SELECT. Explicit column lists supported
+    (`WITH name (c1, c2) AS (...)`).
+  - **`linq!` macro syntax sugar (typed mode)**: `linq!(with name as |e: T|
+    ...; from name)` compiles the closure body into a `BoolExpr` via
+    `compile_bool_expr`, generating a type-safe CTE whose body
+    `SELECT * FROM <table> WHERE <expr>` uses provider-correct placeholders
+    (`?` on SQLite/MySQL, `$N` on PostgreSQL). Eliminates raw SQL strings,
+    manual parameter management, and PostgreSQL placeholder mismatches.
+    `QueryBuilder::with_cte_typed(name, table, where_expr)` is the underlying
+    builder method. 9 integration tests in `cte_syntax_tests.rs`.
 - **Window functions**: `linq!(window ...)` clause with 10 function kinds
   (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, `SUM`, `COUNT`, `AVG`,
   `MIN`, `MAX`). `WindowSpec` AST with `PARTITION BY` and `ORDER BY` support.
@@ -51,15 +61,27 @@ dialect bug fixes, IN/NOT IN subqueries, and CTE / window function support.
 - **PostgreSQL native chrono/uuid parameter binding**: `DbValue` now preserves
   `chrono::DateTime` / `chrono::NaiveDateTime` / `uuid::Uuid` types instead of
   collapsing to `String`, enabling native PostgreSQL type inference.
+- **PostgreSQL multi typed CTE placeholder collision**: `to_sql_with` reset
+  `cte_idx` to 1 inside the CTE `.map()` closure, causing multiple typed CTEs
+  to emit duplicate `$1` placeholders on PostgreSQL. Fixed to use a
+  `running_idx` that accumulates across CTEs so `$N` stays contiguous with
+  `all_params()` order. Regression covered by 4 new PG dialect tests in
+  `cte_syntax_tests.rs`.
 
 ### Changed — v1.1
 
 - `QueryBuilder::to_list` and all terminal methods now require `T: ILazyInit`
   bound (auto-satisfied by `#[derive(EntityType)]`).
 - `QueryState` gains `windows: Vec<WindowSpec>` and `ctes: Vec<CteSpec>` fields.
+- `CteSpec` gains `table: String` and `where_expr: Option<BoolExpr>` fields to
+  support typed mode, and is now `#[non_exhaustive]` to prevent direct
+  construction outside the crate. Existing `with_cte_internal` API is
+  unchanged (new fields default to empty). Use `with_cte_internal` /
+  `with_cte_typed` to create CTE specifications.
 - `to_sql_with` emits window function projections in the SELECT list and CTE
   `WITH` prefix before SELECT; `param_idx` starts at `1 + cte_param_count` for
-  PostgreSQL placeholder continuity.
+  PostgreSQL placeholder continuity. Typed CTE bodies are compiled at this
+  point via `compile_bool_expr` with provider-correct placeholders.
 - All execution sites updated to use `QueryState::all_params()` for CTE
   parameter ordering.
 
@@ -346,6 +368,7 @@ Project skeleton, workspace layout, and the `IDbContext` / `IDbSet<T>`
 
 ---
 
+[1.1.0]: https://gitcode.com/rf2026/rust-ef/releases/tag/v1.1.0
 [1.0.0]: https://gitcode.com/rf2026/rust-ef/releases/tag/v1.0.0
 [0.5]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.5
 [0.4]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.4

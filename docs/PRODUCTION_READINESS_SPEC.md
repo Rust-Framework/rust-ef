@@ -1,15 +1,15 @@
 # rust-ef 生产就绪技术规格说明书
 
-> 版本: v1.1 — 基于 2026-06-27 v1.1 Query Fidelity 审计结果  
+> 版本: v1.1 — 基于 2026-06-27 v1.1 Query Fidelity 审计结果（含发布评审修复）  
 > 包名: `rust-ef`（workspace: `crates/core`）  
 > 目标: v1.1 查询保真度迭代  
-> **当前阶段: v1.1 已达成（Lazy Loading + IN/NOT IN 子查询 + CTE/Window 函数 + PG 方言修复）**
+> **当前阶段: v1.1 已达成（Lazy Loading + IN/NOT IN 子查询 + CTE/Window 函数 + PG 方言修复 + 发布评审通过）**
 
 ---
 
 ## 执行摘要
 
-rust-ef v1.1 已具备 EF Core 风格 ORM 的**完整生产就绪能力**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持、exists_by_id/exists_by_key 存在性检查、事务回滚与复合主键 CRUD 集成测试。v1.1 新增 Lazy Loading（opt-in）、IN/NOT IN 标量子查询、CTE 与 Window 函数支持，并修复 PostgreSQL HAVING 占位符与 LIMIT/OFFSET 方言 bug。在 **SQLite / PostgreSQL / MySQL** 上有完整的 CRUD 集成测试（234+ 个测试全绿），CI 三库 matrix 已就位。mdBook 在线文档已部署至 GitHub Pages，安全审计通过，API 稳定无 deprecated 残留，Criterion 性能基准就绪。
+rust-ef v1.1 已具备 EF Core 风格 ORM 的**完整生产就绪能力**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持、exists_by_id/exists_by_key 存在性检查、事务回滚与复合主键 CRUD 集成测试。v1.1 新增 Lazy Loading（opt-in）、IN/NOT IN 标量子查询、CTE 与 Window 函数支持（含 `linq!(with ...)` 语法糖），并修复 PostgreSQL HAVING 占位符、LIMIT/OFFSET 方言及多 typed CTE `$N` 占位符冲突 bug。在 **SQLite / PostgreSQL / MySQL** 上有完整的 CRUD 集成测试（272 个测试全绿），CI 三库 matrix 已就位。mdBook 在线文档已部署至 GitHub Pages，安全审计通过，API 稳定无 deprecated 残留，Criterion 性能基准就绪。
 
 **v1.1 全部验收标准通过**，剩余项为 v1.2+ 范围的规模扩展（L2 缓存、读写分离、分库分表）与生态集成（GraphQL）。
 
@@ -79,7 +79,7 @@ Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► v0.5 RC 
 | BelongsTo / HasMany / HasOne | ✅ | |
 | Many-to-Many（Join 实体） | ✅ | `m2m_tests.rs` |
 | Include / ThenInclude 物化 | ✅ | `navigation_loader.rs` |
-| Lazy Loading | ❌ | 未实现 |
+| Lazy Loading | ✅ | opt-in（`use_lazy_loading(true)`） |
 
 ### 迁移
 
@@ -520,6 +520,54 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 
 ---
 
+## 3.8 v1.1 发布评审（2026-06-27）
+
+**状态: ✅ 通过**
+
+发布评审在 v1.1 CTE 语法糖实现完成后进行，目标是确保发布后稳定且高效。评审包含两个并行子任务：框架审计（7 项准则）+ 代码审查（架构级 bug + 可维护性）。
+
+### 评审准则与结果
+
+| 准则 | 结果 | 说明 |
+|------|:----:|------|
+| 测试全绿 | ✅ | 272 个测试通过（含 4 个新增 PG CTE 回归测试） |
+| Clippy 零 warning | ✅ | `cargo clippy --workspace --all-features -- -D warnings` |
+| fmt 一致 | ✅ | `cargo fmt --all` 应用了所有格式修正 |
+| Bench 编译 | ✅ | `cargo bench --workspace --no-run` 3 个基准可执行 |
+| 无 deprecated 残留 | ✅ | 公共 API 全部稳定 |
+| API 表面完整 | ✅ | prelude 导出 `WindowFuncKind` / `WindowSpec` / `CteSpec` |
+| 文档一致 | ✅ | CHANGELOG / SPEC / 内联文档同步 v1.1 |
+
+### 代码审查发现与修复
+
+| 严重度 | 问题 | 状态 |
+|:------:|------|:----:|
+| 🔴 CRITICAL | 多 typed CTE `cte_idx` 在 `.map()` 闭包内重置为 1，导致 PostgreSQL `$N` 占位符在多个 typed CTE 间冲突（`$1, $1` 而非 `$1, $2`） | ✅ 修复 |
+| 🟡 中 | `CteSpec` 缺少 `#[non_exhaustive]`，未来字段添加会破坏 semver | ✅ 修复 |
+| 🟡 中 | `to_sql_with` CTE 注释误导（"param_idx starts at 1 for this CTE"） | ✅ 修复 |
+| 🟢 低 | CHANGELOG 缺少 `[1.1.0]:` 链接引用 | ✅ 修复 |
+| 🟢 低 | 缺少 PostgreSQL 多 typed CTE 测试覆盖 | ✅ 新增 4 个回归测试 |
+
+### 修复实现
+
+**CRITICAL bug 修复**（[query.rs:938-982](file:///e:/GitCode/RF/rust-ef/crates/core/src/query.rs#L938-L982)）：将 `.map()` 闭包改为 `for` 循环，引入 `running_idx: usize` 在 CTE 间累加。typed 模式下 `cte_idx` 从 `running_idx` 起始，编译完成后回写；raw 模式下按 `params.len()` 推进以保持与 `all_params()` 顺序一致。
+
+**回归测试**（[cte_syntax_tests.rs:340-481](file:///e:/GitCode/RF/rust-ef/crates/core/tests/cte_syntax_tests.rs#L340-L481)）：4 个 PostgreSQL 方言测试，使用 `PgLikeGenerator` mock（无需 live PG）：
+- `test_pg_single_typed_cte_uses_dollar_n` — 单 CTE 产出 `$1`
+- `test_pg_multiple_typed_ctes_contiguous_placeholders` — 双 CTE 产出 `$1, $2`（回归核心）
+- `test_pg_multi_cte_with_main_where_contiguous` — 三参数连续 `$1, $2, $3` 跨 CTE + 主 WHERE
+- `test_pg_compound_where_cte_placeholder_count` — 单 CTE 复合 WHERE 产出 `$1, $2` 且无 `$3`
+
+### 验收标准
+
+- [x] 7 项评审准则全部通过
+- [x] CRITICAL bug 已修复并有回归测试覆盖
+- [x] 中低严重度问题全部修复
+- [x] 272 个测试全绿，clippy/fmt/bench 全部通过
+- [x] CHANGELOG 与 SPEC 同步更新
+
+---
+
 # 验收矩阵（v1.0 GA 快照）
 
 | 能力 | v0.2 Alpha | v0.3.5 | v0.5 RC 1 | v1.0 GA | v1.1 |
@@ -534,9 +582,10 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 | CLI Migration | ❌ | ❌ | ✅ 三库 | ✅ 三库 | ✅ 三库 |
 | Provider 集成测试 | SQLite | SQLite | ✅ 三库 | ✅ 三库 | ✅ 三库 |
 | chrono/uuid/decimal | ❌ | ❌ | ✅ 可选 feature | ✅ 可选 feature | ✅ PG 原生绑定 |
-| CTE / Window 函数 | ❌ | ❌ | ❌ | ❌ | ✅ 10 种窗口函数 + CTE |
+| CTE / Window 函数 | ❌ | ❌ | ❌ | ❌ | ✅ 10 种窗口函数 + CTE（含 `linq!(with ...)` 语法糖） |
 | PG HAVING/LIMIT 修复 | ❌ | ❌ | ❌ | ❌ | ✅ |
-| 测试数量 | 19 | 46 | 208 | 209 | **234+** |
+| PG 多 typed CTE `$N` 修复 | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 测试数量 | 19 | 46 | 208 | 209 | **272** |
 | CI | ❌ | ❌ | ✅ 三库 matrix | ✅ 三库 matrix | ✅ 三库 matrix |
 | 文档 | 计划 | README | ✅ mdBook | ✅ mdBook + GitHub Pages | ✅ mdBook + GitHub Pages |
 | 性能基准 | ❌ | ❌ | ❌ | ✅ criterion（3 benches） | ✅ criterion（3 benches） |
@@ -602,12 +651,12 @@ v1.3+ 范围（生态集成）:
 3. **拦截器只读**：`SaveChangesContext` 不含实体引用，无法在拦截器中改字段；软删除/时间戳需手动标记
 4. **`from_row` 基于 `Vec<String>`**：大结果集性能与类型安全有限；Window 函数投影列被 `from_row` 忽略（仅读取实体字段）
 5. **DbContext DI 为 Transient**：长生命周期场景需自行管理 scope
-6. **CTE 无 linq! 宏语法**：CTE 通过 `with_cte_internal()` 运行时 API 使用，body 为预编译 SQL 字符串
+6. **CTE raw 模式 PostgreSQL 占位符**：`with_cte_internal()` 的预编译 SQL 使用 `?` 占位符，在 PostgreSQL 上不会转换为 `$N`。推荐使用 `linq!(with ...)` 语法糖（typed 模式），它在 `to_sql_with` 时用 provider 占位符编译，确保三库正确
 7. **PostgreSQL Provider 默认 `NoTls`**：生产部署需自行启用 TLS（部署加固，非框架漏洞）
 
 ---
 
-# 附录：测试清单（当前 234+ 个）
+# 附录：测试清单（当前 272 个）
 
 | 文件 | 数量 | 覆盖 |
 |------|:----:|------|
@@ -623,7 +672,8 @@ v1.3+ 范围（生态集成）:
 | `subquery_tests.rs` | 8 | any/none/all 子查询 |
 | `in_subquery_tests.rs` | 6 | IN / NOT IN 标量子查询（v1.1） |
 | `lazy_loading_tests.rs` | 7 | Lazy Loading opt-in / HasMany / BelongsTo（v1.1） |
-| `window_function_tests.rs` | 12 | Window 函数 SQL 生成 + 执行 + CTE（v1.1） |
+| `window_function_tests.rs` | 12 | Window 函数 SQL 生成 + 执行 + CTE raw 模式（v1.1） |
+| `cte_syntax_tests.rs` | 13 | CTE 语法糖 SQL 生成 + 执行 + 参数顺序 + PG 多 CTE 占位符回归（v1.1） |
 | `migration_cli_tests.rs` | 13 | revert_to_target / generate_script |
 | `index_diff_tests.rs` | 10 | CreateIndex / DropIndex diff |
 | `model_builder_cache_tests.rs` | — | OnceLock 元数据缓存 |

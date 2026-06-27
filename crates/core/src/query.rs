@@ -689,17 +689,45 @@ impl WindowSpec {
 
 /// Specification for a Common Table Expression (CTE).
 ///
-/// A CTE is defined by a name and a pre-compiled SQL string with its own
-/// parameter values. The main query references the CTE by name (typically
-/// in its FROM clause). Parameters are prepended to the main query's
-/// parameter list in CTE declaration order.
+/// A CTE is defined by a name and either a pre-compiled SQL string (raw mode)
+/// or a typed WHERE expression compiled at SQL generation time (typed mode).
+/// The main query references the CTE by name (typically in its FROM clause).
+/// Parameters are prepended to the main query's parameter list in CTE
+/// declaration order.
+///
+/// ## Modes
+///
+/// - **Raw mode** (via `with_cte_internal`): `sql` is non-empty, `table` and
+///   `where_expr` are empty. The SQL is emitted verbatim. Placeholders use
+///   the `?` style and are **not** converted to provider-specific syntax —
+///   suitable for SQLite/MySQL but may produce incorrect `$N` on PostgreSQL.
+///
+/// - **Typed mode** (via `with_cte_typed`, used by `linq!(with ...)`): `table`
+///   is non-empty, `where_expr` is `Some(...)`, `sql` is empty. The CTE body
+///   `SELECT * FROM <table> WHERE <expr>` is compiled at `to_sql_with` time
+///   using the provider's placeholder syntax, ensuring correct `$N` numbering
+///   on all providers.
+///
+/// `#[non_exhaustive]` prevents direct struct construction outside the crate
+/// so future field additions don't break downstream code. Use
+/// `with_cte_internal` (raw mode) or `with_cte_typed` (typed mode) to create
+/// CTE specifications.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CteSpec {
     /// The CTE name (used as the derived table alias in `WITH name AS (...)`).
     pub name: String,
-    /// The pre-compiled SQL of the CTE body.
+    /// Raw mode: the pre-compiled SQL of the CTE body. Empty in typed mode.
     pub sql: String,
+    /// Typed mode: source table name (`SELECT * FROM <table> WHERE ...`).
+    /// Empty in raw mode.
+    pub table: String,
+    /// Typed mode: WHERE expression compiled at `to_sql_with` time with the
+    /// provider's placeholder syntax. `None` in raw mode.
+    pub where_expr: Option<BoolExpr>,
     /// Parameter values bound to the CTE's placeholders, in order.
+    /// In typed mode, these are extracted from `where_expr` via
+    /// `collect_bool_expr_values` at construction time.
     pub params: Vec<DbValue>,
     /// Optional explicit column list (`WITH name (c1, c2) AS (...)`).
     /// Empty means no explicit column list.
@@ -900,27 +928,62 @@ impl QueryState {
             sql.push_str(&pagination);
         }
 
-        // CTE prefix — emitted as `WITH name AS (sql), ... ` before the SELECT.
-        // The CTE SQL is pre-compiled; its parameters are prepended to the
-        // query's parameter vector at execution time (see `all_params`).
+        // CTE prefix — emitted as `WITH name AS (body), ...` before the SELECT.
+        //
+        // Two modes:
+        // - **Raw mode** (`sql` non-empty): body is the pre-compiled SQL,
+        //   emitted verbatim with `?` placeholders.
+        // - **Typed mode** (`table` non-empty): body is compiled from
+        //   `where_expr` at this point using the provider's placeholder
+        //   syntax. Parameter values were already extracted into `params` at
+        //   construction time (see `with_cte_typed`), so `param_idx` for the
+        //   main query starts at `1 + cte_param_count` (computed above).
+        //
+        // `running_idx` accumulates across all CTEs so that PostgreSQL's
+        // 1-indexed `$N` placeholders stay contiguous across multiple typed
+        // CTEs and align with each CTE's slot in `all_params()`. Raw-mode
+        // CTEs advance `running_idx` by their param count for consistency,
+        // even though their `?` placeholders don't use the index.
         if !self.ctes.is_empty() {
-            let cte_parts: Vec<String> = self
-                .ctes
-                .iter()
-                .map(|c| {
-                    if c.columns.is_empty() {
-                        format!("{} AS ({})", c.name, c.sql)
-                    } else {
-                        let cols = c
-                            .columns
-                            .iter()
-                            .map(|col| gen.quote_identifier(col))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        format!("{} ({}) AS ({})", c.name, cols, c.sql)
-                    }
-                })
-                .collect();
+            let mut running_idx = 1usize;
+            let mut cte_parts: Vec<String> = Vec::with_capacity(self.ctes.len());
+            for c in &self.ctes {
+                let body = if !c.table.is_empty() {
+                    // Typed mode: compile WHERE expression starting at the
+                    // running index. `cte_idx` advances as placeholders are
+                    // emitted; we then propagate it back to `running_idx`.
+                    let mut cte_idx = running_idx;
+                    let table = gen.quote_identifier(&c.table);
+                    let body = match &c.where_expr {
+                        Some(expr) => {
+                            let where_sql = compile_bool_expr(expr, gen, &mut cte_idx);
+                            format!("SELECT * FROM {} WHERE {}", table, where_sql)
+                        }
+                        None => format!("SELECT * FROM {}", table),
+                    };
+                    running_idx = cte_idx;
+                    body
+                } else {
+                    // Raw mode: pre-compiled SQL with `?` placeholders. The
+                    // index isn't consumed but advance for consistency with
+                    // `all_params()` ordering.
+                    running_idx = running_idx.saturating_add(c.params.len());
+                    c.sql.clone()
+                };
+
+                let part = if c.columns.is_empty() {
+                    format!("{} AS ({})", c.name, body)
+                } else {
+                    let cols = c
+                        .columns
+                        .iter()
+                        .map(|col| gen.quote_identifier(col))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{} ({}) AS ({})", c.name, cols, body)
+                };
+                cte_parts.push(part);
+            }
             sql = format!("WITH {} {}", cte_parts.join(", "), sql);
         }
 
@@ -1613,13 +1676,18 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
-    /// Adds a CTE (Common Table Expression) definition to the query.
+    /// Adds a CTE (Common Table Expression) definition to the query (raw mode).
     ///
-    /// `#[doc(hidden)]` — called by `linq!(with ...)` expansion.
+    /// `#[doc(hidden)]` — called by runtime API users.
     ///
     /// The CTE body is a pre-compiled SQL string with `?` placeholders; its
     /// parameter values are prepended to the query's parameter vector at
     /// execution time so that placeholder ordering remains contiguous.
+    ///
+    /// **Note**: Raw mode emits `?` placeholders verbatim and does not convert
+    /// them to provider-specific syntax (`$N` on PostgreSQL). For
+    /// provider-correct placeholders, use `with_cte_typed` (via
+    /// `linq!(with ...)`).
     #[doc(hidden)]
     pub fn with_cte_internal(
         mut self,
@@ -1631,8 +1699,36 @@ impl<T: IEntityType> QueryBuilder<T> {
         let cte = CteSpec {
             name: name.to_string(),
             sql: sql.to_string(),
+            table: String::new(),
+            where_expr: None,
             params,
             columns: columns.iter().map(|s| s.to_string()).collect(),
+        };
+        self.state.ctes.push(cte);
+        self
+    }
+
+    /// Adds a typed CTE definition (typed mode), used by `linq!(with ...)`.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(with name as |e: T| ...)` expansion.
+    ///
+    /// The CTE body `SELECT * FROM <table> WHERE <where_expr>` is compiled at
+    /// `to_sql_with` time using the provider's placeholder syntax, ensuring
+    /// correct `$N` numbering on PostgreSQL and `?` on SQLite/MySQL.
+    ///
+    /// Parameter values are extracted from `where_expr` via
+    /// `collect_bool_expr_values` and stored in `params` so that `all_params()`
+    /// returns them in the correct order (CTE params first).
+    #[doc(hidden)]
+    pub fn with_cte_typed(mut self, name: &str, table: &str, where_expr: BoolExpr) -> Self {
+        let params = collect_bool_expr_values(&where_expr);
+        let cte = CteSpec {
+            name: name.to_string(),
+            sql: String::new(),
+            table: table.to_string(),
+            where_expr: Some(where_expr),
+            params,
+            columns: Vec::new(),
         };
         self.state.ctes.push(cte);
         self
