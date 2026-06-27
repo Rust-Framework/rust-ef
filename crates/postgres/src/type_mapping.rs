@@ -16,6 +16,17 @@ impl PostgresTypeMapping {
             "bool" => "BOOLEAN",
             "String" => "TEXT",
             "Vec<u8>" => "BYTEA",
+            // Native chrono/uuid/decimal type mappings — used by
+            // `PostgresTypeMapping::column_definition` when the entity meta
+            // carries the simple type name. Note: `std::any::type_name`
+            // produces fully-qualified names (e.g. "chrono::DateTime<chrono::Utc>")
+            // which are handled by `MigrationDialect::map_column_type` in the
+            // core crate's migration module.
+            "DateTime" | "DateTime<Utc>" => "TIMESTAMPTZ",
+            "NaiveDateTime" => "TIMESTAMP",
+            "NaiveDate" => "DATE",
+            "Uuid" => "UUID",
+            "Decimal" => "NUMERIC",
             _ => "TEXT",
         }
     }

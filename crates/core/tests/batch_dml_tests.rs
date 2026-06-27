@@ -134,6 +134,19 @@ impl IEntitySnapshot for BatchItem {
 
 impl INavigationSetter for BatchItem {}
 
+impl rust_ef::entity::ILazyInit for BatchItem {
+    fn attach_lazy_contexts(
+        &mut self,
+        _provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
+        _filter_map: Option<
+            std::sync::Arc<std::collections::HashMap<String, rust_ef::query::CompiledFilter>>,
+        >,
+        _depth: usize,
+    ) {
+        // No navigation fields — lazy loading is a no-op for this test entity.
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helper: build a fresh in-memory DbContext with the BatchItem schema.
 // ---------------------------------------------------------------------------

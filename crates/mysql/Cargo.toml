@@ -9,7 +9,14 @@ keywords = ["orm", "efcore", "entity-framework", "mysql", "database"]
 categories = ["database"]
 
 [dependencies]
-rust-ef = { version = "1.0.0", path = "../core" }
+# Feature unification: see sqlite/Cargo.toml for rationale. MySQL collapses
+# native chrono/uuid/decimal variants to their canonical string form in
+# `type_conversion.rs` (MySQL's DATETIME/CHAR(36)/DECIMAL columns accept
+# string input and preserve precision, matching v1.0 behavior).
+rust-ef = { version = "1.0.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }
 tokio = { version = "1", features = ["full"] }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+rust_decimal = "1"

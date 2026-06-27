@@ -67,6 +67,7 @@ pub struct DbSet<T: IEntityType> {
     provider: Option<Arc<dyn IDatabaseProvider>>,
     query_filter: Option<BoolExpr>,
     filter_map: Option<Arc<HashMap<String, crate::query::CompiledFilter>>>,
+    lazy_loading_enabled: bool,
 }
 
 pub struct TrackedEntry<T: IEntityType> {
@@ -84,6 +85,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
             provider: None,
             query_filter: None,
             filter_map: None,
+            lazy_loading_enabled: false,
         }
     }
 
@@ -97,6 +99,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
             provider: Some(provider),
             query_filter: None,
             filter_map: None,
+            lazy_loading_enabled: false,
         }
     }
 
@@ -108,6 +111,11 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     /// NavigationLoader to scope secondary queries.
     pub fn set_filter_map(&mut self, map: Arc<HashMap<String, crate::query::CompiledFilter>>) {
         self.filter_map = Some(map);
+    }
+
+    /// Propagates the lazy-loading flag from `DbContextOptions` to this set.
+    pub(crate) fn set_lazy_loading_enabled(&mut self, enabled: bool) {
+        self.lazy_loading_enabled = enabled;
     }
 
     /// Returns the configured query filter, if any. Used by `save_one_set`
@@ -165,6 +173,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
             None => QueryBuilder::new(&self.table_name),
         };
         qb.with_filter_map(self.filter_map.clone())
+            .with_lazy_loading(self.lazy_loading_enabled)
     }
 
     pub fn attach(&mut self, entity: T) {
@@ -198,7 +207,11 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     /// Loads all rows from the database into the change tracker as Unchanged.
     pub async fn load_all(&mut self) -> EFResult<()>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow
+            + INavigationSetter
+            + IGetKeyValues
+            + IEntitySnapshot
+            + crate::entity::ILazyInit,
     {
         let items = self.query().to_list().await?;
         self.clear_entries();
@@ -247,7 +260,11 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     }
     pub async fn exists_by_id(&self, key_values: HashMap<String, DbValue>) -> EFResult<bool>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow
+            + INavigationSetter
+            + IGetKeyValues
+            + IEntitySnapshot
+            + crate::entity::ILazyInit,
     {
         let pairs: Vec<(&str, DbValue)> = key_values
             .iter()
@@ -279,6 +296,7 @@ impl<T: IEntityType> IQueryable<T> for DbSet<T> {
             qb = qb.apply_query_filter(filter.clone());
         }
         qb.with_filter_map(self.filter_map.clone())
+            .with_lazy_loading(self.lazy_loading_enabled)
     }
 }
 

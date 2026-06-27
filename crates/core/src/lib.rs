@@ -30,6 +30,7 @@ pub mod di;
 pub mod entity;
 pub mod error;
 pub mod interceptor;
+pub mod lazy;
 pub mod metadata;
 pub mod migration;
 pub mod model_builder;
@@ -54,12 +55,14 @@ pub mod prelude {
     pub use crate::db_set::{DbSet, IDbSet};
     pub use crate::di::{DbContextScopeExt, DbContextServiceCollectionExt};
     pub use crate::entity::{
-        EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
+        EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, ILazyInit,
+        INavigationSetter,
     };
     pub use crate::error::{EFError, EFResult};
     pub use crate::interceptor::{
         ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext,
     };
+    pub use crate::lazy::{LazyContext, LazyContextImpl, MAX_LAZY_DEPTH};
     pub use crate::metadata::EntityTypeMeta;
     pub use crate::metadata::NavigationMeta;
     pub use crate::metadata::PropertyMeta;
@@ -68,7 +71,9 @@ pub mod prelude {
     };
     pub use crate::provider::DbValue;
     pub use crate::provider::IDatabaseProvider;
-    pub use crate::query::{BoolExpr, LinqSource, ParseFromDb};
+    pub use crate::query::{
+        BoolExpr, CteSpec, LinqSource, ParseFromDb, WindowFuncKind, WindowSpec,
+    };
     pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::tracking::ChangeTracker;

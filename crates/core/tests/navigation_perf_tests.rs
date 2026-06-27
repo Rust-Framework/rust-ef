@@ -136,6 +136,19 @@ impl INavigationSetter for PerfParent {
     }
 }
 
+impl rust_ef::entity::ILazyInit for PerfParent {
+    fn attach_lazy_contexts(
+        &mut self,
+        _provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
+        _filter_map: Option<
+            std::sync::Arc<std::collections::HashMap<String, rust_ef::query::CompiledFilter>>,
+        >,
+        _depth: usize,
+    ) {
+        // No navigation fields — lazy loading is a no-op for this test entity.
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PerfChild — dependent side (FK parent_id → PerfParent.id).
 // ---------------------------------------------------------------------------
@@ -236,6 +249,19 @@ impl IEntitySnapshot for PerfChild {
 }
 
 impl INavigationSetter for PerfChild {}
+
+impl rust_ef::entity::ILazyInit for PerfChild {
+    fn attach_lazy_contexts(
+        &mut self,
+        _provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
+        _filter_map: Option<
+            std::sync::Arc<std::collections::HashMap<String, rust_ef::query::CompiledFilter>>,
+        >,
+        _depth: usize,
+    ) {
+        // No navigation fields — lazy loading is a no-op for this test entity.
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helper: build a fresh in-memory DbContext with both schemas registered.

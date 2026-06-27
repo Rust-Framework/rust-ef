@@ -83,6 +83,19 @@ mod production_tests {
 
     impl INavigationSetter for VersionedItem {}
 
+    impl rust_ef::entity::ILazyInit for VersionedItem {
+        fn attach_lazy_contexts(
+            &mut self,
+            _provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
+            _filter_map: Option<
+                std::sync::Arc<std::collections::HashMap<String, rust_ef::query::CompiledFilter>>,
+            >,
+            _depth: usize,
+        ) {
+            // No navigation fields — lazy loading is a no-op for this test entity.
+        }
+    }
+
     impl IFromRow for VersionedItem {
         fn from_row(values: &[String]) -> rust_ef::error::EFResult<Self> {
             Ok(Self {
@@ -253,6 +266,21 @@ mod production_tests {
         }
 
         impl INavigationSetter for UserRole {}
+
+        impl rust_ef::entity::ILazyInit for UserRole {
+            fn attach_lazy_contexts(
+                &mut self,
+                _provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
+                _filter_map: Option<
+                    std::sync::Arc<
+                        std::collections::HashMap<String, rust_ef::query::CompiledFilter>,
+                    >,
+                >,
+                _depth: usize,
+            ) {
+                // No navigation fields — lazy loading is a no-op for this test entity.
+            }
+        }
 
         impl IEntityType for UserRole {
             fn entity_meta() -> EntityTypeMeta {

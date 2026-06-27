@@ -8,6 +8,14 @@ use async_trait::async_trait;
 use std::fmt;
 
 /// A typed database parameter value for parameterized queries.
+///
+/// Native variants (`DateTime`/`NaiveDateTime`/`NaiveDate`/`Uuid`/`Decimal`)
+/// are enabled by the `chrono`/`uuid`/`decimal` Cargo features. When enabled,
+/// the PostgreSQL provider binds these via `tokio_postgres`'s binary protocol
+/// (`with-chrono-0_4`/`with-uuid-1` features) for type-safe, lossless
+/// parameter transmission. SQLite and MySQL providers collapse native
+/// variants to their canonical string representation (matching v1.0 behavior)
+/// since neither driver requires native type binding.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DbValue {
     Null,
@@ -19,6 +27,23 @@ pub enum DbValue {
     F64(f64),
     String(String),
     Bytes(Vec<u8>),
+    /// UTC timestamp — bound natively as `TIMESTAMPTZ` on PostgreSQL.
+    #[cfg(feature = "chrono")]
+    DateTime(chrono::DateTime<chrono::Utc>),
+    /// Naive (timezone-less) timestamp — bound natively as `TIMESTAMP` on PG.
+    #[cfg(feature = "chrono")]
+    NaiveDateTime(chrono::NaiveDateTime),
+    /// Calendar date — bound natively as `DATE` on PostgreSQL.
+    #[cfg(feature = "chrono")]
+    NaiveDate(chrono::NaiveDate),
+    /// UUID — bound natively as `UUID` on PostgreSQL.
+    #[cfg(feature = "uuid")]
+    Uuid(uuid::Uuid),
+    /// Fixed-precision decimal — bound as `NUMERIC` string on PostgreSQL
+    /// (tokio_postgres lacks a native `rust_decimal` adapter; the string
+    /// form round-trips losslessly through PG's `NUMERIC` type).
+    #[cfg(feature = "decimal")]
+    Decimal(rust_decimal::Decimal),
 }
 
 impl fmt::Display for DbValue {
@@ -33,6 +58,16 @@ impl fmt::Display for DbValue {
             DbValue::F64(v) => write!(f, "{}", v),
             DbValue::String(v) => write!(f, "'{}'", v.replace('\'', "''")),
             DbValue::Bytes(v) => write!(f, "{}", hex::encode(v)),
+            #[cfg(feature = "chrono")]
+            DbValue::DateTime(v) => write!(f, "'{}'", v.to_rfc3339()),
+            #[cfg(feature = "chrono")]
+            DbValue::NaiveDateTime(v) => write!(f, "'{}'", v),
+            #[cfg(feature = "chrono")]
+            DbValue::NaiveDate(v) => write!(f, "'{}'", v),
+            #[cfg(feature = "uuid")]
+            DbValue::Uuid(v) => write!(f, "'{}'", v),
+            #[cfg(feature = "decimal")]
+            DbValue::Decimal(v) => write!(f, "'{}'", v),
         }
     }
 }
@@ -100,39 +135,44 @@ impl From<Vec<u8>> for DbValue {
 }
 
 // --- Feature-gated From impls for chrono / uuid / decimal ---
+//
+// These construct native `DbValue` variants (not `String`) so that the
+// PostgreSQL provider can bind them via tokio_postgres's binary protocol.
+// SQLite and MySQL providers collapse these variants to their canonical
+// string form in their respective `type_conversion.rs`.
 
 #[cfg(feature = "chrono")]
 impl From<chrono::DateTime<chrono::Utc>> for DbValue {
     fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
-        DbValue::String(dt.to_rfc3339())
+        DbValue::DateTime(dt)
     }
 }
 
 #[cfg(feature = "chrono")]
 impl From<chrono::NaiveDateTime> for DbValue {
     fn from(ndt: chrono::NaiveDateTime) -> Self {
-        DbValue::String(ndt.to_string())
+        DbValue::NaiveDateTime(ndt)
     }
 }
 
 #[cfg(feature = "chrono")]
 impl From<chrono::NaiveDate> for DbValue {
     fn from(nd: chrono::NaiveDate) -> Self {
-        DbValue::String(nd.to_string())
+        DbValue::NaiveDate(nd)
     }
 }
 
 #[cfg(feature = "uuid")]
 impl From<uuid::Uuid> for DbValue {
     fn from(u: uuid::Uuid) -> Self {
-        DbValue::String(u.to_string())
+        DbValue::Uuid(u)
     }
 }
 
 #[cfg(feature = "decimal")]
 impl From<rust_decimal::Decimal> for DbValue {
     fn from(d: rust_decimal::Decimal) -> Self {
-        DbValue::String(d.to_string())
+        DbValue::Decimal(d)
     }
 }
 impl<T> From<Option<T>> for DbValue
@@ -272,6 +312,16 @@ impl TryFrom<DbValue> for String {
             DbValue::I64(n) => Ok(n.to_string()),
             DbValue::F32(x) => Ok(x.to_string()),
             DbValue::F64(x) => Ok(x.to_string()),
+            #[cfg(feature = "chrono")]
+            DbValue::DateTime(dt) => Ok(dt.to_rfc3339()),
+            #[cfg(feature = "chrono")]
+            DbValue::NaiveDateTime(ndt) => Ok(ndt.to_string()),
+            #[cfg(feature = "chrono")]
+            DbValue::NaiveDate(nd) => Ok(nd.to_string()),
+            #[cfg(feature = "uuid")]
+            DbValue::Uuid(u) => Ok(u.to_string()),
+            #[cfg(feature = "decimal")]
+            DbValue::Decimal(d) => Ok(d.to_string()),
             other => Err(DbValueConvertError {
                 source: other,
                 target_type: "String",
@@ -340,6 +390,111 @@ impl TryFrom<DbValue> for i16 {
             other => Err(DbValueConvertError {
                 source: other,
                 target_type: "i16",
+            }),
+        }
+    }
+}
+
+// --- Feature-gated TryFrom impls for native chrono / uuid / decimal types ---
+
+#[cfg(feature = "chrono")]
+impl TryFrom<DbValue> for chrono::DateTime<chrono::Utc> {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::DateTime(dt) => Ok(dt),
+            DbValue::String(s) => chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|_| DbValueConvertError {
+                    source: DbValue::String(s),
+                    target_type: "DateTime<Utc>",
+                }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "DateTime<Utc>",
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl TryFrom<DbValue> for chrono::NaiveDateTime {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::NaiveDateTime(ndt) => Ok(ndt),
+            DbValue::String(s) => {
+                chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S")
+                    .or_else(|_| {
+                        // Fallback: ISO 8601 / RFC 3339 without timezone
+                        chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S")
+                    })
+                    .map_err(|_| DbValueConvertError {
+                        source: DbValue::String(s),
+                        target_type: "NaiveDateTime",
+                    })
+            }
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "NaiveDateTime",
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl TryFrom<DbValue> for chrono::NaiveDate {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::NaiveDate(nd) => Ok(nd),
+            DbValue::String(s) => {
+                chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|_| DbValueConvertError {
+                    source: DbValue::String(s),
+                    target_type: "NaiveDate",
+                })
+            }
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "NaiveDate",
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl TryFrom<DbValue> for uuid::Uuid {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::Uuid(u) => Ok(u),
+            DbValue::String(s) => uuid::Uuid::parse_str(&s).map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "Uuid",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "Uuid",
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "decimal")]
+impl TryFrom<DbValue> for rust_decimal::Decimal {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::Decimal(d) => Ok(d),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "Decimal",
+            }),
+            DbValue::I32(n) => Ok(rust_decimal::Decimal::from(n)),
+            DbValue::I64(n) => Ok(rust_decimal::Decimal::from(n)),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "Decimal",
             }),
         }
     }

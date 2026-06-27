@@ -111,6 +111,19 @@ impl rust_ef::entity::IGetKeyValues for TenantItem {
 
 impl rust_ef::entity::INavigationSetter for TenantItem {}
 
+impl rust_ef::entity::ILazyInit for TenantItem {
+    fn attach_lazy_contexts(
+        &mut self,
+        _provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
+        _filter_map: Option<
+            std::sync::Arc<std::collections::HashMap<String, rust_ef::query::CompiledFilter>>,
+        >,
+        _depth: usize,
+    ) {
+        // No navigation fields — lazy loading is a no-op for this test entity.
+    }
+}
+
 fn tenant_filter(value: i32) -> BoolExpr {
     BoolExpr::Filter(FilterCondition::with_values(
         "tenant_id",

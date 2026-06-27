@@ -130,6 +130,14 @@ enum LinqClause {
     Take(Expr),
     /// `skip N`
     Skip(Expr),
+    /// `window <func> [<col>] [partition_by <cols>] [order_by <col> [asc|desc]] as <alias>`
+    Window {
+        func: String,
+        column: Option<Expr>,
+        partition_by: Vec<Expr>,
+        order_by: Vec<(Expr, bool)>,
+        alias: String,
+    },
 }
 
 /// Macro-side AST for `HAVING` expressions.
@@ -583,6 +591,7 @@ impl Parse for LinqClause {
                 let n: Expr = input.parse()?;
                 Ok(LinqClause::Skip(n))
             }
+            "window" => parse_window_rest(input),
             other => Err(syn::Error::new(
                 keyword.span(),
                 format!("unknown linq! clause: `{}`", other),
@@ -656,6 +665,213 @@ fn parse_having_rest(input: syn::parse::ParseStream) -> syn::Result<LinqClause> 
     let expr: Expr = input.parse()?;
     let ast = expr_to_having_ast(&expr)?;
     Ok(LinqClause::HavingExpr { expr: ast })
+}
+
+/// `window <func> [<col>] [partition_by <cols>] [order_by <col> [asc|desc]] as <alias>`
+///
+/// Parsing strategy: collect all tokens until end of clause (the `;` separator
+/// is already stripped by `collect_until_semi`), then parse piece by piece.
+///
+/// Examples:
+///   `window row_number partition_by b.dept_id order_by b.salary desc as rn`
+///   `window sum b.salary partition_by b.dept_id as dept_total`
+///   `window lag b.salary order_by b.hire_date as prev_salary`
+fn parse_window_rest(input: syn::parse::ParseStream) -> syn::Result<LinqClause> {
+    // 1. Function name (ident).
+    let func_ident: Ident = input.parse()?;
+    let func = func_ident.to_string();
+
+    // Determine if this function takes a column argument.
+    let takes_column = !matches!(
+        func.to_uppercase().as_str(),
+        "ROW_NUMBER" | "RANK" | "DENSE_RANK"
+    );
+
+    // 2. Optional column argument (for aggregate/offset functions).
+    let column: Option<Expr> = if takes_column {
+        // Peek: if the next token is `partition_by`, `order_by`, or `as`,
+        // there's no column (error for non-ranking functions, but let the
+        // runtime panic handle it). Otherwise parse the column expression
+        // using a restricted parser that won't consume `as` as a cast.
+        if is_window_keyword(input) {
+            None
+        } else {
+            Some(parse_window_field_expr(input)?)
+        }
+    } else {
+        None
+    };
+
+    // 3. Optional partition_by / order_by (in that order).
+    let mut partition_by: Vec<Expr> = Vec::new();
+    let mut order_by: Vec<(Expr, bool)> = Vec::new();
+
+    loop {
+        if input.is_empty() {
+            break;
+        }
+        // `as` is a Rust keyword — check for it via Token![as] first.
+        if input.peek(Token![as]) {
+            break;
+        }
+        let cursor = input.cursor();
+        let (ident, _) = cursor.ident().ok_or_else(|| {
+            syn::Error::new(
+                cursor.span(),
+                "expected `partition_by`, `order_by`, or `as`",
+            )
+        })?;
+        match ident.to_string().as_str() {
+            "partition_by" => {
+                let _: Ident = input.parse()?;
+                partition_by = parse_window_field_list(input)?;
+            }
+            "order_by" => {
+                let _: Ident = input.parse()?;
+                order_by = parse_window_order_list(input)?;
+            }
+            other => {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    format!("expected `partition_by`, `order_by`, or `as`, got `{other}`"),
+                ));
+            }
+        }
+    }
+
+    // 4. `as <alias>` — `as` is a Rust keyword, parsed via Token![as].
+    let _: Token![as] = input.parse()?;
+    let alias_ident: Ident = input.parse()?;
+    let alias = alias_ident.to_string();
+
+    Ok(LinqClause::Window {
+        func,
+        column,
+        partition_by,
+        order_by,
+        alias,
+    })
+}
+
+/// Returns `true` if the next token is a window-clause keyword
+/// (`partition_by`, `order_by`, or the `as` keyword).
+fn is_window_keyword(input: syn::parse::ParseStream) -> bool {
+    // `as` is a Rust keyword.
+    if input.peek(Token![as]) {
+        return true;
+    }
+    if !input.peek(Ident) {
+        return false;
+    }
+    let cursor = input.cursor();
+    if let Some((ident, _)) = cursor.ident() {
+        matches!(ident.to_string().as_str(), "partition_by" | "order_by")
+    } else {
+        false
+    }
+}
+
+/// Parses a comma-separated list of field expressions, stopping at
+/// `order_by` or `as`.
+fn parse_window_field_list(input: syn::parse::ParseStream) -> syn::Result<Vec<Expr>> {
+    let mut fields = Vec::new();
+    loop {
+        if input.is_empty() || is_window_keyword(input) {
+            break;
+        }
+        let expr = parse_window_field_expr(input)?;
+        fields.push(expr);
+        if input.is_empty() || is_window_keyword(input) {
+            break;
+        }
+        // Expect comma between fields.
+        if input.peek(Token![,]) {
+            let _: Token![,] = input.parse()?;
+        } else {
+            break;
+        }
+    }
+    Ok(fields)
+}
+
+/// Parses a comma-separated list of `field [asc|desc]` pairs, stopping at
+/// `as`.
+fn parse_window_order_list(input: syn::parse::ParseStream) -> syn::Result<Vec<(Expr, bool)>> {
+    let mut pairs = Vec::new();
+    loop {
+        if input.is_empty() || is_window_keyword(input) {
+            break;
+        }
+        let expr = parse_window_field_expr(input)?;
+        let mut descending = false;
+        if input.peek(Ident) {
+            let cursor = input.cursor();
+            if let Some((ident, _)) = cursor.ident() {
+                match ident.to_string().as_str() {
+                    "asc" => {
+                        let _: Ident = input.parse()?;
+                    }
+                    "desc" => {
+                        let _: Ident = input.parse()?;
+                        descending = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        pairs.push((expr, descending));
+        if input.is_empty() || is_window_keyword(input) {
+            break;
+        }
+        if input.peek(Token![,]) {
+            let _: Token![,] = input.parse()?;
+        } else {
+            break;
+        }
+    }
+    Ok(pairs)
+}
+
+/// Parses a field-path expression (`e.field` or `e.field.sub`) without
+/// consuming `as` (which `Expr::parse` would interpret as a cast).
+///
+/// Collects tokens until a window-clause boundary (`as`, `,`,
+/// `partition_by`, `order_by`) or EOF, then parses the collected tokens
+/// as an `Expr`.
+fn parse_window_field_expr(input: syn::parse::ParseStream) -> syn::Result<Expr> {
+    let mut tokens = TokenStream2::new();
+    while !input.is_empty()
+        && !input.peek(Token![as])
+        && !input.peek(Token![,])
+        && !is_window_field_boundary(input)
+    {
+        let tt: TokenTree = input.parse()?;
+        tokens.extend(std::iter::once(tt));
+    }
+    if tokens.is_empty() {
+        return Err(syn::Error::new(
+            input.span(),
+            "expected a field expression in window clause",
+        ));
+    }
+    syn::parse2(tokens)
+}
+
+/// Returns `true` if the next token is a field-list boundary keyword
+/// (`partition_by`, `order_by`, `asc`, or `desc`).
+fn is_window_field_boundary(input: syn::parse::ParseStream) -> bool {
+    if !input.peek(Ident) {
+        return false;
+    }
+    let cursor = input.cursor();
+    if let Some((ident, _)) = cursor.ident() {
+        matches!(
+            ident.to_string().as_str(),
+            "partition_by" | "order_by" | "asc" | "desc"
+        )
+    } else {
+        false
+    }
 }
 
 /// Converts a parsed `syn::Expr` into a `HavingExprAst`.
@@ -1000,6 +1216,48 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
             LinqClause::Skip(n) => {
                 chain = quote! { #chain .skip(#n) };
             }
+            LinqClause::Window {
+                func,
+                column,
+                partition_by,
+                order_by,
+                alias,
+            } => {
+                let func_str = func.as_str();
+                // Column: Option<&'static str>. Ranking functions have no column.
+                let col_tokens: TokenStream2 = match column {
+                    Some(expr) => {
+                        let col = extract_field(&ctx, expr)?;
+                        quote! { Some(#col) }
+                    }
+                    None => quote! { None },
+                };
+                // partition_by: &'static [&'static str]
+                let pb_tokens: Vec<TokenStream2> = partition_by
+                    .iter()
+                    .map(|e| extract_field(&ctx, e))
+                    .collect::<syn::Result<_>>()?;
+                let pb_arr = quote! { &[#(#pb_tokens),*] };
+                // order_by: &'static [(&'static str, bool)]
+                let ob_tokens: Vec<TokenStream2> = order_by
+                    .iter()
+                    .map(|(e, d)| {
+                        let col = extract_field(&ctx, e)?;
+                        Ok::<_, syn::Error>(quote! { (#col, #d) })
+                    })
+                    .collect::<syn::Result<_>>()?;
+                let ob_arr = quote! { &[#(#ob_tokens),*] };
+                let alias_str = alias.as_str();
+                chain = quote! {
+                    #chain .window_internal(
+                        #func_str,
+                        #col_tokens,
+                        #pb_arr,
+                        #ob_arr,
+                        #alias_str,
+                    )
+                };
+            }
             LinqClause::InnerJoin {
                 params,
                 left,
@@ -1250,6 +1508,8 @@ fn compile_bool_method(ctx: &LinqCtx<'_>, call: &ExprMethodCall) -> syn::Result<
         "any" => return compile_subquery_bool(ctx, call, SubqueryKind::Any),
         "none" => return compile_subquery_bool(ctx, call, SubqueryKind::None),
         "all" => return compile_subquery_bool(ctx, call, SubqueryKind::All),
+        // v1.1: IN (SELECT ...) subquery
+        "in_subquery" => return compile_in_subquery_bool(ctx, call, false),
         _ => {}
     }
 
@@ -1462,6 +1722,10 @@ fn compile_not(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<TokenStream2> {
             compile_not_subquery(ctx, call)
         }
         Expr::MethodCall(call) if call.method == "contains" => compile_contains(ctx, call, true),
+        // v1.1: `!b.field.in_subquery(...)` → NOT IN (SELECT ...)
+        Expr::MethodCall(call) if call.method == "in_subquery" => {
+            compile_in_subquery_method(ctx, call, true)
+        }
         _ => compile_negated_comparison(ctx, expr),
     }
 }
@@ -1749,6 +2013,89 @@ fn compile_not_subquery(ctx: &LinqCtx<'_>, call: &ExprMethodCall) -> syn::Result
     })
 }
 
+// ---------------------------------------------------------------------------
+// v1.1: IN (SELECT ...) / NOT IN (SELECT ...) subquery support
+// ---------------------------------------------------------------------------
+
+/// Extracts the outer column, source table, and projection column from an
+/// `in_subquery` closure call.
+///
+/// Syntax: `b.field.in_subquery(|p: Post| p.blog_id)`
+/// - Receiver `b.field` → outer column (`Blog::COLUMN_FIELD`)
+/// - Closure param type `Post` → source table (`Post::TABLE`)
+/// - Closure body `p.blog_id` → projection column (`Post::COLUMN_BLOG_ID`)
+fn compile_in_subquery_parts(
+    ctx: &LinqCtx<'_>,
+    call: &ExprMethodCall,
+) -> syn::Result<(TokenStream2, TokenStream2, TokenStream2)> {
+    // Outer column from receiver `b.field`
+    let outer_column = extract_field(ctx, &call.receiver)?;
+
+    // Parse closure `|p: Post| p.blog_id`
+    let closure_arg = call.args.first().ok_or_else(|| {
+        syn::Error::new_spanned(
+            call,
+            "in_subquery requires a closure like `|p: Post| p.blog_id`",
+        )
+    })?;
+    let closure = match closure_arg {
+        Expr::Closure(c) => c,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                closure_arg,
+                "in_subquery requires a closure like `|p: Post| p.blog_id`",
+            ));
+        }
+    };
+
+    let (param, related_entity) = extract_subquery_closure(closure)?;
+
+    // Projection column from closure body `p.blog_id`
+    let sub_ctx = LinqCtx::single(&related_entity, Some(&param));
+    let projection_column = extract_field(&sub_ctx, &closure.body)?;
+
+    // Source table from related entity type
+    Ok((
+        outer_column,
+        quote! { #related_entity::TABLE },
+        projection_column,
+    ))
+}
+
+/// Compiles `b.field.in_subquery(|p: Post| p.blog_id)` in the **method chain**
+/// context (Form A/B where body) → `.where_in_subquery_internal(...)`.
+fn compile_in_subquery_method(
+    ctx: &LinqCtx<'_>,
+    call: &ExprMethodCall,
+    negated: bool,
+) -> syn::Result<TokenStream2> {
+    let (outer_col, source_tbl, proj_col) = compile_in_subquery_parts(ctx, call)?;
+    Ok(quote! {
+        .where_in_subquery_internal(#outer_col, #source_tbl, #proj_col, ::core::option::Option::None, #negated)
+    })
+}
+
+/// Compiles `b.field.in_subquery(|p: Post| p.blog_id)` in the **bool
+/// expression** context (Form C filter) → `BoolExpr::InSubquery(...)`.
+fn compile_in_subquery_bool(
+    ctx: &LinqCtx<'_>,
+    call: &ExprMethodCall,
+    negated: bool,
+) -> syn::Result<TokenStream2> {
+    let (outer_col, source_tbl, proj_col) = compile_in_subquery_parts(ctx, call)?;
+    // Resolve the &'static str constants to owned Strings for the spec.
+    let ctor = if negated {
+        quote! { rust_ef::query::BoolExpr::NotInSubquery }
+    } else {
+        quote! { rust_ef::query::BoolExpr::InSubquery }
+    };
+    Ok(quote! {
+        #ctor(Box::new(
+            rust_ef::query::InSubquerySpec::new(#outer_col, #source_tbl, #proj_col)
+        ))
+    })
+}
+
 fn compile_method(ctx: &LinqCtx<'_>, call: &ExprMethodCall) -> syn::Result<TokenStream2> {
     let method = call.method.to_string();
 
@@ -1757,6 +2104,8 @@ fn compile_method(ctx: &LinqCtx<'_>, call: &ExprMethodCall) -> syn::Result<Token
         "any" => return compile_subquery_method(ctx, call, SubqueryKind::Any),
         "none" => return compile_subquery_method(ctx, call, SubqueryKind::None),
         "all" => return compile_subquery_method(ctx, call, SubqueryKind::All),
+        // v1.1: IN (SELECT ...) subquery
+        "in_subquery" => return compile_in_subquery_method(ctx, call, false),
         _ => {}
     }
 

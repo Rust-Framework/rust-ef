@@ -42,6 +42,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
     let mut fk_column_names: Vec<String> = Vec::new();
     let mut from_row_fields = Vec::new();
     let mut nav_field_names = Vec::new();
+    let mut lazy_init_arms: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut pk_field_idents: Vec<&syn::Ident> = Vec::new();
     let mut has_many_setter_arms = Vec::new();
     let mut reference_setter_arms = Vec::new();
@@ -275,6 +276,21 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 }
             }
             nav_field_names.push(field_name);
+            // Generate the lazy-init arm: looks up this navigation's meta
+            // and attaches a LazyContextImpl to the container.
+            lazy_init_arms.push(quote! {
+                if let Some(nav) = meta.find_navigation(#field_name_str) {
+                    let ctx = rust_ef::lazy::LazyContextImpl::new(
+                        std::sync::Arc::clone(&provider),
+                        snapshot.clone(),
+                        key_values.clone(),
+                        nav.clone(),
+                        filter_map.clone(),
+                        depth,
+                    );
+                    self.#field_name.set_lazy_context(std::sync::Arc::new(ctx));
+                }
+            });
         } else if !is_not_mapped {
             let scalar_idx = from_row_fields.len();
             if is_primary_key {
@@ -533,6 +549,20 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             ) -> rust_ef::error::EFResult<()> {
                 #( #nested_loader_arms )*
                 Ok(())
+            }
+        }
+
+        impl rust_ef::entity::ILazyInit for #struct_name {
+            fn attach_lazy_contexts(
+                &mut self,
+                provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
+                filter_map: ::core::option::Option<std::sync::Arc<std::collections::HashMap<String, rust_ef::query::CompiledFilter>>>,
+                depth: usize,
+            ) {
+                let meta = <Self as rust_ef::entity::IEntityType>::entity_meta();
+                let key_values = <Self as rust_ef::entity::IGetKeyValues>::key_values(self);
+                let snapshot = <Self as rust_ef::entity::IEntitySnapshot>::snapshot(self);
+                #( #lazy_init_arms )*
             }
         }
 

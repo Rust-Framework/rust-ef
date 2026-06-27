@@ -1,17 +1,17 @@
 # rust-ef 生产就绪技术规格说明书
 
-> 版本: v1.0 — 基于 2026-06-27 GA 审计结果  
+> 版本: v1.1 — 基于 2026-06-27 v1.1 Query Fidelity 审计结果  
 > 包名: `rust-ef`（workspace: `crates/core`）  
-> 目标: v1.0 GA 生产就绪状态  
-> **当前阶段: 1.0 GA 已达成（100% 就绪度，全部验收标准通过）**
+> 目标: v1.1 查询保真度迭代  
+> **当前阶段: v1.1 已达成（Lazy Loading + IN/NOT IN 子查询 + CTE/Window 函数 + PG 方言修复）**
 
 ---
 
 ## 执行摘要
 
-rust-ef v1.0 已具备 EF Core 风格 ORM 的**完整生产就绪能力**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持、exists_by_id/exists_by_key 存在性检查、事务回滚与复合主键 CRUD 集成测试。在 **SQLite / PostgreSQL / MySQL** 上有完整的 CRUD 集成测试（209 个测试全绿），CI 三库 matrix 已就位。mdBook 在线文档已部署至 GitHub Pages，安全审计通过，API 稳定无 deprecated 残留，Criterion 性能基准就绪。
+rust-ef v1.1 已具备 EF Core 风格 ORM 的**完整生产就绪能力**：类型映射式 `DbContext`、通用 `save_changes()`、`linq!` 查询 DSL、导航 Include、M2M、迁移引擎库 API + CLI 工具、DI 集成、子查询/关联过滤、乐观并发、全局查询过滤器、SaveChanges 拦截器、chrono/uuid/decimal 可选类型支持、exists_by_id/exists_by_key 存在性检查、事务回滚与复合主键 CRUD 集成测试。v1.1 新增 Lazy Loading（opt-in）、IN/NOT IN 标量子查询、CTE 与 Window 函数支持，并修复 PostgreSQL HAVING 占位符与 LIMIT/OFFSET 方言 bug。在 **SQLite / PostgreSQL / MySQL** 上有完整的 CRUD 集成测试（234+ 个测试全绿），CI 三库 matrix 已就位。mdBook 在线文档已部署至 GitHub Pages，安全审计通过，API 稳定无 deprecated 残留，Criterion 性能基准就绪。
 
-**v1.0 GA 全部验收标准通过**，剩余项仅为 v1.1+ 范围的 P1 polish（Lazy Loading、Provider 原生类型绑定等）。
+**v1.1 全部验收标准通过**，剩余项为 v1.2+ 范围的规模扩展（L2 缓存、读写分离、分库分表）与生态集成（GraphQL）。
 
 | 场景 | 建议 |
 |------|------|
@@ -26,8 +26,8 @@ rust-ef v1.0 已具备 EF Core 风格 ORM 的**完整生产就绪能力**：类�
 ## 里程碑总览
 
 ```
-Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► v0.5 RC 1 (~98%) ──► 当前 v1.0 GA (100%)
-                                                                          ↑
+Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► v0.5 RC 1 (~98%) ──► v1.0 GA (100%) ──► 当前 v1.1 (查询保真度)
+                                                                                                              ↑
                                                                   全部验收标准通过
                                                                   P0 已清除，剩余 P1 polish
 ```
@@ -522,29 +522,32 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 
 # 验收矩阵（v1.0 GA 快照）
 
-| 能力 | v0.2 Alpha | v0.3.5 | v0.5 RC 1 | v1.0 GA |
-|------|:----------:|:-----------:|:---------:|:---:|
-| 通用 SaveChanges | 手写 | ✅ 自动 | ✅+并发 | ✅+并发 |
-| WHERE 表达式 | AND only | ✅ linq! | ✅+子查询 | ✅+子查询 |
-| 导航 Eager Loading | SQL only | ✅ 物化 | ✅ | ✅ |
-| M2M | ❌ | ✅ | ✅ | ✅ |
-| 全局过滤器 | 注册 | ✅ 注入 | ✅+ignore | ✅ |
-| 乐观并发 | 元数据 | 元数据 | ✅ 生效 | ✅ 生效（6 测试） |
-| CLI Migration | ❌ | ❌ | ✅ 三库 | ✅ 三库 |
-| Provider 集成测试 | SQLite | SQLite | ✅ 三库 | ✅ 三库 |
-| chrono/uuid/decimal | ❌ | ❌ | ✅ 可选 feature | ✅ 可选 feature |
-| 测试数量 | 19 | 46 | 208 | **209** |
-| CI | ❌ | ❌ | ✅ 三库 matrix | ✅ 三库 matrix |
-| 文档 | 计划 | README | ✅ mdBook | ✅ mdBook + GitHub Pages |
-| 性能基准 | ❌ | ❌ | ❌ | ✅ criterion（3 benches） |
-| 安全审计 | ❌ | ❌ | ❌ | ✅ 通过 |
-| API 稳定 / 无 deprecated | ❌ | ❌ | ❌ | ✅ |
-| CHANGELOG | ❌ | ❌ | ❌ | ✅ v0.1 → v1.0 |
-| 版本号 | 0.1 | 0.3.5 | 0.5 | **1.0.0** |
+| 能力 | v0.2 Alpha | v0.3.5 | v0.5 RC 1 | v1.0 GA | v1.1 |
+|------|:----------:|:-----------:|:---------:|:---:|:---:|
+| 通用 SaveChanges | 手写 | ✅ 自动 | ✅+并发 | ✅+并发 | ✅+并发 |
+| WHERE 表达式 | AND only | ✅ linq! | ✅+子查询 | ✅+子查询 | ✅+IN/NOT IN 子查询 |
+| 导航 Eager Loading | SQL only | ✅ 物化 | ✅ | ✅ | ✅ |
+| 导航 Lazy Loading | ❌ | ❌ | ❌ | ❌ | ✅ opt-in |
+| M2M | ❌ | ✅ | ✅ | ✅ | ✅ |
+| 全局过滤器 | 注册 | ✅ 注入 | ✅+ignore | ✅ | ✅ |
+| 乐观并发 | 元数据 | 元数据 | ✅ 生效 | ✅ 生效（6 测试） | ✅ 生效（6 测试） |
+| CLI Migration | ❌ | ❌ | ✅ 三库 | ✅ 三库 | ✅ 三库 |
+| Provider 集成测试 | SQLite | SQLite | ✅ 三库 | ✅ 三库 | ✅ 三库 |
+| chrono/uuid/decimal | ❌ | ❌ | ✅ 可选 feature | ✅ 可选 feature | ✅ PG 原生绑定 |
+| CTE / Window 函数 | ❌ | ❌ | ❌ | ❌ | ✅ 10 种窗口函数 + CTE |
+| PG HAVING/LIMIT 修复 | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 测试数量 | 19 | 46 | 208 | 209 | **234+** |
+| CI | ❌ | ❌ | ✅ 三库 matrix | ✅ 三库 matrix | ✅ 三库 matrix |
+| 文档 | 计划 | README | ✅ mdBook | ✅ mdBook + GitHub Pages | ✅ mdBook + GitHub Pages |
+| 性能基准 | ❌ | ❌ | ❌ | ✅ criterion（3 benches） | ✅ criterion（3 benches） |
+| 安全审计 | ❌ | ❌ | ❌ | ✅ 通过 | ✅ 通过 |
+| API 稳定 / 无 deprecated | ❌ | ❌ | ❌ | ✅ | ✅ |
+| CHANGELOG | ❌ | ❌ | ❌ | ✅ v0.1 → v1.0 | ✅ v0.1 → v1.1 |
+| 版本号 | 0.1 | 0.3.5 | 0.5 | 1.0.0 | **1.1.0** |
 
 ---
 
-# 实现优先级（2026-06-27 起，v1.0 GA 已达成）
+# 实现优先级（2026-06-27 起，v1.1 已达成）
 
 ```
 已完成 (v1.0 GA):
@@ -565,35 +568,46 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
   ✅ 3.5 安全审计（无 SQL 注入漏洞；security.md 指南发布）
   ✅ 3.6 稳定 API + 1.0.0 版本发布（无 deprecated 残留、CHANGELOG 完成）
 
-1.0 GA blocker: （无，全部验收标准通过）
+已完成 (v1.1 Query Fidelity):
+  ✅ 3.1 Lazy Loading（ILazyInit trait + LazyContext + opt-in use_lazy_loading）
+  ✅ 3.2 PostgreSQL 原生 chrono/uuid 参数绑定（DbValue 保留原生类型）
+  ✅ 3.3 CTE / Window 函数（WindowSpec AST + CteSpec + linq! window 子句）
+  ✅ 3.4 HAVING/LIMIT 方言 bug 修复（PG 占位符 + pagination 委托）
+  ✅ 3.5 IN / NOT IN 标量子查询（InSubquerySpec + linq! in_subquery 语法）
 
-v1.1+ 范围（非 1.0 GA 任务）:
-  Lazy Loading（导航属性延迟加载）
-  Provider 原生 chrono/uuid 参数绑定（目前经 String 中转）
-  子查询 / 关联过滤扩展
-  CTE / Window 函数
-  二级缓存
-  读写分离自动路由
+v1.1 已完成:
+  ✅ Lazy Loading（导航属性延迟加载，opt-in via use_lazy_loading）
+  ✅ Provider 原生 chrono/uuid 参数绑定（PG 原生类型不再经 String 中转）
+  ✅ IN / NOT IN 标量子查询（b.field.in_subquery(|p: Post| p.blog_id)）
+  ✅ CTE / Window 函数（WITH 子句 + ROW_NUMBER/RANK/SUM/LAG 等 10 种窗口函数）
+  ✅ PostgreSQL HAVING 占位符 bug 修复（? → $N 共享 param_idx）
+  ✅ PostgreSQL LIMIT/OFFSET 方言 bug 修复（gen.pagination() 委托）
+
+v1.2+ 范围（规模扩展）:
+  二级缓存（IQueryInterceptor + CachingProvider）
+  读写分离自动路由（RoutingProvider）
+  数据库分库分表（ShardingProvider）
+
+v1.3+ 范围（生态集成）:
   GraphQL 集成
-  数据库分库分表
+  示例项目扩展
 ```
 
 ---
 
-# 已知限制（v1.0 GA 使用者须知）
+# 已知限制（v1.1 使用者须知）
 
 1. **`linq!` 需显式类型**：`|b: Blog|`，暂不支持省略（proc_macro 根本限制，已文档化）
-2. **无 Lazy Loading**：必须显式 `include`（v1.1+ 规划）
+2. **Lazy Loading 默认关闭**：需 `builder.use_lazy_loading(true)` 显式开启；开启后 `to_list()` 自动挂载延迟上下文
 3. **拦截器只读**：`SaveChangesContext` 不含实体引用，无法在拦截器中改字段；软删除/时间戳需手动标记
-4. **`from_row` 基于 `Vec<String>`**：大结果集性能与类型安全有限
+4. **`from_row` 基于 `Vec<String>`**：大结果集性能与类型安全有限；Window 函数投影列被 `from_row` 忽略（仅读取实体字段）
 5. **DbContext DI 为 Transient**：长生命周期场景需自行管理 scope
-6. **chrono/uuid/decimal 经 `String` 中转**：可选 feature 已支持类型映射，但 Provider 参数绑定仍走文本通道，未利用 PG 原生 `TIMESTAMPTZ`/`UUID` 参数类型（v1.1+ 规划）
-7. **无 CTE / Window 函数**：复杂分析查询需退回原始 SQL（v1.1+ 规划）
-8. **PostgreSQL Provider 默认 `NoTls`**：生产部署需自行启用 TLS（部署加固，非框架漏洞）
+6. **CTE 无 linq! 宏语法**：CTE 通过 `with_cte_internal()` 运行时 API 使用，body 为预编译 SQL 字符串
+7. **PostgreSQL Provider 默认 `NoTls`**：生产部署需自行启用 TLS（部署加固，非框架漏洞）
 
 ---
 
-# 附录：测试清单（当前 209 个）
+# 附录：测试清单（当前 234+ 个）
 
 | 文件 | 数量 | 覆盖 |
 |------|:----:|------|
@@ -607,6 +621,9 @@ v1.1+ 范围（非 1.0 GA 任务）:
 | `concurrency_tests.rs` | 6 | 乐观并发冲突检测 |
 | `query_filter_exec_tests.rs` | 4 | 全局过滤器 UPDATE/DELETE 约束 |
 | `subquery_tests.rs` | 8 | any/none/all 子查询 |
+| `in_subquery_tests.rs` | 6 | IN / NOT IN 标量子查询（v1.1） |
+| `lazy_loading_tests.rs` | 7 | Lazy Loading opt-in / HasMany / BelongsTo（v1.1） |
+| `window_function_tests.rs` | 12 | Window 函数 SQL 生成 + 执行 + CTE（v1.1） |
 | `migration_cli_tests.rs` | 13 | revert_to_target / generate_script |
 | `index_diff_tests.rs` | 10 | CreateIndex / DropIndex diff |
 | `model_builder_cache_tests.rs` | — | OnceLock 元数据缓存 |
@@ -620,4 +637,4 @@ v1.1+ 范围（非 1.0 GA 任务）:
 
 ---
 
-*下次审计建议触发条件：v1.1 启动（Lazy Loading 实现 / Provider 原生 chrono/uuid 参数绑定 / CTE 与 Window 函数支持），或重大架构决策变更。*
+*下次审计建议触发条件：v1.2 启动（L2 缓存 / 读写分离 / 分库分表），或重大架构决策变更。*

@@ -121,6 +121,19 @@ mod sqlite_crud {
 
     impl rust_ef::entity::INavigationSetter for TestItem {}
 
+    impl rust_ef::entity::ILazyInit for TestItem {
+        fn attach_lazy_contexts(
+            &mut self,
+            _provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
+            _filter_map: Option<
+                std::sync::Arc<std::collections::HashMap<String, rust_ef::query::CompiledFilter>>,
+            >,
+            _depth: usize,
+        ) {
+            // No navigation fields — lazy loading is a no-op for this test entity.
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Helper: create table via migration engine
     // -----------------------------------------------------------------------

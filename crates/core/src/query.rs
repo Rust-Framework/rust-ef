@@ -5,7 +5,9 @@
 //! (`to_list`, `first`, `count`, etc.) produce real SQL that can be
 //! executed against a database provider.
 
-use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use crate::entity::{
+    IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, ILazyInit, INavigationSetter,
+};
 use crate::error::EFResult;
 use crate::metadata::EntityTypeMeta;
 use crate::provider::{DbValue, DbValueConvertError, IDatabaseProvider};
@@ -111,6 +113,10 @@ pub enum BoolExpr {
     Exists(Box<SubquerySpec>),
     /// NOT EXISTS (...)
     NotExists(Box<SubquerySpec>),
+    /// `column IN (SELECT projection FROM source_table [WHERE predicate])`
+    InSubquery(Box<InSubquerySpec>),
+    /// `column NOT IN (SELECT projection FROM source_table [WHERE predicate])`
+    NotInSubquery(Box<InSubquerySpec>),
 }
 
 /// G5: Specification for a correlated subquery (`EXISTS` / `NOT EXISTS`).
@@ -152,6 +158,44 @@ impl SubquerySpec {
     }
 }
 
+/// v1.1: Specification for a scalar `IN (SELECT ...)` / `NOT IN (SELECT ...)`
+/// subquery.
+///
+/// Created by the `linq!` macro when parsing
+/// `b.field.in_subquery(|p: Post| p.blog_id)`. Unlike [`SubquerySpec`], this
+/// variant is **not** navigation-driven — the subquery projects a single column
+/// from an arbitrary table, and the outer column is compared against the
+/// projected values via the `IN` operator.
+#[derive(Debug, Clone)]
+pub struct InSubquerySpec {
+    /// The outer column being tested (e.g. `"id"` on the parent table).
+    pub outer_column: String,
+    /// The source table name for the inner SELECT (e.g. `"posts"`).
+    pub source_table: String,
+    /// The projection column selected from the inner table
+    /// (e.g. `"blog_id"`).
+    pub projection_column: String,
+    /// Optional predicate applied inside the subquery
+    /// (e.g. `WHERE published = ?`).
+    pub predicate: Option<Box<BoolExpr>>,
+}
+
+impl InSubquerySpec {
+    /// Creates a new IN-subquery specification.
+    pub fn new(
+        outer_column: impl Into<String>,
+        source_table: impl Into<String>,
+        projection_column: impl Into<String>,
+    ) -> Self {
+        Self {
+            outer_column: outer_column.into(),
+            source_table: source_table.into(),
+            projection_column: projection_column.into(),
+            predicate: None,
+        }
+    }
+}
+
 impl BoolExpr {
     pub fn filter(
         column: impl Into<String>,
@@ -187,6 +231,11 @@ impl BoolExpr {
             }
             BoolExpr::Not(inner) => inner.total_param_count(),
             BoolExpr::Exists(spec) | BoolExpr::NotExists(spec) => spec
+                .predicate
+                .as_ref()
+                .map(|p| p.total_param_count())
+                .unwrap_or(0),
+            BoolExpr::InSubquery(spec) | BoolExpr::NotInSubquery(spec) => spec
                 .predicate
                 .as_ref()
                 .map(|p| p.total_param_count())
@@ -424,48 +473,237 @@ pub enum HavingExpr {
 }
 
 impl HavingExpr {
-    /// Recursively compiles the expression into a SQL fragment.
+    /// Recursively compiles the expression into a SQL fragment using the
+    /// provider-specific placeholder syntax (`?` for SQLite/MySQL, `$N` for
+    /// PostgreSQL).
     ///
-    /// Bound parameters (for `Compare` variants) are pushed into `params` in
-    /// left-to-right order and represented as `?` placeholders in the output.
-    pub fn to_sql(&self, params: &mut Vec<DbValue>) -> String {
+    /// `param_idx` is advanced past each bound parameter in left-to-right
+    /// order, matching the order produced by [`HavingExpr::collect_params`].
+    /// This ensures PostgreSQL's 1-indexed `$N` placeholders stay contiguous
+    /// with the WHERE clause's placeholders.
+    pub fn to_sql(
+        &self,
+        gen: &dyn crate::provider::ISqlGenerator,
+        param_idx: &mut usize,
+    ) -> String {
         match self {
             Self::Compare {
                 agg,
                 col,
                 op,
-                value,
+                value: _,
             } => {
-                params.push(value.clone());
-                format!("{}({}) {} ?", agg.sql_name(), col, op.sql_name())
+                let placeholder = gen.parameter_placeholder(*param_idx);
+                *param_idx += 1;
+                format!(
+                    "{}({}) {} {}",
+                    agg.sql_name(),
+                    col,
+                    op.sql_name(),
+                    placeholder
+                )
             }
-            Self::And(left, right) => {
-                format!("({} AND {})", left.to_sql(params), right.to_sql(params))
-            }
-            Self::Or(left, right) => {
-                format!("({} OR {})", left.to_sql(params), right.to_sql(params))
-            }
-            Self::Not(inner) => {
-                format!("NOT ({})", inner.to_sql(params))
-            }
+            Self::And(left, right) => format!(
+                "({} AND {})",
+                left.to_sql(gen, param_idx),
+                right.to_sql(gen, param_idx)
+            ),
+            Self::Or(left, right) => format!(
+                "({} OR {})",
+                left.to_sql(gen, param_idx),
+                right.to_sql(gen, param_idx)
+            ),
+            Self::Not(inner) => format!("NOT ({})", inner.to_sql(gen, param_idx)),
             Self::CompareAgg {
                 left_agg,
                 left_col,
                 op,
                 right_agg,
                 right_col,
-            } => {
-                format!(
-                    "{}({}) {} {}({})",
-                    left_agg.sql_name(),
-                    left_col,
-                    op.sql_name(),
-                    right_agg.sql_name(),
-                    right_col
-                )
-            }
+            } => format!(
+                "{}({}) {} {}({})",
+                left_agg.sql_name(),
+                left_col,
+                op.sql_name(),
+                right_agg.sql_name(),
+                right_col
+            ),
         }
     }
+
+    /// Collects bound parameter values in the same left-to-right order that
+    /// [`HavingExpr::to_sql`] emits placeholders. Used to populate the query
+    /// parameter vector at registration time so that `compile_sql` returns
+    /// params matching the placeholder order.
+    pub fn collect_params(&self) -> Vec<DbValue> {
+        match self {
+            Self::Compare { value, .. } => vec![value.clone()],
+            Self::And(left, right) | Self::Or(left, right) => {
+                let mut v = left.collect_params();
+                v.extend(right.collect_params());
+                v
+            }
+            Self::Not(inner) => inner.collect_params(),
+            Self::CompareAgg { .. } => Vec::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Window functions & CTE (v1.1)
+// ---------------------------------------------------------------------------
+
+/// Kinds of window function supported by `linq!(window ...)`.
+///
+/// Ranking functions (`RowNumber`, `Rank`, `DenseRank`) take no column
+/// argument; aggregate functions (`Sum`, `Count`, ...) and offset functions
+/// (`Lag`, `Lead`) take a single column argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowFuncKind {
+    RowNumber,
+    Rank,
+    DenseRank,
+    Lag,
+    Lead,
+    Sum,
+    Count,
+    Avg,
+    Min,
+    Max,
+}
+
+impl WindowFuncKind {
+    /// Returns the SQL keyword for this window function.
+    pub fn sql_name(&self) -> &'static str {
+        match self {
+            WindowFuncKind::RowNumber => "ROW_NUMBER",
+            WindowFuncKind::Rank => "RANK",
+            WindowFuncKind::DenseRank => "DENSE_RANK",
+            WindowFuncKind::Lag => "LAG",
+            WindowFuncKind::Lead => "LEAD",
+            WindowFuncKind::Sum => "SUM",
+            WindowFuncKind::Count => "COUNT",
+            WindowFuncKind::Avg => "AVG",
+            WindowFuncKind::Min => "MIN",
+            WindowFuncKind::Max => "MAX",
+        }
+    }
+
+    /// Parses a window function name (case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_uppercase().as_str() {
+            "ROW_NUMBER" => Some(WindowFuncKind::RowNumber),
+            "RANK" => Some(WindowFuncKind::Rank),
+            "DENSE_RANK" => Some(WindowFuncKind::DenseRank),
+            "LAG" => Some(WindowFuncKind::Lag),
+            "LEAD" => Some(WindowFuncKind::Lead),
+            "SUM" => Some(WindowFuncKind::Sum),
+            "COUNT" => Some(WindowFuncKind::Count),
+            "AVG" => Some(WindowFuncKind::Avg),
+            "MIN" => Some(WindowFuncKind::Min),
+            "MAX" => Some(WindowFuncKind::Max),
+            _ => None,
+        }
+    }
+
+    /// Whether this function takes a column argument.
+    pub fn takes_column(&self) -> bool {
+        !matches!(
+            self,
+            WindowFuncKind::RowNumber | WindowFuncKind::Rank | WindowFuncKind::DenseRank
+        )
+    }
+}
+
+/// Specification for a window function projection.
+///
+/// Mirrors the design of [`HavingExpr`]: a structured AST node stored in
+/// [`QueryState`] and compiled to SQL at generation time so that dialect-
+/// specific identifier quoting is applied consistently.
+#[derive(Debug, Clone)]
+pub struct WindowSpec {
+    /// The window function to apply.
+    pub func: WindowFuncKind,
+    /// The column argument (required for aggregate/offset functions,
+    /// ignored for ranking functions).
+    pub column: Option<String>,
+    /// PARTITION BY columns (empty for no partitioning).
+    pub partition_by: Vec<String>,
+    /// ORDER BY within the window frame.
+    pub order_by: Vec<(String, OrderDirection)>,
+    /// The output column alias (emitted as `AS <alias>`).
+    pub alias: String,
+}
+
+impl WindowSpec {
+    /// Compiles this window function into a SELECT-list projection fragment
+    /// using the provider's identifier quoting.
+    ///
+    /// Ranking functions emit `FUNC() OVER (...)`; aggregate/offset functions
+    /// emit `FUNC(col) OVER (...)`. The alias is always appended.
+    pub fn to_sql(&self, gen: &dyn crate::provider::ISqlGenerator) -> String {
+        let func_name = self.func.sql_name();
+        let arg = if self.func.takes_column() {
+            let col = self.column.as_deref().unwrap_or("*");
+            gen.quote_identifier(col)
+        } else {
+            String::new()
+        };
+        let call = if self.func.takes_column() {
+            format!("{}({})", func_name, arg)
+        } else {
+            format!("{}()", func_name)
+        };
+
+        let mut over = String::new();
+        if !self.partition_by.is_empty() {
+            let parts: Vec<String> = self
+                .partition_by
+                .iter()
+                .map(|c| gen.quote_identifier(c))
+                .collect();
+            over.push_str(&format!("PARTITION BY {}", parts.join(", ")));
+        }
+        if !self.order_by.is_empty() {
+            if !over.is_empty() {
+                over.push(' ');
+            }
+            let parts: Vec<String> = self
+                .order_by
+                .iter()
+                .map(|(c, d)| {
+                    let quoted = gen.quote_identifier(c);
+                    let dir = match d {
+                        OrderDirection::Ascending => "ASC",
+                        OrderDirection::Descending => "DESC",
+                    };
+                    format!("{} {}", quoted, dir)
+                })
+                .collect();
+            over.push_str(&format!("ORDER BY {}", parts.join(", ")));
+        }
+        let alias = gen.quote_identifier(&self.alias);
+        format!("{} OVER ({}) AS {}", call, over, alias)
+    }
+}
+
+/// Specification for a Common Table Expression (CTE).
+///
+/// A CTE is defined by a name and a pre-compiled SQL string with its own
+/// parameter values. The main query references the CTE by name (typically
+/// in its FROM clause). Parameters are prepended to the main query's
+/// parameter list in CTE declaration order.
+#[derive(Debug, Clone)]
+pub struct CteSpec {
+    /// The CTE name (used as the derived table alias in `WITH name AS (...)`).
+    pub name: String,
+    /// The pre-compiled SQL of the CTE body.
+    pub sql: String,
+    /// Parameter values bound to the CTE's placeholders, in order.
+    pub params: Vec<DbValue>,
+    /// Optional explicit column list (`WITH name (c1, c2) AS (...)`).
+    /// Empty means no explicit column list.
+    pub columns: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -483,8 +721,10 @@ pub struct QueryState {
     pub joins: Vec<JoinSpec>,
     /// GROUP BY columns.
     pub group_bys: Vec<String>,
-    /// HAVING conditions.
-    pub havings: Vec<String>,
+    /// HAVING conditions stored as AST nodes so they can be compiled with the
+    /// provider-specific placeholder syntax (`?` vs `$N`) at SQL generation
+    /// time, rather than being pre-compiled to a fixed placeholder.
+    pub havings: Vec<HavingExpr>,
     /// ORDER BY clauses.
     pub orderings: Vec<OrderBy>,
     /// OFFSET (Skip).
@@ -509,6 +749,13 @@ pub struct QueryState {
     pub where_expr: Option<BoolExpr>,
     /// Whether to emit `SELECT DISTINCT`.
     pub distinct: bool,
+    /// Window function projections (v1.1). Emitted in the SELECT list as
+    /// `func(col) OVER (PARTITION BY ... ORDER BY ...) AS alias`.
+    pub windows: Vec<WindowSpec>,
+    /// CTE definitions (v1.1). Emitted as `WITH name AS (...)` prefix
+    /// before the SELECT. CTE parameters are prepended to the query's
+    /// parameter list at execution time.
+    pub ctes: Vec<CteSpec>,
 }
 
 impl QueryState {
@@ -531,6 +778,8 @@ impl QueryState {
             parameters: Vec::new(),
             where_expr: None,
             distinct: false,
+            windows: Vec::new(),
+            ctes: Vec::new(),
         }
     }
 
@@ -548,6 +797,10 @@ impl QueryState {
 
     /// Compile the state into a SQL string using the provider's placeholder style.
     pub fn to_sql_with(&self, gen: &dyn crate::provider::ISqlGenerator) -> String {
+        // CTE parameter count — the main query's PostgreSQL `$N` placeholders
+        // must continue from this offset to stay contiguous with CTE params.
+        let cte_param_count: usize = self.ctes.iter().map(|c| c.params.len()).sum();
+
         let distinct_kw = if self.distinct { "DISTINCT " } else { "" };
         let select = if self.is_count {
             if self.distinct {
@@ -565,9 +818,23 @@ impl QueryState {
                 format!("SELECT {}({})", agg, col)
             }
         } else if let Some(ref cols) = self.projected_columns {
-            format!("SELECT {}{}", distinct_kw, cols.join(", "))
+            let mut parts: Vec<String> = cols.to_vec();
+            // Window function projections are appended to explicit column lists.
+            for w in &self.windows {
+                parts.push(w.to_sql(gen));
+            }
+            format!("SELECT {}{}", distinct_kw, parts.join(", "))
         } else {
-            format!("SELECT {}*", distinct_kw)
+            // Default SELECT * — append window projections if present.
+            if self.windows.is_empty() {
+                format!("SELECT {}*", distinct_kw)
+            } else {
+                let mut parts: Vec<String> = vec![format!("{}*", distinct_kw)];
+                for w in &self.windows {
+                    parts.push(w.to_sql(gen));
+                }
+                format!("SELECT {}", parts.join(", "))
+            }
         };
 
         let mut sql = format!("{} FROM {}", select, self.from);
@@ -577,9 +844,14 @@ impl QueryState {
             sql.push_str(&format!(" {}", join.to_sql()));
         }
 
+        // Parameter index is shared across WHERE and HAVING so that
+        // PostgreSQL's 1-indexed `$N` placeholders remain contiguous and
+        // correctly ordered across both clauses. CTE parameters (if any)
+        // occupy the leading slots, so the main query starts after them.
+        let mut param_idx = 1usize + cte_param_count;
+
         // WHERE
         if let Some(ref expr) = self.where_expr {
-            let mut param_idx = 1usize;
             sql.push_str(&format!(
                 " WHERE {}",
                 compile_bool_expr(expr, gen, &mut param_idx)
@@ -589,6 +861,10 @@ impl QueryState {
                 " WHERE {}",
                 build_where_clauses(&self.filters, gen)
             ));
+            // Advance `param_idx` past the legacy `filters` path so that
+            // HAVING placeholders (PostgreSQL `$N`) continue from the
+            // correct index. `build_where_clauses` always starts at index 1.
+            param_idx += self.filters.iter().map(|f| f.param_count()).sum::<usize>();
         }
 
         // GROUP BY
@@ -596,9 +872,16 @@ impl QueryState {
             sql.push_str(&format!(" GROUP BY {}", self.group_bys.join(", ")));
         }
 
-        // HAVING
+        // HAVING — compile each `HavingExpr` AST node with the provider's
+        // placeholder syntax, continuing the shared `param_idx` so PostgreSQL
+        // `$N` indices stay contiguous with the WHERE clause.
         if !self.havings.is_empty() {
-            sql.push_str(&format!(" HAVING {}", self.havings.join(" AND ")));
+            let compiled: Vec<String> = self
+                .havings
+                .iter()
+                .map(|h| h.to_sql(gen, &mut param_idx))
+                .collect();
+            sql.push_str(&format!(" HAVING {}", compiled.join(" AND ")));
         }
 
         // ORDER BY
@@ -607,21 +890,55 @@ impl QueryState {
             sql.push_str(&format!(" ORDER BY {}", ords.join(", ")));
         }
 
-        // LIMIT / OFFSET
-        match (self.limit, self.offset) {
-            (Some(limit), Some(offset)) => {
-                sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
-            }
-            (Some(limit), None) => {
-                sql.push_str(&format!(" LIMIT {}", limit));
-            }
-            (None, Some(offset)) => {
-                sql.push_str(&format!(" OFFSET {}", offset));
-            }
-            (None, None) => {}
+        // LIMIT / OFFSET — delegated to the dialect-specific generator so
+        // that PostgreSQL emits `OFFSET x LIMIT y`, MySQL handles the
+        // offset-only case via `LIMIT 18446744073709551615 OFFSET y`, and
+        // SQLite/MySQL use `LIMIT x OFFSET y`.
+        let pagination = gen.pagination(self.offset, self.limit);
+        if !pagination.is_empty() {
+            sql.push(' ');
+            sql.push_str(&pagination);
+        }
+
+        // CTE prefix — emitted as `WITH name AS (sql), ... ` before the SELECT.
+        // The CTE SQL is pre-compiled; its parameters are prepended to the
+        // query's parameter vector at execution time (see `all_params`).
+        if !self.ctes.is_empty() {
+            let cte_parts: Vec<String> = self
+                .ctes
+                .iter()
+                .map(|c| {
+                    if c.columns.is_empty() {
+                        format!("{} AS ({})", c.name, c.sql)
+                    } else {
+                        let cols = c
+                            .columns
+                            .iter()
+                            .map(|col| gen.quote_identifier(col))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("{} ({}) AS ({})", c.name, cols, c.sql)
+                    }
+                })
+                .collect();
+            sql = format!("WITH {} {}", cte_parts.join(", "), sql);
         }
 
         sql
+    }
+
+    /// Returns all parameter values for execution: CTE parameters first
+    /// (in declaration order), followed by WHERE/HAVING parameters.
+    ///
+    /// This ordering matches the placeholder order in the generated SQL,
+    /// where CTE bodies appear before the main SELECT.
+    pub fn all_params(&self) -> Vec<DbValue> {
+        let mut params = Vec::new();
+        for cte in &self.ctes {
+            params.extend(cte.params.clone());
+        }
+        params.extend(self.parameters.clone());
+        params
     }
 
     /// Compile SQL with `?` placeholders (SQLite/MySQL style).
@@ -657,8 +974,20 @@ impl crate::provider::ISqlGenerator for PortablePlaceholderGenerator {
     fn drop_table(&self, _: &str) -> String {
         String::new()
     }
-    fn pagination(&self, _: Option<usize>, _: Option<usize>) -> String {
-        String::new()
+    fn pagination(&self, skip: Option<usize>, take: Option<usize>) -> String {
+        // Portable fallback: emit the most widely-supported form
+        // `LIMIT x OFFSET y`. SQLite and MySQL accept this verbatim;
+        // PostgreSQL also accepts this clause order (though it prefers
+        // `OFFSET x LIMIT y`). Offset-only without a LIMIT is only
+        // supported by PostgreSQL and SQLite, so we emit `OFFSET y` and
+        // rely on the caller to attach a real provider when targeting
+        // MySQL (whose offset-only case requires a sentinel LIMIT).
+        match (skip, take) {
+            (Some(s), Some(t)) => format!("LIMIT {} OFFSET {}", t, s),
+            (None, Some(t)) => format!("LIMIT {}", t),
+            (Some(s), None) => format!("OFFSET {}", s),
+            (None, None) => String::new(),
+        }
     }
     fn parameter_placeholder(&self, _: usize) -> String {
         "?".to_string()
@@ -709,6 +1038,7 @@ pub struct QueryBuilder<T: IEntityType> {
     state: QueryState,
     provider: Option<Arc<dyn IDatabaseProvider>>,
     filter_map: Option<Arc<HashMap<String, CompiledFilter>>>,
+    lazy_loading_enabled: bool,
     _phantom: PhantomData<T>,
 }
 
@@ -719,6 +1049,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             state: QueryState::new(table_name),
             provider: None,
             filter_map: None,
+            lazy_loading_enabled: false,
             _phantom: PhantomData,
         }
     }
@@ -732,6 +1063,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             state: QueryState::new(table_name),
             provider: Some(provider),
             filter_map: None,
+            lazy_loading_enabled: false,
             _phantom: PhantomData,
         }
     }
@@ -742,6 +1074,12 @@ impl<T: IEntityType> QueryBuilder<T> {
         map: Option<Arc<HashMap<String, CompiledFilter>>>,
     ) -> Self {
         self.filter_map = map;
+        self
+    }
+
+    /// Sets whether lazy loading is enabled for materialized entities.
+    pub(crate) fn with_lazy_loading(mut self, enabled: bool) -> Self {
+        self.lazy_loading_enabled = enabled;
         self
     }
 
@@ -886,6 +1224,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             state: QueryState::new(&self.state.from),
             provider: self.provider.clone(),
             filter_map: None,
+            lazy_loading_enabled: false,
             _phantom: PhantomData,
         });
         let right = sub.state.where_expr.or_else(|| {
@@ -941,6 +1280,40 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
+    /// v1.1: Adds an `IN (SELECT ...)` (or `NOT IN (SELECT ...)`) subquery
+    /// condition.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!` expansion of
+    /// `b.field.in_subquery(|p: Post| p.blog_id)`.
+    ///
+    /// Unlike `where_exists_internal`, the `InSubquerySpec` is fully
+    /// specified at construction time (no navigation resolution needed).
+    /// The `source_table` and `projection_column` are `&'static str`
+    /// constants emitted by `#[derive(EntityType)]` (`TABLE` and
+    /// `COLUMN_<NAME>`).
+    pub fn where_in_subquery_internal(
+        mut self,
+        outer_column: &'static str,
+        source_table: &'static str,
+        projection_column: &'static str,
+        predicate: Option<BoolExpr>,
+        negated: bool,
+    ) -> Self {
+        let mut spec = InSubquerySpec::new(outer_column, source_table, projection_column);
+        if let Some(pred) = predicate {
+            let values = collect_bool_expr_values(&pred);
+            self.state.parameters.extend(values);
+            spec.predicate = Some(Box::new(pred));
+        }
+        let expr = if negated {
+            BoolExpr::NotInSubquery(Box::new(spec))
+        } else {
+            BoolExpr::InSubquery(Box::new(spec))
+        };
+        self.state.append_bool_expr(expr);
+        self
+    }
+
     // -------------------------------------------------------------------
     // Chainable methods (each returns Self with accumulated state)
     // -------------------------------------------------------------------
@@ -949,7 +1322,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// metadata — no longer hardcodes `"id"`.
     pub async fn find(self, id: impl Into<DbValue>) -> EFResult<Option<T>>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         let meta = T::entity_meta();
         let pk_col = meta
@@ -978,7 +1351,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// constants paired with values, e.g. `&[(BlogTag::COLUMN_BLOG_ID, DbValue::I32(1))]`.
     pub async fn find_by_key(mut self, keys: &[(&str, DbValue)]) -> EFResult<Option<T>>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         for (col, val) in keys {
             self = self.filter_column(col, "=", val.clone());
@@ -1160,11 +1533,18 @@ impl<T: IEntityType> QueryBuilder<T> {
         op: &str,
         value: impl Into<DbValue>,
     ) -> Self {
+        let agg_kind = AggKind::from_name(agg)
+            .unwrap_or_else(|| panic!("invalid aggregate name in having_internal: {agg}"));
+        let cmp_op = CompareOp::from_symbol(op)
+            .unwrap_or_else(|| panic!("invalid operator in having_internal: {op}"));
         let db_val = value.into();
-        self.state.parameters.push(db_val);
-        self.state
-            .havings
-            .push(format!("{}({}) {} ?", agg, column, op));
+        self.state.parameters.push(db_val.clone());
+        self.state.havings.push(HavingExpr::Compare {
+            agg: agg_kind,
+            col: column.to_string(),
+            op: cmp_op,
+            value: db_val,
+        });
         self
     }
 
@@ -1172,15 +1552,102 @@ impl<T: IEntityType> QueryBuilder<T> {
     ///
     /// `#[doc(hidden)]` — called by `linq!(having <expr>)` expansion when the
     /// having clause contains boolean combinations (`AND`/`OR`/`NOT`) or
-    /// aggregate-versus-aggregate comparisons. The expression is compiled to
-    /// SQL via [`HavingExpr::to_sql`], with bound parameters pushed to
-    /// `state.parameters`.
+    /// aggregate-versus-aggregate comparisons. The expression is stored as an
+    /// AST node and compiled to SQL at `to_sql_with` time using the provider's
+    /// placeholder syntax; bound parameters are collected via
+    /// [`HavingExpr::collect_params`] and pushed to `state.parameters`.
     #[doc(hidden)]
     pub fn having_expr_internal(mut self, expr: HavingExpr) -> Self {
-        let mut params = Vec::new();
-        let sql = expr.to_sql(&mut params);
-        self.state.havings.push(sql);
-        self.state.parameters.extend(params);
+        self.state.parameters.extend(expr.collect_params());
+        self.state.havings.push(expr);
+        self
+    }
+
+    // -------------------------------------------------------------------
+    // Window functions & CTE (v1.1)
+    // -------------------------------------------------------------------
+
+    /// Adds a window function projection to the SELECT list.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(window ...)` expansion.
+    ///
+    /// - `func`: window function name (e.g. `"row_number"`, `"sum"`, `"lag"`).
+    /// - `column`: the column argument (`None` for ranking functions).
+    /// - `partition_by`: PARTITION BY columns.
+    /// - `order_by`: ORDER BY columns as `(column, descending)` pairs.
+    /// - `alias`: the output column alias.
+    #[doc(hidden)]
+    pub fn window_internal(
+        mut self,
+        func: &str,
+        column: Option<&str>,
+        partition_by: &'static [&'static str],
+        order_by: &'static [(&'static str, bool)],
+        alias: &str,
+    ) -> Self {
+        let kind = WindowFuncKind::from_name(func)
+            .unwrap_or_else(|| panic!("invalid window function name: {func}"));
+        if kind.takes_column() && column.is_none() {
+            panic!("window function `{func}` requires a column argument");
+        }
+        let spec = WindowSpec {
+            func: kind,
+            column: column.map(|s| s.to_string()),
+            partition_by: partition_by.iter().map(|s| s.to_string()).collect(),
+            order_by: order_by
+                .iter()
+                .map(|(c, d)| {
+                    (
+                        c.to_string(),
+                        if *d {
+                            OrderDirection::Descending
+                        } else {
+                            OrderDirection::Ascending
+                        },
+                    )
+                })
+                .collect(),
+            alias: alias.to_string(),
+        };
+        self.state.windows.push(spec);
+        self
+    }
+
+    /// Adds a CTE (Common Table Expression) definition to the query.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(with ...)` expansion.
+    ///
+    /// The CTE body is a pre-compiled SQL string with `?` placeholders; its
+    /// parameter values are prepended to the query's parameter vector at
+    /// execution time so that placeholder ordering remains contiguous.
+    #[doc(hidden)]
+    pub fn with_cte_internal(
+        mut self,
+        name: &str,
+        sql: &str,
+        params: Vec<DbValue>,
+        columns: &'static [&'static str],
+    ) -> Self {
+        let cte = CteSpec {
+            name: name.to_string(),
+            sql: sql.to_string(),
+            params,
+            columns: columns.iter().map(|s| s.to_string()).collect(),
+        };
+        self.state.ctes.push(cte);
+        self
+    }
+
+    /// Changes the FROM clause to reference a CTE name (or any table/subquery).
+    ///
+    /// Used in combination with `with_cte_internal` to query from a CTE:
+    /// ```ignore
+    /// builder.with_cte_internal("cte", "SELECT ...", params, &[])
+    ///        .from_cte("cte")
+    /// ```
+    #[doc(hidden)]
+    pub fn from_cte(mut self, name: &str) -> Self {
+        self.state.from = name.to_string();
         self
     }
 
@@ -1202,7 +1669,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             )
         })?;
         let sql = Self::compile_state_sql(&state, provider);
-        let params = state.params().to_vec();
+        let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
@@ -1228,7 +1695,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             )
         })?;
         let sql = Self::compile_state_sql(&state, provider);
-        let params = state.params().to_vec();
+        let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
@@ -1258,7 +1725,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             )
         })?;
         let sql = Self::compile_state_sql(&state, provider);
-        let params = state.params().to_vec();
+        let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         convert_aggregate_cell::<V>(rows)
@@ -1282,7 +1749,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             )
         })?;
         let sql = Self::compile_state_sql(&state, provider);
-        let params = state.params().to_vec();
+        let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         convert_aggregate_cell::<V>(rows)
@@ -1329,7 +1796,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     fn compile_sql(&self) -> (String, Vec<DbValue>) {
-        (self.to_sql(), self.state.params().to_vec())
+        (self.to_sql(), self.state.all_params())
     }
 
     fn compile_state_sql(state: &QueryState, provider: &Arc<dyn IDatabaseProvider>) -> String {
@@ -1348,9 +1815,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Executes the query and returns all matching entities.
     pub async fn to_list(self) -> EFResult<Vec<T>>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         let includes = self.state.includes.clone();
+        let lazy_loading = self.lazy_loading_enabled;
         let (sql, params) = self.compile_sql();
         let provider = self.provider.as_ref().ok_or_else(|| {
             crate::error::EFError::Configuration(
@@ -1370,13 +1838,24 @@ impl<T: IEntityType> QueryBuilder<T> {
             )
             .await?;
         }
+        // When lazy loading is enabled and no explicit includes were
+        // requested, attach a LazyContext to each navigation container on
+        // every materialized entity. The user can then call
+        // `nav.load().await` to trigger on-demand loading.
+        if lazy_loading && includes.is_empty() {
+            let provider_arc = Arc::clone(provider);
+            let filter_map = self.filter_map.clone();
+            for entity in &mut entities {
+                entity.attach_lazy_contexts(Arc::clone(&provider_arc), filter_map.clone(), 0);
+            }
+        }
         Ok(entities)
     }
 
     /// Executes the query and eagerly loads included navigations.
     pub async fn to_list_with_includes(self) -> EFResult<Vec<T>>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         self.to_list().await
     }
@@ -1384,7 +1863,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Executes the query and returns the first matching entity.
     pub async fn first(self) -> EFResult<T>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         let mut results = self.take(1).to_list().await?;
         results
@@ -1395,7 +1874,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Executes the query and returns the first matching entity or None.
     pub async fn first_or_default(self) -> EFResult<Option<T>>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         let mut results = self.take(1).to_list().await?;
         Ok(results.pop())
@@ -1411,7 +1890,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             )
         })?;
         let sql = Self::compile_state_sql(&state, provider);
-        let params = state.params().to_vec();
+        let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first_row) = rows.first() {
@@ -1438,7 +1917,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             )
         })?;
         let sql = Self::compile_state_sql(&state, provider);
-        let params = state.params().to_vec();
+        let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         Ok(!rows.is_empty())
@@ -1452,7 +1931,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// ordering, then takes 1). Errors if no rows match.
     pub async fn last(self) -> EFResult<T>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         let mut results = self.last_or_default().await?;
         results
@@ -1470,7 +1949,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// and no explicit ordering was provided.
     pub async fn last_or_default(mut self) -> EFResult<Option<T>>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         if self.state.orderings.is_empty() {
             let meta = T::entity_meta();
@@ -1510,7 +1989,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// there are 0 or 2+ results.
     pub async fn single(self) -> EFResult<T>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         let mut results = self.take(2).to_list().await?;
         if results.len() > 1 {
@@ -1527,7 +2006,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// empty. Errors if there are 2+ results.
     pub async fn single_or_default(self) -> EFResult<Option<T>>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         let mut results = self.take(2).to_list().await?;
         if results.len() > 1 {
@@ -1549,7 +2028,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// The predicate is applied in Rust after loading the entities.
     pub async fn all<F>(self, predicate: F) -> EFResult<bool>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
         F: Fn(&T) -> bool,
     {
         let items = self.to_list().await?;
@@ -1560,7 +2039,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// primary key value.
     pub async fn contains(self, id: impl Into<DbValue>) -> EFResult<bool>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         self.find(id).await.map(|opt| opt.is_some())
     }
@@ -1573,7 +2052,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         key_selector: F,
     ) -> EFResult<std::collections::HashMap<K, T>>
     where
-        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+        T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
         K: std::hash::Hash + Eq,
         F: Fn(&T) -> K,
     {
@@ -1627,7 +2106,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         } else {
             format!("DELETE FROM {} WHERE {}", self.state.from, where_clause)
         };
-        let params = self.state.params().to_vec();
+        let params = self.state.all_params();
         let mut conn = provider.get_connection().await?;
         conn.execute(&sql, &params).await
     }
@@ -1745,7 +2224,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         })?;
         let gen = provider.sql_generator();
         let sql = self.state.to_sql_with(gen);
-        let params = self.state.params().to_vec();
+        let params = self.state.all_params();
         let mut conn = provider.get_connection().await?;
         conn.query(&sql, &params).await
     }
@@ -1976,6 +2455,8 @@ pub(crate) fn compile_bool_expr(
         BoolExpr::Not(inner) => format!("NOT ({})", compile_bool_expr(inner, gen, param_idx)),
         BoolExpr::Exists(spec) => compile_subquery(spec, gen, param_idx, false),
         BoolExpr::NotExists(spec) => compile_subquery(spec, gen, param_idx, true),
+        BoolExpr::InSubquery(spec) => compile_in_subquery(spec, gen, param_idx, false),
+        BoolExpr::NotInSubquery(spec) => compile_in_subquery(spec, gen, param_idx, true),
     }
 }
 
@@ -2005,6 +2486,29 @@ fn compile_subquery(
     sql
 }
 
+/// v1.1: Compiles an `InSubquerySpec` into
+/// `column IN (SELECT projection FROM source_table [WHERE predicate])` SQL.
+fn compile_in_subquery(
+    spec: &InSubquerySpec,
+    gen: &dyn crate::provider::ISqlGenerator,
+    param_idx: &mut usize,
+    negated: bool,
+) -> String {
+    let outer_col = gen.quote_identifier(&spec.outer_column);
+    let src_tbl = gen.quote_identifier(&spec.source_table);
+    let proj_col = gen.quote_identifier(&spec.projection_column);
+
+    let kw = if negated { "NOT IN" } else { "IN" };
+    let mut sql = format!("{outer_col} {kw} (SELECT {proj_col} FROM {src_tbl}");
+
+    if let Some(pred) = &spec.predicate {
+        let pred_sql = compile_bool_expr(pred, gen, param_idx);
+        sql.push_str(&format!(" WHERE {pred_sql}"));
+    }
+    sql.push(')');
+    sql
+}
+
 /// Walks a `BoolExpr` tree and collects inline parameter values carried by
 /// self-contained `FilterCondition`s (those produced by `linq!(filter |b: T| ...)`
 /// Form C). Returns an empty vec for expressions whose values are already
@@ -2020,6 +2524,11 @@ pub(crate) fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
         }
         BoolExpr::Not(inner) => collect_bool_expr_values(inner),
         BoolExpr::Exists(spec) | BoolExpr::NotExists(spec) => spec
+            .predicate
+            .as_ref()
+            .map(|p| collect_bool_expr_values(p))
+            .unwrap_or_default(),
+        BoolExpr::InSubquery(spec) | BoolExpr::NotInSubquery(spec) => spec
             .predicate
             .as_ref()
             .map(|p| collect_bool_expr_values(p))

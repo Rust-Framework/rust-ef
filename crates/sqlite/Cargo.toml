@@ -9,7 +9,17 @@ keywords = ["orm", "efcore", "entity-framework", "sqlite", "database"]
 categories = ["database"]
 
 [dependencies]
-rust-ef = { version = "1.0.0", path = "../core" }
+# Feature unification: when any crate in the dependency graph enables
+# `chrono`/`uuid`/`decimal` on `rust-ef` (e.g. the postgres provider), the
+# `DbValue` enum gains the corresponding variants and ALL providers must
+# handle them. SQLite therefore enables the same features unconditionally
+# and collapses native variants to their canonical string form in
+# `type_conversion.rs` (SQLite has no native TIMESTAMPTZ/UUID type — TEXT is
+# the correct storage, matching v1.0 behavior).
+rust-ef = { version = "1.0.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+rust_decimal = "1"

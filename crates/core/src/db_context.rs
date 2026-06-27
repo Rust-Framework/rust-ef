@@ -63,6 +63,12 @@ pub struct DbContextOptions {
     pub(crate) provider_factory:
         Option<Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync>>,
     pub(crate) interceptors: Vec<Arc<dyn crate::interceptor::ISaveChangesInterceptor>>,
+    /// When `true`, `QueryBuilder::to_list()` attaches `LazyContext` to every
+    /// navigation container on materialized entities, enabling on-demand
+    /// loading via `BelongsTo::load()` / `HasMany::load()` / `HasOne::load()`.
+    ///
+    /// Defaults to `false` (opt-in) to preserve v1.0 eager-only behavior.
+    pub(crate) lazy_loading_enabled: bool,
 }
 
 impl std::fmt::Debug for DbContextOptions {
@@ -80,6 +86,9 @@ impl DbContextOptions {
     }
     pub fn provider_tag(&self) -> Option<&str> {
         self.provider_tag.as_deref()
+    }
+    pub fn lazy_loading_enabled(&self) -> bool {
+        self.lazy_loading_enabled
     }
     pub fn create_provider(&self) -> EFResult<Arc<dyn IDatabaseProvider>> {
         let factory = self.provider_factory.as_ref().ok_or_else(|| {
@@ -99,6 +108,7 @@ impl Default for DbContextOptions {
             provider_tag: None,
             provider_factory: None,
             interceptors: Vec::new(),
+            lazy_loading_enabled: false,
         }
     }
 }
@@ -152,6 +162,28 @@ impl DbContextOptionsBuilder {
         interceptor: impl crate::interceptor::ISaveChangesInterceptor + 'static,
     ) -> &mut Self {
         self.inner.interceptors.push(Arc::new(interceptor));
+        self
+    }
+
+    /// Enables or disables lazy loading of navigation properties.
+    ///
+    /// When enabled (`true`), `to_list()` attaches a `LazyContext` to every
+    /// navigation container on each materialized entity. The user can then
+    /// call `nav.load().await` to trigger a single-entity query on first
+    /// access; subsequent accesses read from the in-memory cache.
+    ///
+    /// When disabled (`false`, the default), navigation properties are
+    /// empty unless explicitly loaded via `Include` — matching v1.0
+    /// eager-only behavior.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut options = DbContextOptionsBuilder::new();
+    /// options.use_sqlite_in_memory().use_lazy_loading(true);
+    /// ```
+    pub fn use_lazy_loading(&mut self, enabled: bool) -> &mut Self {
+        self.inner.lazy_loading_enabled = enabled;
         self
     }
 
@@ -261,6 +293,7 @@ pub struct DbContext {
     change_tracker: ChangeTracker,
     provider: Arc<dyn IDatabaseProvider>,
     interceptor_pipeline: InterceptorPipeline,
+    lazy_loading_enabled: bool,
 }
 
 impl DbContext {
@@ -275,6 +308,7 @@ impl DbContext {
             change_tracker: ChangeTracker::new(),
             provider,
             interceptor_pipeline: InterceptorPipeline::new(options.interceptors.clone()),
+            lazy_loading_enabled: options.lazy_loading_enabled,
         })
     }
 
@@ -312,6 +346,7 @@ impl DbContext {
                 db_set.set_query_filter(filter.clone());
             }
             db_set.set_filter_map(self.model_builder.filters_by_table());
+            db_set.set_lazy_loading_enabled(self.lazy_loading_enabled);
             Box::new(db_set)
         });
         self.sets
