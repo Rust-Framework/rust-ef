@@ -22,11 +22,15 @@
 //!
 //! **Correct usage**: create one DI `Scope` per request / operation:
 //! ```rust,ignore
-//! let scope = provider.create_dbcontext_scope();
+//! let scope = provider.create_scope();
 //! let ctx = scope.get::<dyn IDbContext>().unwrap();
 //! // Multiple `get` calls within the same scope return the same instance
 //! // (unit-of-work semantics).
 //! ```
+//!
+//! > **rust-webapp**: the HTTP pipeline manages scopes automatically.
+//! > Handlers simply declare `ctx: Arc<dyn IDbContext>` — no manual
+//! > `create_scope()` needed.
 //!
 //! **Anti-pattern**: sharing via `Arc<Mutex<DbContext>>` causes tracking
 //! pollution — Thread A's `save_changes()` would commit Thread B's pending

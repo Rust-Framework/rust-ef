@@ -1,22 +1,23 @@
-// Template: Web handler CRUD patterns for rust-ef with Arc<Mutex<DbContext>>.
+// Template: Web handler CRUD patterns for rust-ef with Scoped DbContext.
 //
 // KEY RULES:
-// 1. ONE lock acquisition per request — hold across the entire write flow
-// 2. After save_changes(), auto_increment IDs are populated on the entity
-// 3. Re-query by PRIMARY KEY (not slug/email) when you need navigation includes
-// 4. Use detect_changes() for precise UPDATE SQL (not update() which marks all fields)
-// 5. Use global query filters for is_deleted instead of repeating in every query
+// 1. add_dbcontext registers as Scoped — each request gets its own DbContext instance
+// 2. No locks needed — DbContext is not shared across requests
+// 3. After save_changes(), auto_increment IDs are populated on the entity
+// 4. Re-query by PRIMARY KEY (not slug/email) when you need navigation includes
+// 5. Use detect_changes() for precise UPDATE SQL (not update() which marks all fields)
+// 6. Use global query filters for is_deleted instead of repeating in every query
+// 7. Use step-by-step let bindings for readability and debugging
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use rust_ef::prelude::*;
-use rust_ef::db_context::DbContext;
+use rust_ef::db_context::IDbContext;
 
 // ── Handler struct (DI-injectable) ──
 
 #[derive(Inject)]
 pub struct BlogHandler {
-    ctx: Arc<Mutex<DbContext>>,
+    ctx: Arc<dyn IDbContext>,
 }
 
 // ── CREATE ──
@@ -25,12 +26,10 @@ pub struct BlogHandler {
 #[async_trait]
 impl IRequestHandler<CreateBlogRequest, BlogModel> for BlogHandler {
     async fn handle(&self, req: CreateBlogRequest) -> Result<BlogModel> {
-        // ONE lock for the entire write flow
-        let mut ctx = self.ctx.lock().await;
-
-        // 1. Check uniqueness (within the lock — no TOCTOU race)
-        let exists = linq!(ctx.set::<Blog>(), |b: Blog| b.slug == req.slug)
-            .first_or_default().await?;
+        // 1. Check uniqueness
+        let set = ctx.set::<Blog>();
+        let expr = linq!(|b: Blog| b.slug == req.slug);
+        let exists = set.filter(expr).first_or_default().await?;
         if exists.is_some() {
             return Err("Slug already exists");
         }
@@ -54,26 +53,55 @@ impl IRequestHandler<CreateBlogRequest, BlogModel> for BlogHandler {
     }
 }
 
+// ── READ (list) ──
+
+#[inject]
+#[async_trait]
+impl IRequestHandler<ListBlogRequest, Paginated<BlogModel>> for BlogHandler {
+    async fn handle(&self, req: ListBlogRequest) -> Result<Paginated<BlogModel>> {
+        let set = ctx.set::<Blog>();
+        let expr = linq!(|b: Blog| b.rating > 0);
+        let blogs = set.filter(expr)
+            .skip(req.page * req.size)
+            .take(req.size)
+            .to_list().await?;
+        Ok(blogs.into_iter().map(|b| b.to_model()).collect())
+    }
+}
+
+// ── READ (single) ──
+
+#[inject]
+#[async_trait]
+impl IRequestHandler<GetBlogRequest, BlogModel> for BlogHandler {
+    async fn handle(&self, req: GetBlogRequest) -> Result<BlogModel> {
+        let query = ctx.set::<Blog>().query();
+        let blog = query.find(req.id).await?
+            .ok_or("Blog not found")?;
+        Ok(blog.to_model())
+    }
+}
+
 // ── UPDATE ──
 
 #[inject]
 #[async_trait]
 impl IRequestHandler<UpdateBlogRequest, BlogModel> for BlogHandler {
     async fn handle(&self, req: UpdateBlogRequest) -> Result<BlogModel> {
-        let mut ctx = self.ctx.lock().await; // ONE lock
-
         // 1. Load existing entity
-        let mut blog = ctx.set::<Blog>().query().find(req.id).await?
-            .ok_or(Error::NotFound)?;
+        let query = ctx.set::<Blog>().query();
+        let mut blog = query.find(req.id).await?
+            .ok_or("Blog not found")?;
 
         // 2. Apply changes
-        req.apply_to(&mut blog, uid, now);
+        blog.title = req.title;
+        blog.content = req.content;
 
-        // 3. detect_changes: only changed fields → more precise UPDATE SQL
+        // 3. Save (detect_changes only marks actually changed fields)
         ctx.set::<Blog>().detect_changes();
         ctx.save_changes().await?;
 
-        // 4. Re-query with includes (by primary key)
+        // 4. Re-query with navigation includes (by PRIMARY KEY)
         let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
             include b.category;
         ).first_or_default().await?
@@ -83,42 +111,23 @@ impl IRequestHandler<UpdateBlogRequest, BlogModel> for BlogHandler {
     }
 }
 
-// ── DELETE (Soft) ──
+// ── DELETE (soft delete) ──
 
 #[inject]
 #[async_trait]
 impl IRequestHandler<DeleteBlogRequest, String> for BlogHandler {
     async fn handle(&self, req: DeleteBlogRequest) -> Result<String> {
-        let mut ctx = self.ctx.lock().await; // ONE lock
+        // 1. Load existing entity
+        let query = ctx.set::<Blog>().query();
+        let mut blog = query.find(req.id).await?
+            .ok_or("Blog not found")?;
 
-        let mut blog = ctx.set::<Blog>().query().find(req.id).await?
-            .ok_or(Error::NotFound)?;
-
+        // 2. Soft delete: mark + detect_changes + save
         blog.is_deleted = true;
-        blog.updated_at = now;
-        // Global query filter (is_deleted = false) will now exclude this record
-
+        blog.updated_at = chrono::Utc::now().timestamp();
         ctx.set::<Blog>().detect_changes();
         ctx.save_changes().await?;
 
         Ok(format!("Deleted blog {}", req.id))
-    }
-}
-
-// ── LIST (Read) ──
-
-#[inject]
-#[async_trait]
-impl IRequestHandler<ListBlogsRequest, Vec<BlogModel>> for BlogHandler {
-    async fn handle(&self, _: ListBlogsRequest) -> Result<Vec<BlogModel>> {
-        let mut ctx = self.ctx.lock().await;
-
-        // With global query filter: is_deleted = false is auto-appended
-        let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.rating > 0;
-            include b.category;
-            order_by b.published_at desc;
-        ).to_list().await?;
-
-        Ok(blogs.into_iter().map(BlogModel::from).collect())
     }
 }

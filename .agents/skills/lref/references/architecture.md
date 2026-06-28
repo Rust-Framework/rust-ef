@@ -13,7 +13,6 @@ ISaveChangesInterceptor               IDbSet<T>
                                       IQueryable<T>
                                       IDbContextExt
                                       IEntityTypeConfiguration<T>
-                                      FromDbContextOptions
 ```
 
 ## Dependency Flow
@@ -21,9 +20,9 @@ ISaveChangesInterceptor               IDbSet<T>
 ```
 User Code
     ├── lrdi::ServiceCollection
-    �?    ├── add_dbcontext::<DbContext>(|o| o.use_sqlite(...))
+    �?    ├── add_dbcontext(|o| o.use_sqlite(...))
     �?    �?    └── stores DbContextOptions with provider_factory
-    �?    └── add_dbcontext_keyed::<DbContext>("key", |o| ...)
+    �?    └── add_dbcontext_keyed("key", |o| ...)
     �?          └── keyed registration for multi-DB
     �?
     └── Arc<dyn IDbContext> (from provider.get() or provider.get_keyed("key"))
@@ -60,8 +59,8 @@ Multiple interceptors run in registration order; the first error aborts the chai
 Uses lrdi's `keyed_transient` mechanism:
 
 ```rust
-.add_dbcontext_keyed::<DbContext>("primary", |o| o.use_postgres(...))
-.add_dbcontext_keyed::<DbContext>("logs", |o| o.use_sqlite(...))
+.add_dbcontext_keyed("primary", |o| o.use_postgres(...))
+.add_dbcontext_keyed("logs", |o| o.use_sqlite(...))
 ```
 
 Resolution:

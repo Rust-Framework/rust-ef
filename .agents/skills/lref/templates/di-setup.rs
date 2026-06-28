@@ -4,7 +4,7 @@
 // Provider extensions (use_sqlite/use_postgres/use_mysql) inject factory closures
 // into DbContextOptions, so the core crate stays fully decoupled.
 //
-// Multi-DB: use add_dbcontext_keyed::<DbContext>("key", |o| ...).
+// Multi-DB: use add_dbcontext_keyed("key", |o| ...).
 
 use rust_dicore::ServiceCollection;
 use rust_ef::di::*;                                  // DbContextServiceCollectionExt
@@ -20,7 +20,7 @@ fn build_provider() -> rust_dicore::ServiceProvider {
         // .transient(|p| Arc::new(UserService::new(p.get())))
 
         // --- Single database (recommended) ---
-        .add_dbcontext::<DbContext>(|options| {
+        .add_dbcontext(|options| {
             options.use_sqlite("data source=app.db");
             // options.use_sqlite_in_memory();
             // options.use_postgres("host=localhost dbname=app user=postgres");
@@ -32,10 +32,10 @@ fn build_provider() -> rust_dicore::ServiceProvider {
         })
 
         // --- Multiple databases (keyed) ---
-        // .add_dbcontext_keyed::<DbContext>("primary", |options| {
+        // .add_dbcontext_keyed("primary", |options| {
         //     options.use_postgres("host=primary/db");
         // })
-        // .add_dbcontext_keyed::<DbContext>("logs", |options| {
+        // .add_dbcontext_keyed("logs", |options| {
         //     options.use_sqlite("logs.db");
         // })
 
@@ -62,16 +62,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// NOTE: In web applications, DbContext is injected as Arc<Mutex<DbContext>>
-// because save_changes(&mut self) requires &mut access.
-// Use tokio::sync::Mutex for async lock support:
+// NOTE: In web applications, DbContext is injected as Arc<dyn IDbContext>
+// via Scoped lifecycle â€?each request gets its own instance, no locks needed.
+// add_dbcontext registers as Scoped by default:
 //
 //   #[derive(Inject)]
 //   pub struct MyHandler {
-//       ctx: Arc<Mutex<DbContext>>,
+//       ctx: Arc<dyn IDbContext>,
 //   }
-//
-// For DI registration, use add_dbcontext::<DbContext>(|o| o.use_sqlite(...))
-// which registers Arc<Mutex<DbContext>> as a singleton automatically.
 //
 // See templates/web-handler-crud.rs for complete handler patterns.

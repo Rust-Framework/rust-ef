@@ -6,7 +6,7 @@
 
 Interface-oriented, EFCore-inspired ORM for Rust ??`IDbContext` / `IDbSet<T>` / `IEntityType` with rust-dicore DI integration.
 
-**[Âú®Á∫øÊñáÊ°£](https://rf2026.github.io/rust-ef/)** ?? mdBook ÊûÑÂª∫ÁöÑÂÆåÊï¥ÂºÄÂèëËÄÖÊâãÂÜå
+**[Âú®Á∫øÊñáÊ°£](https://rf2026.github.io/rust-ef/)** ?? mdBook ÊûÑÂª∫ÁöÑÂÆåÊï¥ÂºÄÂèëËÄÖÊâãÂÜ?
 
 ---
 
@@ -47,7 +47,7 @@ pub struct Post {
 
 ### Fluent Configuration (auto-discovered)
 
-`#[derive(EntityType)]` auto-registers entities at compile time. `DbContext::from_options()` automatically discovers all registered entities and applies `#[entity(T)]` configurations ‚Äî no manual `discover_entities()` call needed.
+`#[derive(EntityType)]` auto-registers entities at compile time. `DbContext::from_options()` automatically discovers all registered entities and applies `#[entity(T)]` configurations ‚Ä?no manual `discover_entities()` call needed.
 
 ```rust
 #[derive(Default)]
@@ -78,7 +78,7 @@ use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Register
     let provider = ServiceCollection::new()
-        .add_dbcontext::<DbContext>(|options| {
+        .add_dbcontext(|options| {
             options.use_sqlite("data source=app.db");
         })
         .build()
@@ -97,12 +97,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Tag entities with `#[context("key")]` to isolate them per keyed `DbContext`. `#[entity(T, "key")]` applies configurations to the matching context only.
 
 ```rust
-// Default context entity ‚Äî no #[context] attribute
+// Default context entity ‚Ä?no #[context] attribute
 #[derive(Debug, Clone, EntityType)]
 #[table("blogs")]
 pub struct Blog { /* ... */ }
 
-// Keyed context entity ‚Äî tagged for "logs" context
+// Keyed context entity ‚Ä?tagged for "logs" context
 #[derive(Debug, Clone, EntityType)]
 #[context("logs")]
 #[table("log_entries")]
@@ -110,10 +110,10 @@ pub struct LogEntry { /* ... */ }
 
 // Register two keyed DbContexts
 let provider = ServiceCollection::new()
-    .add_dbcontext_keyed::<DbContext>("primary", |options| {
+    .add_dbcontext_keyed("primary", |options| {
         options.use_postgres("host=primary/db");
     })
-    .add_dbcontext_keyed::<DbContext>("logs", |options| {
+    .add_dbcontext_keyed("logs", |options| {
         options.use_sqlite("logs.db");
     })
     .build()
@@ -121,7 +121,7 @@ let provider = ServiceCollection::new()
 
 let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
 let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
-// primary manages Blog; logs manages LogEntry ‚Äî isolated by context_key
+// primary manages Blog; logs manages LogEntry ‚Ä?isolated by context_key
 ```
 
 ### SaveChanges Interceptors
@@ -139,7 +139,7 @@ impl ISaveChangesInterceptor for AuditInterceptor {
 }
 
 // Register
-.add_dbcontext::<DbContext>(|options| {
+.add_dbcontext(|options| {
     options
         .use_sqlite("app.db")
         .add_interceptor(AuditInterceptor);
@@ -231,7 +231,7 @@ let affected = ctx
     .await?;
 ```
 
-### Attach ‚Üí Modify ‚Üí SaveChanges
+### Attach ‚Ü?Modify ‚Ü?SaveChanges
 
 ```rust
 let mut blog = ctx.set::<Blog>().query().find(1).await?.unwrap();
@@ -253,8 +253,8 @@ ctx.set::<Blog>();
 
 ```rust
 let provider = ServiceCollection::new()
-    .add_dbcontext_keyed::<DbContext>("read", |o| o.use_postgres("host=replica/db"))
-    .add_dbcontext_keyed::<DbContext>("write", |o| o.use_postgres("host=primary/db"))
+    .add_dbcontext_keyed("read", |o| o.use_postgres("host=replica/db"))
+    .add_dbcontext_keyed("write", |o| o.use_postgres("host=primary/db"))
     .build()
     .unwrap();
 
@@ -266,56 +266,60 @@ let write: Arc<dyn IDbContext> = provider.get_keyed("write");
 
 ## Web Application Integration
 
-`DbContext` is **not** `Send + Sync` (because `save_changes(&mut self)` requires `&mut`). In web servers, use `Arc<Mutex<DbContext>>` (tokio Mutex for async):
+`DbContext` is registered as **Scoped** via `add_dbcontext` ‚Ä?each request gets its own
+instance (unit-of-work isolation). No locks needed.
 
 ```rust
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use rust_ef::db_context::DbContext;
+use rust_ef::db_context::IDbContext;
+use rust_ef::di::*;
+
+// Register as Scoped (‚â?ASP.NET Core AddDbContext<T>)
+let provider = ServiceCollection::new()
+    .add_dbcontext(|options| {
+        options.use_sqlite("data source=app.db");
+    })
+    .build()
+    .unwrap();
+
+// Each request creates a scope, resolving an isolated DbContext
+let scope = provider.create_scope();
+let ctx: Arc<dyn IDbContext> = scope.get();
 
 // Inject into handlers via DI
 #[derive(Inject)]
 pub struct MyHandler {
-    ctx: Arc<Mutex<DbContext>>,
+    ctx: Arc<dyn IDbContext>,
 }
 ```
 
-### Golden Rule: One Lock Per Request
+> **`Arc<Mutex<DbContext>>` is an anti-pattern**: it causes cross-request tracking
+> pollution ‚Ä?Thread A's `save_changes()` would commit Thread B's pending changes.
+> Use Scoped lifecycle instead, aligned with EFCore design.
 
-**Hold the lock across the entire write operation** ‚Äî do NOT acquire and release it multiple times:
+### Recommended patterns
 
 ```rust
-async fn handle(&self, req: CreateBlogRequest) -> Result<BlogModel> {
-    // ONE lock for the entire write flow
-    let mut ctx = self.ctx.lock().await;
+// ‚ú?Step-by-step let bindings ‚Ä?readable and debuggable
+let set = ctx.set::<Blog>();
+let expr = linq!(|b: Blog| b.slug == req.slug);
+let exists = set.filter(expr).first_or_default().await?;
 
-    // 1. Check uniqueness (within the lock ‚Äî no TOCTOU race)
-    let exists = linq!(ctx.set::<Blog>(), |b: Blog| b.slug == req.slug)
-        .first_or_default().await?;
-    if exists.is_some() {
-        return Err("Slug already exists");
-    }
+// ‚ú?linq! expression binding ‚Ä?filter logic independently named
+let expr = linq!(|b: Blog| b.rating > 3);
+let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 
-    // 2. Insert
-    let mut blog = req.to_entity(uid, now);
-    ctx.set::<Blog>().add(blog);
-    ctx.save_changes().await?;
-    // blog.id is now populated with the auto_increment value
+// ‚ú?Create flow: check ‚Ü?insert ‚Ü?save ‚Ü?re-query by PK (for navigation)
+let mut blog = req.to_entity(uid, now);
+ctx.set::<Blog>().add(blog);
+ctx.save_changes().await?;
+// blog.id is now populated ‚Ä?no need to re-query just for the ID
 
-    // 3. Re-query with navigation includes (by PRIMARY KEY, not slug)
-    let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
-        include b.category;
-    ).first_or_default().await?
-        .ok_or("Blog vanished after insert")?;
-
-    Ok(saved.to_model())
-}
+// Only re-query if you need navigation properties, and always by PRIMARY KEY
+let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
+    include b.category;
+).first_or_default().await?;
 ```
-
-> **After `save_changes()`**: auto-increment IDs are populated on the entity.
-> The change tracker is cleared, but the entity object itself has the correct
-> ID ‚Äî no need to re-query just for the ID. Only re-query if you need
-> navigation properties (`include`), and always re-query by **primary key**.
 
 ---
 
@@ -324,13 +328,13 @@ async fn handle(&self, req: CreateBlogRequest) -> Result<BlogModel> {
 ### Don't re-query just for the auto-increment ID
 
 ```rust
-// ‚ùå WRONG: id is already on the entity
+// ‚ù?WRONG: id is already on the entity
 ctx.set::<Blog>().add(blog);
 ctx.save_changes().await?;
 let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q).first_or_default().await?;
 let id = saved.unwrap().id;
 
-// ‚úÖ CORRECT: use the entity directly
+// ‚ú?CORRECT: use the entity directly
 ctx.set::<Blog>().add(blog);
 ctx.save_changes().await?;
 let id = blog.id; // already populated!
@@ -339,20 +343,20 @@ let id = blog.id; // already populated!
 ### Don't use string-based column names
 
 ```rust
-// ‚ùå WRONG: no compile-time checking
+// ‚ù?WRONG: no compile-time checking
 ctx.set::<Blog>().query().filter_column("slug", "=", "hello").to_list().await?;
 
-// ‚úÖ CORRECT: type-safe linq! expressions
+// ‚ú?CORRECT: type-safe linq! expressions
 linq!(ctx.set::<Blog>(), |b: Blog| b.slug == "hello").to_list().await?;
 ```
 
-### Don't repeat `is_deleted` in every query ‚Äî use global query filters
+### Don't repeat `is_deleted` in every query ‚Ä?use global query filters
 
 ```rust
-// ‚ùå WRONG: repetitive, easy to forget
+// ‚ù?WRONG: repetitive, easy to forget
 linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q && !b.is_deleted)
 
-// ‚úÖ CORRECT: register once at startup
+// ‚ú?CORRECT: register once at startup
 ctx.model().entity::<Blog>()
     .has_query_filter(linq!(filter |b: Blog| !b.is_deleted));
 // All queries now automatically exclude deleted records
@@ -361,27 +365,33 @@ ctx.model().entity::<Blog>()
 ctx.set::<Blog>().query_ignore_filters().to_list().await?;
 ```
 
-### Don't use `lock()` in tight scopes for write operations
+### Don't use `Arc<Mutex<DbContext>>` ‚Ä?use Scoped lifecycle
 
 ```rust
-// ‚ùå WRONG: three lock acquisitions, TOCTOU race between check and insert
-let exists = { let mut ctx = self.ctx.lock().await; ... }; // lock released
-{ let mut ctx = self.ctx.lock().await; ctx.set::<Blog>().add(blog); ... } // lock released
-let saved = { let mut ctx = self.ctx.lock().await; ... }; // lock released
+// ‚ù?WRONG: cross-request tracking pollution
+#[derive(Inject)]
+pub struct MyHandler {
+    ctx: Arc<Mutex<DbContext>>,
+}
 
-// ‚úÖ CORRECT: one lock for the entire write flow
-let mut ctx = self.ctx.lock().await;
-// check ‚Üí insert ‚Üí save ‚Üí re-query (if needed) ‚Üí release
+// ‚ú?CORRECT: Scoped registration, each request gets its own instance
+// main.rs:
+.add_dbcontext(|o| o.use_sqlite("app.db"));
+// handler:
+#[derive(Inject)]
+pub struct MyHandler {
+    ctx: Arc<dyn IDbContext>,
+}
 ```
 
 ### Prefer `detect_changes()` over `update()` for modifications
 
 ```rust
-// ‚ùå LESS PRECISE: update() marks the entire entity as Modified
+// ‚ù?LESS PRECISE: update() marks the entire entity as Modified
 ctx.set::<Blog>().update(blog);
 ctx.save_changes().await?;
 
-// ‚úÖ BETTER: detect_changes() only marks actually changed fields
+// ‚ú?BETTER: detect_changes() only marks actually changed fields
 blog.is_deleted = true;
 ctx.set::<Blog>().detect_changes();
 ctx.save_changes().await?;

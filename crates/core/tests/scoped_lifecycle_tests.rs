@@ -5,15 +5,15 @@
 //!   - different scope => different instance
 //!   - root provider resolution degrades to transient (new instance each call)
 
-use rust_ef::db_context::{DbContext, IDbContext};
-use rust_ef::di::{DbContextScopeExt, DbContextServiceCollectionExt, ServiceCollection};
+use rust_ef::db_context::IDbContext;
+use rust_ef::di::{DbContextServiceCollectionExt, ServiceCollection};
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 use std::sync::Arc;
 
 fn build_provider() -> Arc<rust_ef::di::ServiceProvider> {
     Arc::new(
         ServiceCollection::new()
-            .add_dbcontext::<DbContext>(|o| {
+            .add_dbcontext(|o| {
                 o.use_sqlite_in_memory();
             })
             .build()
@@ -24,7 +24,7 @@ fn build_provider() -> Arc<rust_ef::di::ServiceProvider> {
 #[test]
 fn same_scope_returns_same_instance() {
     let provider = build_provider();
-    let scope = provider.create_dbcontext_scope();
+    let scope = provider.create_scope();
     let ctx1: Arc<dyn IDbContext> = scope.get();
     let ctx2: Arc<dyn IDbContext> = scope.get();
     assert!(
@@ -36,8 +36,8 @@ fn same_scope_returns_same_instance() {
 #[test]
 fn different_scopes_return_different_instances() {
     let provider = build_provider();
-    let scope1 = provider.create_dbcontext_scope();
-    let scope2 = provider.create_dbcontext_scope();
+    let scope1 = provider.create_scope();
+    let scope2 = provider.create_scope();
     let ctx1: Arc<dyn IDbContext> = scope1.get();
     let ctx2: Arc<dyn IDbContext> = scope2.get();
     assert!(

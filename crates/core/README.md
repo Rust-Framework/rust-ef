@@ -27,7 +27,7 @@ use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
 let provider = ServiceCollection::new()
-    .add_dbcontext::<DbContext>(|o| o.use_sqlite("app.db"))
+    .add_dbcontext(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
 let ctx: Arc<dyn IDbContext> = provider.get();
@@ -50,7 +50,7 @@ lref/src/
 ├── tracking.rs     �?ChangeTracker (property-level snapshots)
 ├── relations.rs    �?BelongsTo, HasMany, HasOne (no trait bounds)
 ├── migration.rs    �?MigrationEngine
-├── di.rs           �?rust-dicore integration (add_dbcontext / FromDbContextOptions)
+├── di.rs           ?rust-dicore integration (add_dbcontext / add_dbcontext_keyed)
 ├── cache.rs        �?DbCache (Identity Map)
 └── error.rs        �?EFError, EFResult
 ```
@@ -135,7 +135,7 @@ use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
 let provider = ServiceCollection::new()
-    .add_dbcontext::<DbContext>(|o| o.use_sqlite("app.db"))
+    .add_dbcontext(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
 let ctx: Arc<dyn IDbContext> = provider.get();
@@ -147,7 +147,7 @@ let ctx: Arc<dyn IDbContext> = provider.get();
 
 ## QueryBuilder API
 
-All query operations go through the `linq!` macro — the string-based APIs (`include_named` / `order_by("col")` / `sum("col")` / `find_by_id` etc.) have been removed. The macro expands to `#[doc(hidden)]` `*_internal` methods at compile time.
+All query operations go through the `linq!` macro �?the string-based APIs (`include_named` / `order_by("col")` / `sum("col")` / `find_by_id` etc.) have been removed. The macro expands to `#[doc(hidden)]` `*_internal` methods at compile time.
 
 ```rust
 // Form A: filter closure (reusable BoolExpr or direct query)
