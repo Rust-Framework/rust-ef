@@ -264,6 +264,131 @@ let write: Arc<dyn IDbContext> = provider.get_keyed("write");
 
 ---
 
+## Web Application Integration
+
+`DbContext` is **not** `Send + Sync` (because `save_changes(&mut self)` requires `&mut`). In web servers, use `Arc<Mutex<DbContext>>` (tokio Mutex for async):
+
+```rust
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use rust_ef::db_context::DbContext;
+
+// Inject into handlers via DI
+#[derive(Inject)]
+pub struct MyHandler {
+    ctx: Arc<Mutex<DbContext>>,
+}
+```
+
+### Golden Rule: One Lock Per Request
+
+**Hold the lock across the entire write operation** — do NOT acquire and release it multiple times:
+
+```rust
+async fn handle(&self, req: CreateBlogRequest) -> Result<BlogModel> {
+    // ONE lock for the entire write flow
+    let mut ctx = self.ctx.lock().await;
+
+    // 1. Check uniqueness (within the lock — no TOCTOU race)
+    let exists = linq!(ctx.set::<Blog>(), |b: Blog| b.slug == req.slug)
+        .first_or_default().await?;
+    if exists.is_some() {
+        return Err("Slug already exists");
+    }
+
+    // 2. Insert
+    let mut blog = req.to_entity(uid, now);
+    ctx.set::<Blog>().add(blog);
+    ctx.save_changes().await?;
+    // blog.id is now populated with the auto_increment value
+
+    // 3. Re-query with navigation includes (by PRIMARY KEY, not slug)
+    let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
+        include b.category;
+    ).first_or_default().await?
+        .ok_or("Blog vanished after insert")?;
+
+    Ok(saved.to_model())
+}
+```
+
+> **After `save_changes()`**: auto-increment IDs are populated on the entity.
+> The change tracker is cleared, but the entity object itself has the correct
+> ID — no need to re-query just for the ID. Only re-query if you need
+> navigation properties (`include`), and always re-query by **primary key**.
+
+---
+
+## Common Pitfalls & Anti-Patterns
+
+### Don't re-query just for the auto-increment ID
+
+```rust
+// ❌ WRONG: id is already on the entity
+ctx.set::<Blog>().add(blog);
+ctx.save_changes().await?;
+let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q).first_or_default().await?;
+let id = saved.unwrap().id;
+
+// ✅ CORRECT: use the entity directly
+ctx.set::<Blog>().add(blog);
+ctx.save_changes().await?;
+let id = blog.id; // already populated!
+```
+
+### Don't use string-based column names
+
+```rust
+// ❌ WRONG: no compile-time checking
+ctx.set::<Blog>().query().filter_column("slug", "=", "hello").to_list().await?;
+
+// ✅ CORRECT: type-safe linq! expressions
+linq!(ctx.set::<Blog>(), |b: Blog| b.slug == "hello").to_list().await?;
+```
+
+### Don't repeat `is_deleted` in every query — use global query filters
+
+```rust
+// ❌ WRONG: repetitive, easy to forget
+linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q && !b.is_deleted)
+
+// ✅ CORRECT: register once at startup
+ctx.model().entity::<Blog>()
+    .has_query_filter(linq!(filter |b: Blog| !b.is_deleted));
+// All queries now automatically exclude deleted records
+
+// Admin queries that need to see all records:
+ctx.set::<Blog>().query_ignore_filters().to_list().await?;
+```
+
+### Don't use `lock()` in tight scopes for write operations
+
+```rust
+// ❌ WRONG: three lock acquisitions, TOCTOU race between check and insert
+let exists = { let mut ctx = self.ctx.lock().await; ... }; // lock released
+{ let mut ctx = self.ctx.lock().await; ctx.set::<Blog>().add(blog); ... } // lock released
+let saved = { let mut ctx = self.ctx.lock().await; ... }; // lock released
+
+// ✅ CORRECT: one lock for the entire write flow
+let mut ctx = self.ctx.lock().await;
+// check → insert → save → re-query (if needed) → release
+```
+
+### Prefer `detect_changes()` over `update()` for modifications
+
+```rust
+// ❌ LESS PRECISE: update() marks the entire entity as Modified
+ctx.set::<Blog>().update(blog);
+ctx.save_changes().await?;
+
+// ✅ BETTER: detect_changes() only marks actually changed fields
+blog.is_deleted = true;
+ctx.set::<Blog>().detect_changes();
+ctx.save_changes().await?;
+```
+
+---
+
 ## Full Documentation
 
 See [`docs/rust-ef/INDEX.md`](docs/rust-ef/INDEX.md) for the complete best-practices book covering:

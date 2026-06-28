@@ -62,7 +62,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// NOTE: provider is NOT Send when using `&mut self` methods.
-// `save_changes(&mut self)` requires mutable access.
-// The Arc<dyn IDbContext> pattern works for read-only operations.
-// For mutation, use `Arc::get_mut()` or resolve a fresh instance.
+// NOTE: In web applications, DbContext is injected as Arc<Mutex<DbContext>>
+// because save_changes(&mut self) requires &mut access.
+// Use tokio::sync::Mutex for async lock support:
+//
+//   #[derive(Inject)]
+//   pub struct MyHandler {
+//       ctx: Arc<Mutex<DbContext>>,
+//   }
+//
+// For DI registration, use add_dbcontext::<DbContext>(|o| o.use_sqlite(...))
+// which registers Arc<Mutex<DbContext>> as a singleton automatically.
+//
+// See templates/web-handler-crud.rs for complete handler patterns.

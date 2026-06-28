@@ -1,64 +1,68 @@
-// Template: DbContext usage  - ?type-map pattern, no entity-specific fields.
+// Template: DbContext usage — type-map pattern, auto-discovery, no entity-specific fields.
 //
 // DbContext stores entity sets in a HashMap<TypeId, Box<dyn Any>>.
-// Access via ctx.set::<Entity>()  - ?lazy-creates DbSet on first call.
+// Access via ctx.set::<Entity>() — lazy-creates DbSet on first call.
 // save_changes() auto-discovers all entity types via SetOps dispatchers.
+//
+// IMPORTANT: #[derive(EntityType)] auto-registers entities at compile time.
+// DbContext::from_options() automatically calls discover_entities().
+// No manual entity_meta() collection needed.
 
 use rust_ef::prelude::*;
-use rust_ef::db_context::{DbContext, DbContextOptions};
-use rust_ef_sqlite::SqliteProvider; // or postgres / mysql
-use std::sync::Arc;
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 #[tokio::main]
 async fn main() -> Result<(), EFError> {
-    // --- 1. Create provider and options ---
-    let provider = Arc::new(SqliteProvider::new("data source=app.db")?);
+    // --- 1. Build options with provider ---
+    let mut options = DbContextOptionsBuilder::new();
+    options.use_sqlite_in_memory();
 
-    let options = DbContextOptions::default();
-    // For DI-based construction, use provider_options instead (see di-setup.rs)
+    // --- 2. Create context (auto-discovers all #[derive(EntityType)] entities) ---
+    let mut ctx = DbContext::from_options(&options.build())?;
+    // discover_entities() is called automatically — no manual setup needed
 
-    // --- 2. Create context ---
-    let mut ctx = DbContext::from_options(&options)?;
-    // OR for manual provider setup:
-    // let mut ctx = DbContext { ... }; // internal fields are not public
+    // --- 3. Global query filters (soft delete) — register once at startup ---
+    ctx.model().entity::<Blog>()
+        .has_query_filter(linq!(filter |b: Blog| !b.is_deleted));
 
-    // --- 3. Run migration (CREATE TABLE) ---
-    let engine = rust_ef::migration::MigrationEngine::new(
-        rust_ef::migration::MigrationDialect::Sqlite
-    );
-    let metas = vec![Blog::entity_meta(), Post::entity_meta()];
-    let migration = engine.generate("InitialCreate", &metas, &None)?;
-    provider.execute_migration_command(&migration.up_sql).await?;
+    // --- 4. Create schema ---
+    ctx.ensure_created().await?;
 
-    // --- 4. Use entity sets ---
+    // --- 5. Use entity sets ---
     ctx.set::<Blog>().add(Blog {
-        blog_id: 0,
-        url: "https://example.com".into(),
-        rating: 5,
-        posts: HasMany::new(),
-    });
-
-    ctx.set::<Post>().add(Post {
-        post_id: 0,
+        id: 0,
+        slug: "hello-world".into(),
         title: "Hello World".into(),
-        content: Some("First post content".into()),
-        blog_id: 1,
-        blog: BelongsTo::new(),
+        content: "First blog post".into(),
+        tags: String::new(),
+        category_id: 1,
+        author_id: 1,
+        published_at: 0,
+        created_at: 0,
+        updated_at: 0,
+        created_id: None,
+        updated_id: None,
+        is_deleted: false,
+        category: BelongsTo::new(),
+        author: BelongsTo::new(),
+        comments: HasMany::new(),
     });
 
-    // --- 5. Save (auto-discovers all entity types) ---
+    // --- 6. Save (auto-discovers all entity types) ---
     let result = ctx.save_changes().await?;
     println!("Saved: {}", result);
 
-    // --- 6. Query ---
-    let posts = ctx.set::<Post>().query()
-        .filter_column("title", "LIKE", "%Hello%")
-        .order_by_column("title")
-        .to_list().await?;
-    println!("Found {} posts", posts.len());
+    // --- 7. Query with linq! (type-safe, recommended) ---
+    let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.rating > 3;
+        include b.category;
+        order_by b.created_at desc;
+    ).to_list().await?;
+    println!("Found {} blogs", blogs.len());
+
+    // --- 8. Simple PK lookup with query().find(id) ---
+    let blog = ctx.set::<Blog>().query().find(1).await?;
+    println!("Blog: {:?}", blog);
 
     Ok(())
 }
-
-// NOTE: The entity definitions (Blog, Post) are in a separate file.
-// See templates/entity-definition.rs for the complete entity pattern.
