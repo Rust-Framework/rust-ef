@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.0] — 2026-06-29 — Owned Resolution + rust-dicore 0.5.0
+
+Upgrades to `rust-dicore 0.5.0` with owned resolution support, eliminating the
+`Arc<DbContext>` + `&mut self` tension without interior mutability. Handlers
+now own `DbContext` directly via `get_owned()`, enabling idiomatic `&mut self`
+access — no `Arc<Mutex>`, no locks, no `unsafe`.
+
+### Added — v1.3
+
+- **Owned resolution**: `IServiceResolver::get_owned::<T>() -> T` bypasses
+  the DI cache and returns a fresh owned instance. `#[derive(Inject)]`
+  auto-detects bare `T` fields (vs `Arc<T>`) and resolves them via
+  `get_owned()`. Scoped/Transient services support owned resolution;
+  Singleton returns `None` (shared instance cannot be owned).
+- **End-to-end handler pattern**: `#[inject(scoped)]` + `ctx: DbContext`
+  (bare field) + `handle(&mut self)` + `self.ctx.set::<T>()` /
+  `self.ctx.save_changes()`. Each request gets a fresh `DbContext` —
+  aligned with EFCore + ASP.NET Core DI semantics.
+- **Keyed owned resolution**: `get_keyed_owned::<T>("key")` for multi-DB
+  scenarios.
+- 4 integration tests in `owned_injection_tests.rs` verifying the complete
+  flow: `#[inject(scoped)]` → `get_owned::<Handler>()` → `handle(&mut self)`
+  → `self.ctx.set::<T>().add()` → `self.ctx.save_changes()`.
+- 2 new scoped lifecycle tests: `owned_resolution_returns_fresh_instance`
+  and `owned_resolution_bypasses_scope_cache`.
+
+### Changed — v1.3
+
+- **`rust-dicore` upgraded from 0.3.2 to 0.5.0**: ServiceProvider is now the
+  root scope — Scoped services resolved from root are cached in
+  `root_scoped_cache` (same instance per call), matching EFCore semantics.
+  Previously root resolution degraded to transient.
+- **Handler templates**: All examples updated from `ctx: Arc<DbContext>` +
+  `handle(&self)` to `ctx: DbContext` (owned) + `handle(&mut self)` +
+  `self.ctx.` prefix. Fixed template bug where `ctx.` was used without
+  `self.` prefix in handler methods.
+- **`#[inject(scoped)]` requirement**: Handler trait impls MUST use
+  `#[inject(scoped)]`, not bare `#[inject]` (which defaults to Singleton
+  and causes captive dependency errors with the Scoped `DbContext`).
+- **Documentation**: Comprehensive updates across `di.rs`, `db_context.rs`,
+  `webapp-integration.md`, `quickstart.md`, `architecture.md`,
+  `advanced.md`, `pitfalls.md`, `di-registration.md`, `keyed-databases.md`,
+  `dbcontext-and-di.md`, `multi-tenancy-foundation.md`, README files, and
+  skill templates. Fixed UTF-8 encoding corruption in multiple doc files.
+
+### Migration — v1.2 → v1.3
+
+1. **Handler structs**: Change `ctx: Arc<DbContext>` to `ctx: DbContext`
+   (bare field). `#[derive(Inject)]` auto-detects and uses `get_owned()`.
+2. **Handler methods**: Change `handle(&self, ...)` to `handle(&mut self, ...)`
+   and prefix all context calls with `self.` (e.g. `self.ctx.set::<T>()`).
+3. **Handler registration**: Change `#[inject]` to `#[inject(scoped)]` on
+   trait impl blocks to avoid captive dependency errors.
+4. **Root resolution**: `provider.get::<DbContext>()` now returns the same
+  instance per call (root scope cache). Use `provider.get_owned::<DbContext>()`
+  for a fresh instance each call.
+5. **`Arc<DbContext>` still supported** for shared `&self`-only scenarios
+   (e.g. `ensure_created()`), but cannot call `set::<T>()` or
+   `save_changes()` (requires `&mut self`).
+
+---
+
 ## [1.1.0] — 2026-06-27 — Query Fidelity + Entity Auto-Discovery
 
 Enhances query expressiveness with lazy loading, native type binding fixes,
