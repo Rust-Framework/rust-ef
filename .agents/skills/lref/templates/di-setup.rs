@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // NOTE: In web applications, DbContext is injected as Arc<dyn IDbContext>
-// via Scoped lifecycle â€?each request gets its own instance, no locks needed.
+// via Scoped lifecycle â€” each request gets its own instance, no locks needed.
 // add_dbcontext registers as Scoped by default:
 //
 //   #[derive(Inject)]
