@@ -4,7 +4,7 @@
 
 | 场景 | 原因 |
 |------|------|
-| **Web 后端服务** | 与 `rust-webapp` 天然集成，`Arc<DbContext>` 可直接注入 Handler |
+| **Web 后端服务** | 与 `rust-webapp` 天然集成，`DbContext`（owned）可直接注入 Handler，`&mut self` 访问 |
 | **多实体关联业务** | `Include` / `ThenInclude` 处理一对多、多对多无需手写 JOIN |
 | **需要审计/软删除** | `ISaveChangesInterceptor` 在提交前后统一注入横切逻辑 |
 | **从 EF Core 迁移** | `DbContext`、`DbSet<T>`、`SaveChanges` 概念一一对应 |

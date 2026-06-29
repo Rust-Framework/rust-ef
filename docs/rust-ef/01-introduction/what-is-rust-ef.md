@@ -7,7 +7,7 @@
 | 目标 | 说明 |
 |------|------|
 | **类型安全** | 查询在编译期构造，`linq!` 宏将 Rust 表达式树翻译为参数化 SQL |
-| **DbContext 中心** | `DbContext` 是具体上下文类型，通过 `Arc<DbContext>` 注册到 DI 容器解析 |
+| **DbContext 中心** | `DbContext` 是具体上下文类型，通过 DI 注册为 Scoped，支持 owned（`get_owned()`）和 shared（`Arc`）两种解析 |
 | **EF Core 思维模型** | `DbContext` → `DbSet<T>` → `SaveChanges`，熟悉 .NET 生态的开发者可快速上手 |
 | **渐进式复杂度** | 简单查询一行完成，复杂场景拆分为多步 `let` 绑定 |
 

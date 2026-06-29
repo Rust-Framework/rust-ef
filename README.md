@@ -282,20 +282,29 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// Each request creates a scope, resolving an isolated DbContext
-let scope = provider.create_scope();
-let ctx: Arc<DbContext> = scope.get();
+// Each request creates a scope. Handlers own a fresh DbContext via get_owned().
+let mut ctx: DbContext = provider.get_owned();
 
-// Inject into handlers via DI
+// Inject into handlers via DI — bare T field → owned resolution
 #[derive(Inject)]
 pub struct MyHandler {
-    ctx: Arc<DbContext>,
+    ctx: DbContext,
+}
+
+#[inject]
+#[async_trait]
+impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
+    async fn handle(&mut self, req: MyRequest) -> Result<MyResponse> {
+        self.ctx.set::<Blog>().add(blog);
+        self.ctx.save_changes().await?;
+        // ...
+    }
 }
 ```
 
 > **`Arc<Mutex<DbContext>>` is an anti-pattern**: it causes cross-request tracking
-> pollution �?Thread A's `save_changes()` would commit Thread B's pending changes.
-> Use Scoped lifecycle instead, aligned with EFCore design.
+> pollution — Thread A's `save_changes()` would commit Thread B's pending changes.
+> Use owned resolution (`get_owned()`) or Scoped lifecycle instead, aligned with EFCore design.
 
 ### Recommended patterns
 
@@ -365,22 +374,32 @@ ctx.model().entity::<Blog>()
 ctx.set::<Blog>().query_ignore_filters().to_list().await?;
 ```
 
-### Don't use `Arc<Mutex<DbContext>>` �?use Scoped lifecycle
+### Don't use `Arc<Mutex<DbContext>>` — use owned resolution
 
 ```rust
-// �?WRONG: cross-request tracking pollution
+// ❌ WRONG: cross-request tracking pollution
 #[derive(Inject)]
 pub struct MyHandler {
     ctx: Arc<Mutex<DbContext>>,
 }
 
-// �?CORRECT: Scoped registration, each request gets its own instance
+// ✅ CORRECT: Scoped registration + owned resolution, each request gets its own instance
 // main.rs:
 .add_dbcontext(|o| o.use_sqlite("app.db"));
 // handler:
 #[derive(Inject)]
 pub struct MyHandler {
-    ctx: Arc<DbContext>,
+    ctx: DbContext,  // bare T → owned resolution via get_owned()
+}
+
+#[inject]
+#[async_trait]
+impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
+    async fn handle(&mut self, req: MyRequest) -> Result<MyResponse> {
+        self.ctx.set::<Blog>().add(blog);
+        self.ctx.save_changes().await?;
+        // ...
+    }
 }
 ```
 

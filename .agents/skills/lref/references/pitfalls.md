@@ -19,13 +19,16 @@ let provider = ServiceCollection::new()
     .add_dbcontext(|o| o.use_sqlite("app.db"))
     .build()?;
 
-// 每个请求创建独立 Scope
-let scope = provider.create_scope();
-let ctx: Arc<DbContext> = scope.get();
-// 同一 scope 内多次 get 返回同一实例（单位工作语义）
+// 推荐：owned 解析，直接 &mut self 访问，无需锁
+let mut ctx: DbContext = provider.get_owned();
+
+// 或：共享解析（同一 scope 内多次 get 返回同一实例）
+// let scope = provider.create_scope();
+// let ctx: Arc<DbContext> = scope.get();
 ```
 
 从根 `ServiceProvider` 直接解析退化为 transient（每次新实例），安全但失去单位工作语义。
+Handler 推荐使用 `get_owned()` 获取 owned `DbContext`，`#[derive(Inject)]` 自动检测 bare `T` 字段。
 
 ## P2: save_changes() 后不要回查 ID
 

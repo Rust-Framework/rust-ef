@@ -30,7 +30,7 @@ let provider = ServiceCollection::new()
     .add_dbcontext(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
-let ctx: Arc<DbContext> = provider.get();
+let mut ctx: DbContext = provider.get_owned();
 ```
 
 ---
@@ -137,7 +137,12 @@ let provider = ServiceCollection::new()
     .add_dbcontext(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
-let ctx: Arc<DbContext> = provider.get();
+// Owned (recommended): &mut self access, no locks
+let mut ctx: DbContext = provider.get_owned();
+
+// Shared (within a scope): Arc<DbContext>, &self only
+// let scope = provider.create_scope();
+// let ctx: Arc<DbContext> = scope.get();
 ```
 
 **Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider �?core stays fully decoupled.

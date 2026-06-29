@@ -5,7 +5,7 @@
 ## 2.1 上下文注册（对标 AddDbContext）
 
 在 `main.rs` 的 `Host::builder()` 中使用 `add_dbcontext`，框架按 **Scoped** 生命周期管理。每个请求获得独立的 `DbContext` 实例，天然隔离，无需锁。
-> **rust-webapp 自动管理 Scope**：HTTP 管道为每个请求自动创建 DI Scope，Handler 中的 `ctx: Arc<DbContext>` 由框架自动解析注入，**无需手动 `create_scope()`**。只有非请求场景（如 `IHostedService` 启动任务）才需要手动创建 Scope。
+> **rust-webapp 自动管理 Scope**：HTTP 管道为每个请求自动创建 DI Scope，Handler 通过 **owned 解析**（`get_owned()`）获得专属 `DbContext` 实例，**无需手动 `create_scope()`**。只有非请求场景（如 `IHostedService` 启动任务）才需要手动创建 Scope。
 ```rust
 // main.rs — 组合根
 use rust_webapp::*;
@@ -43,14 +43,13 @@ fn register_db_context(svc: ServiceCollection) -> ServiceCollection {
 **关键点：**
 - `add_dbcontext` 注册为 **Scoped**，不是 Singleton
 - 生产和开发环境自动切换数据库
-- 解析为 `Arc<DbContext>`，支持跨层传递
+- Handler 通过 owned 解析获得 `DbContext`（`&mut self` 访问），无需 `Arc<Mutex>`
 
 **启动时初始化（种子数据 + 建表 + 全局查询过滤器）：**
 
 ```rust
 // startup.rs — 实现 IHostedService，在 host 启动时执行
 use rust_ef::db_context::DbContext;
-// rust-webapp 自动管理 Scope，Handler 无需手动创建
 
 #[derive(Inject)]
 pub struct DbInitService {
@@ -61,9 +60,8 @@ pub struct DbInitService {
 #[async_trait]
 impl IHostedService for DbInitService {
     async fn start(&self) -> Result<()> {
-        // 创建独立 Scope，获得专有 DbContext
-        let scope = self.provider.create_scope();
-        let ctx: Arc<DbContext> = scope.get();
+        // Owned 解析：获得专有 DbContext，直接 &mut self 访问
+        let mut ctx: DbContext = self.provider.get_owned();
 
         // 注册种子数据到 model builder
         seed(&mut ctx);
@@ -86,10 +84,10 @@ impl IHostedService for DbInitService {
 
 ## 2.2 Handler 注入模式（≈ 构造函数注入）
 
-每个 Handler 是一个独立的 struct，通过 `#[derive(Inject)]` 声明依赖。`ctx: Arc<DbContext>` 字段由 DI 容器自动解析——类似 ASP.NET Core 的构造函数注入。
-> **无需管理 Scope**：rust-webapp 的 HTTP 管道为每个请求创建 Scope，Handler 在此 Scope 内解析，每个请求获得独立 `DbContext` 实例，天然隔离，无需锁。
+每个 Handler 是一个独立的 struct，通过 `#[derive(Inject)]` 声明依赖。`ctx: DbContext` 字段（bare T）由 DI 容器通过 **owned 解析**自动注入——类似 ASP.NET Core 的构造函数注入。
+> **无需管理 Scope**：rust-webapp 的 HTTP 管道为每个请求创建 Scope，Handler 在此 Scope 内通过 `get_owned::<Handler>()` 解析，每个请求获得独立 `DbContext` 实例，天然隔离，无需锁。
 >
-> **`&mut self` 要求**：`set::<T>()` 和 `save_changes()` 都需要 `&mut self`，因此 handler 方法使用 `&mut self`。
+> **Owned 解析 + `&mut self`**：`#[derive(Inject)]` 自动检测 bare `T` 字段并使用 `get_owned()` 解析。Handler 方法使用 `&mut self`，直接调用 `self.ctx.set::<T>()` / `self.ctx.save_changes()` —— 无需 `Arc<Mutex>`，无需内部可变性。
 
 **Handler 定义：**
 
@@ -97,27 +95,27 @@ impl IHostedService for DbInitService {
 // 每个操作一个 Handler struct（单一职责）
 #[derive(Inject)]
 pub struct ListBlogPostsHandler {
-    ctx: Arc<DbContext>,
+    ctx: DbContext,  // bare T → owned 解析
 }
 
 #[derive(Inject)]
 pub struct GetBlogPostHandler {
-    ctx: Arc<DbContext>,
+    ctx: DbContext,
 }
 
 #[derive(Inject)]
 pub struct CreateBlogPostHandler {
-    ctx: Arc<DbContext>,
+    ctx: DbContext,
 }
 
 #[derive(Inject)]
 pub struct UpdateBlogPostHandler {
-    ctx: Arc<DbContext>,
+    ctx: DbContext,
 }
 
 #[derive(Inject)]
 pub struct DeleteBlogPostHandler {
-    ctx: Arc<DbContext>,
+    ctx: DbContext,
 }
 ```
 
@@ -166,8 +164,8 @@ impl IRequest<BlogPostModel> for CreateBlogPostRequest {}
 #[inject]
 #[async_trait]
 impl IRequestHandler<ListBlogPostsRequest, Vec<BlogPostSummary>> for ListBlogPostsHandler {
-    async fn handle(&self, _: ListBlogPostsRequest) -> Result<Vec<BlogPostSummary>> {
-        let blogs = linq!(ctx.set::<Blog>(), |b: Blog| !b.is_deleted;
+    async fn handle(&mut self, _: ListBlogPostsRequest) -> Result<Vec<BlogPostSummary>> {
+        let blogs = linq!(self.ctx.set::<Blog>(), |b: Blog| !b.is_deleted;
             include b.category;
             include b.author;
             order_by b.published_at desc;
@@ -183,8 +181,8 @@ impl IRequestHandler<ListBlogPostsRequest, Vec<BlogPostSummary>> for ListBlogPos
 #[inject]
 #[async_trait]
 impl IRequestHandler<GetBlogPostRequest, BlogPostModel> for GetBlogPostHandler {
-    async fn handle(&self, req: GetBlogPostRequest) -> Result<BlogPostModel> {
-        let set = ctx.set::<Blog>();
+    async fn handle(&mut self, req: GetBlogPostRequest) -> Result<BlogPostModel> {
+        let set = self.ctx.set::<Blog>();
         let expr = linq!(|b: Blog| b.slug == req.slug);
         let blog = linq!(set, expr;
             include b.category;
@@ -202,9 +200,9 @@ impl IRequestHandler<GetBlogPostRequest, BlogPostModel> for GetBlogPostHandler {
 #[inject]
 #[async_trait]
 impl IRequestHandler<ListMyBlogPostsRequest, Vec<BlogPostSummary>> for ListMyBlogPostsHandler {
-    async fn handle(&self, req: ListMyBlogPostsRequest) -> Result<Vec<BlogPostSummary>> {
+    async fn handle(&mut self, req: ListMyBlogPostsRequest) -> Result<Vec<BlogPostSummary>> {
         let uid = uid_from_claims(req.claims.as_deref())?;
-        let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.author_id == uid;
+        let blogs = linq!(self.ctx.set::<Blog>(), |b: Blog| b.author_id == uid;
             include b.category;
             order_by b.published_at desc;
         ).to_list().await?;
@@ -219,14 +217,14 @@ impl IRequestHandler<ListMyBlogPostsRequest, Vec<BlogPostSummary>> for ListMyBlo
 #[inject]
 #[async_trait]
 impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHandler {
-    async fn handle(&self, req: CreateBlogPostRequest) -> Result<BlogPostModel> {
+    async fn handle(&mut self, req: CreateBlogPostRequest) -> Result<BlogPostModel> {
         // 1. 从 claims 提取用户 ID
         let uid = req.claims.as_ref()
             .and_then(|c| c.subject().parse::<i32>().ok())
             .ok_or_else(|| Error::Http("Not authenticated".into()))?;
 
         // 2. 唯一性校验
-        let set = ctx.set::<Blog>();
+        let set = self.ctx.set::<Blog>();
         let expr = linq!(|b: Blog| b.slug == req.slug);
         let exists = set.filter(expr).first_or_default().await?;
         if exists.is_some() {
@@ -236,12 +234,12 @@ impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHan
         // 3. 构造实体并插入
         let now = chrono::Utc::now().timestamp();
         let mut blog = req.to_entity(uid, now);
-        ctx.set::<Blog>().add(blog);
-        ctx.save_changes().await?;
+        self.ctx.set::<Blog>().add(blog);
+        self.ctx.save_changes().await?;
         // blog.id 已自动填充——无需回查
 
         // 4. 仅当需要导航属性时，按主键回查
-        let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
+        let saved = linq!(self.ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
             include b.category;
             include b.author;
         ).first_or_default().await?
@@ -259,9 +257,9 @@ impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHan
 #[inject]
 #[async_trait]
 impl IRequestHandler<UpdateBlogPostRequest, BlogPostModel> for UpdateBlogPostHandler {
-    async fn handle(&self, req: UpdateBlogPostRequest) -> Result<BlogPostModel> {
+    async fn handle(&mut self, req: UpdateBlogPostRequest) -> Result<BlogPostModel> {
         // 1. 加载现有实体
-        let set = ctx.set::<Blog>();
+        let set = self.ctx.set::<Blog>();
         let expr = linq!(|b: Blog| b.slug == req.slug);
         let mut blog = set.filter(expr).first_or_default().await?
             .ok_or_else(|| Error::NotFound(format!("Blog not found: {}", req.slug)))?;
@@ -278,11 +276,11 @@ impl IRequestHandler<UpdateBlogPostRequest, BlogPostModel> for UpdateBlogPostHan
         req.apply_to(&mut blog, uid, now);
 
         // 4. 保存（detect_changes 仅标记实际变更的字段）
-        ctx.set::<Blog>().detect_changes();
-        ctx.save_changes().await?;
+        self.ctx.set::<Blog>().detect_changes();
+        self.ctx.save_changes().await?;
 
         // 5. 回查导航属性（按主键）
-        let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
+        let saved = linq!(self.ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
             include b.category;
             include b.author;
         ).first_or_default().await?
@@ -299,9 +297,9 @@ impl IRequestHandler<UpdateBlogPostRequest, BlogPostModel> for UpdateBlogPostHan
 #[inject]
 #[async_trait]
 impl IRequestHandler<DeleteBlogPostRequest, String> for DeleteBlogPostHandler {
-    async fn handle(&self, req: DeleteBlogPostRequest) -> Result<String> {
+    async fn handle(&mut self, req: DeleteBlogPostRequest) -> Result<String> {
         // 1. 加载实体
-        let set = ctx.set::<Blog>();
+        let set = self.ctx.set::<Blog>();
         let expr = linq!(|b: Blog| b.slug == req.slug);
         let mut blog = set.filter(expr).first_or_default().await?
             .ok_or_else(|| Error::NotFound(format!("Blog not found: {}", req.slug)))?;
@@ -317,8 +315,8 @@ impl IRequestHandler<DeleteBlogPostRequest, String> for DeleteBlogPostHandler {
         blog.is_deleted = true;
         blog.updated_at = chrono::Utc::now().timestamp();
         blog.updated_id = Some(uid);
-        ctx.set::<Blog>().detect_changes();
-        ctx.save_changes().await?;
+        self.ctx.set::<Blog>().detect_changes();
+        self.ctx.save_changes().await?;
 
         Ok(format!("Deleted blog {}", req.slug))
     }
@@ -371,7 +369,7 @@ pub trait IBlogService: Send + Sync {
 // handlers/blog_service.rs — 实现层
 #[derive(Inject)]
 pub struct BlogService {
-    ctx: Arc<DbContext>,
+    ctx: DbContext,  // bare T → owned 解析
 }
 
 impl IBlogService for BlogService {
@@ -389,7 +387,7 @@ pub struct CreateBlogPostHandler {
 #[inject]
 #[async_trait]
 impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHandler {
-    async fn handle(&self, req: CreateBlogPostRequest) -> Result<BlogPostModel> {
+    async fn handle(&mut self, req: CreateBlogPostRequest) -> Result<BlogPostModel> {
         self.blog.create_post(req)
             .map_err(|e| Error::Internal(e))
     }
@@ -400,7 +398,7 @@ impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHan
 
 | 场景 | 建议 |
 |------|------|
-| 简单 CRUD，无需 Handler 复用 | 直接注入 `Arc<DbContext>` |
+| 简单 CRUD，无需 Handler 复用 | 直接注入 `DbContext`（owned） |
 | 复杂业务逻辑，多 Handler 共享 | 抽取 `I...Service`，注入 `Arc<dyn I...Service>` |
 | 需要 mock 测试 | 引入 Service 接口便于替换实现 |
 

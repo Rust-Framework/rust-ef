@@ -113,9 +113,11 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// 解析
-let primary: Arc<DbContext> = provider.get_keyed("primary");
-let logs: Arc<DbContext> = provider.get_keyed("logs");
+// 解析（owned — 推荐，&mut self 访问）
+let mut primary: DbContext = provider.get_keyed_owned("primary");
+let mut logs: DbContext = provider.get_keyed_owned("logs");
+// 或共享解析（Arc<DbContext>，&self 访问）
+// let primary: Arc<DbContext> = scope.get_keyed("primary");
 ```
 
 实体通过 `#[context("key")]` 标记归属的数据库上下文。
@@ -140,7 +142,7 @@ let logs: Arc<DbContext> = provider.get_keyed("logs");
 - 使用 `DbContext`（无需自定义 context 结构体）
 - 通过 `add_dbcontext(|o| o.use_sqlite(...))` 注册
 - 多数据库使用 `add_dbcontext_keyed("key", |o| ...)`
-- 从 DI 解析为 `Arc<DbContext>`
+- Handler 使用 owned 解析（`get_owned()` → `DbContext`，`&mut self` 访问）
 
 **不应做：**
 - 在 context 上定义 `DbSet<Blog>` 结构体字段

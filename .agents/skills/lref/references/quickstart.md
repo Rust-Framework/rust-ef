@@ -146,10 +146,11 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let ctx: Arc<DbContext> = provider.get();
+let mut ctx: DbContext = provider.get_owned();
 ```
 
-`add_dbcontext` 注册为 **Scoped** 生命周期：同一 DI Scope 内返回同一实例，不同 Scope 隔离。
-从根 `ServiceProvider` 直接解析退化为 transient（每次新实例），安全但失去单位工作语义。
+`add_dbcontext` 注册为 **Scoped** 生命周期。推荐使用 `get_owned()` 获取 owned `DbContext`，
+直接 `&mut self` 访问 `set::<T>()` / `save_changes()`，无需 `Arc<Mutex>`。
+也可使用 `scope.get()` 获取 `Arc<DbContext>`（共享，仅 `&self` 访问）。
 
 > 完整 DI 配置模板：`templates/di-setup.rs`

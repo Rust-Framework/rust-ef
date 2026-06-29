@@ -2,10 +2,9 @@
 //!
 //! ## Architecture
 //!
-//! `DbContext` is the concrete context type — used directly or via DI as
-//! `Arc<DbContext>`. Entity sets use a type-map: `ctx.set::<Blog>()`
-//! lazy-creates `DbSet<Blog>`. `SetOps<T>` dispatchers enable `save_changes()`
-//! to iterate all entity types.
+//! `DbContext` is the concrete context type. Entity sets use a type-map:
+//! `ctx.set::<Blog>()` lazy-creates `DbSet<Blog>`. `SetOps<T>` dispatchers
+//! enable `save_changes()` to iterate all entity types.
 //!
 //! ## Provider Factory
 //!
@@ -13,30 +12,47 @@
 //! provider extension methods (`use_sqlite`, `use_postgres`, `use_mysql`).
 //! `DbContext::from_options()` calls this factory to create the provider.
 //!
+//! ## Ownership and Mutation
+//!
+//! `DbContext` methods (`set::<T>()`, `save_changes()`, `detect_changes()`)
+//! require `&mut self` — this is idiomatic Rust, not a limitation. The DI
+//! integration (`add_dbcontext`) registers the context as **Scoped** and
+//! supports two resolution modes:
+//!
+//! - **Owned** (recommended for handlers): `provider.get_owned::<DbContext>()`
+//!   returns a fresh `DbContext` with direct `&mut self` access. Handlers
+//!   declare a bare `ctx: DbContext` field; `#[derive(Inject)]` auto-detects
+//!   owned fields and resolves them via `get_owned()`.
+//! - **Shared** (within a scope): `scope.get::<DbContext>()` returns
+//!   `Arc<DbContext>` for consumers that only need `&self` access.
+//!
+//! ```rust,ignore
+//! // Owned — idiomatic &mut self, no locks:
+//! let mut ctx: DbContext = provider.get_owned();
+//! ctx.set::<Blog>().add(blog);
+//! ctx.save_changes().await?;
+//! ```
+//!
 //! ## Thread Safety
 //!
 //! `DbContext` is **not** thread-safe — a single instance must not be shared
 //! across threads. This is a design decision (aligned with EFCore), not a
 //! limitation.
 //!
-//! **Correct usage**: create one DI `Scope` per request / operation:
+//! **Correct usage**: each request / operation owns its own `DbContext`
+//! instance (via `get_owned()` or a fresh scope):
 //! ```rust,ignore
-//! let scope = provider.create_scope();
-//! let ctx: Arc<DbContext> = scope.get();
-//! // Multiple `get` calls within the same scope return the same instance
-//! // (unit-of-work semantics).
+//! let mut ctx: DbContext = provider.get_owned();
+//! // This instance is exclusively owned — &mut self works directly.
 //! ```
 //!
-//! > **rust-webapp**: the HTTP pipeline manages scopes automatically.
-//! > Handlers simply declare `ctx: Arc<DbContext>` — no manual
-//! > `create_scope()` needed.
+//! > **rust-webapp**: the HTTP pipeline creates a DI scope per request and
+//! > resolves handlers via `get_owned::<Handler>()`. Handlers own a fresh
+//! > `DbContext` — no manual scope management needed.
 //!
 //! **Anti-pattern**: sharing via `Arc<Mutex<DbContext>>` causes tracking
 //! pollution — Thread A's `save_changes()` would commit Thread B's pending
-//! changes.
-//!
-//! Resolving `DbContext` directly from the root `ServiceProvider`
-//! degrades to a fresh instance per call (equivalent to transient).
+//! changes. Prefer owned resolution.
 
 use crate::change_executor::ChangeExecutor;
 use crate::db_set::DbSet;
