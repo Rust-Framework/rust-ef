@@ -5,7 +5,7 @@
 //! Before Task 2, `on_saving` received 0 entries even when N were pending.
 //! After Task 2 it reflects the actual pending count.
 
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::IEntityType;
 use rust_ef::error::EFResult;
 use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext};

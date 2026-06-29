@@ -3,7 +3,7 @@
 //!   any single set fails at the DB level (atomic across entity types).
 //! - Composite primary key CRUD lifecycle (insert / find / update / delete).
 
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::prelude::*;
 use rust_ef::provider::DbValue;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;

@@ -146,7 +146,7 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let ctx: Arc<dyn IDbContext> = provider.get();
+let ctx: Arc<DbContext> = provider.get();
 ```
 
 `add_dbcontext` 注册为 **Scoped** 生命周期：同一 DI Scope 内返回同一实例，不同 Scope 隔离。

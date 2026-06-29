@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod production_tests {
-    use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+    use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
     use rust_ef::entity::{
         IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
     };

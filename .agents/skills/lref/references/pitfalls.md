@@ -21,7 +21,7 @@ let provider = ServiceCollection::new()
 
 // 每个请求创建独立 Scope
 let scope = provider.create_scope();
-let ctx: Arc<dyn IDbContext> = scope.get();
+let ctx: Arc<DbContext> = scope.get();
 // 同一 scope 内多次 get 返回同一实例（单位工作语义）
 ```
 

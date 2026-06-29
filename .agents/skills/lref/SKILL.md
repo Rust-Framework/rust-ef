@@ -33,7 +33,7 @@ Rust Entity Framework（接口驱动、EFCore 风格 ORM）。本指南以**渐�
 | 主题 | 对标 ASP.NET Core | 要点 |
 |------|:---:|------|
 | 上下文注入 | `AddDbContext<T>` | `add_dbcontext` 注册为 **Scoped**，每个请求独立实例 |
-| Handler 注入 | 构造函数注入 | `Arc<dyn IDbContext>` 由 DI 容器自动解析 |
+| Handler 注入 | 构造函数注入 | `Arc<DbContext>` 由 DI 容器自动解析 |
 | 读取操作 | `[HttpGet]` | 分页 + 导航 + 排序一条 linq! 完成 |
 | 创建操作 | `[HttpPost]` | 唯一性校验 → 插入 → save_changes → 按主键回查导航 |
 | 更新操作 | `[HttpPut]` | 加载 → 权限校验 → 应用变更 → detect_changes → 保存 |

@@ -4,7 +4,7 @@
 //! Run with: `cargo bench -p rust-ef --bench bench_insert`
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::prelude::*;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 use tokio::runtime::Runtime;

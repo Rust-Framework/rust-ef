@@ -16,7 +16,7 @@
 //! **audit logging** — a complementary concern that interceptors CAN handle.
 
 use async_trait::async_trait;
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::error::EFResult;
 use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext};
 use rust_ef::prelude::*;

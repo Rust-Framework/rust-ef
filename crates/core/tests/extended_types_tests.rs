@@ -4,7 +4,7 @@
 
 #![cfg(all(feature = "chrono", feature = "uuid", feature = "decimal"))]
 
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::prelude::*;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 

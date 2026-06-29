@@ -1,6 +1,6 @@
 // Template: lrdi DI container setup with add_dbcontext<T>.
 //
-// Registers DbContext as Arc<dyn IDbContext> for interface-oriented resolution.
+// Registers DbContext as Arc<DbContext> for DI resolution.
 // Provider extensions (use_sqlite/use_postgres/use_mysql) inject factory closures
 // into DbContextOptions, so the core crate stays fully decoupled.
 //
@@ -48,27 +48,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = build_provider();
 
     // --- Default resolution (single DB) ---
-    let ctx: Arc<dyn IDbContext> = provider.get();
+    let ctx: Arc<DbContext> = provider.get();
 
     // --- Keyed resolution (multi-DB) ---
-    // let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
-    // let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
-
-    // --- Or resolve as concrete type (for set::<T>() access) ---
-    // let mut app_ctx = DbContext::from_options(&options)?;
-    // app_ctx.set::<Blog>().add(blog);
+    // let primary: Arc<DbContext> = provider.get_keyed("primary");
+    // let logs: Arc<DbContext> = provider.get_keyed("logs");
 
     ctx.save_changes().await?;
     Ok(())
 }
 
-// NOTE: In web applications, DbContext is injected as Arc<dyn IDbContext>
+// NOTE: In web applications, DbContext is injected as Arc<DbContext>
 // via Scoped lifecycle — each request gets its own instance, no locks needed.
 // add_dbcontext registers as Scoped by default:
 //
 //   #[derive(Inject)]
 //   pub struct MyHandler {
-//       ctx: Arc<dyn IDbContext>,
+//       ctx: Arc<DbContext>,
 //   }
 //
 // See templates/web-handler-crud.rs for complete handler patterns.

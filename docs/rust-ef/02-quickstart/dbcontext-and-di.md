@@ -29,7 +29,7 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let ctx: Arc<dyn IDbContext> = provider.get();
+let ctx: Arc<DbContext> = provider.get();
 ```
 
 ## 多数据库 Keyed 注册
@@ -45,8 +45,8 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
-let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+let primary: Arc<DbContext> = provider.get_keyed("primary");
+let logs: Arc<DbContext> = provider.get_keyed("logs");
 ```
 
 ## 关键�?
@@ -55,6 +55,6 @@ let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
 | `from_options()` 自动发现实体 | 自动调用 `discover_entities()`，无需手动注册元数�?|
 | `set::<T>()` �?lazy �?| 首次调用时创�?DbSet，重复调用返回同一实例 |
 | `ensure_created()` 可直接调�?| 元数据已�?`from_options()` 中自动就�?|
-| `Arc<dyn IDbContext>` �?object-safe �?| 支持 DI 容器�?trait object 解析 |
+| `Arc<DbContext>` �?具体上下文类型 �?| 支持 DI 容器�?trait object 解析 |
 
 下一节：[第一�?CRUD 流程](first-crud.md)

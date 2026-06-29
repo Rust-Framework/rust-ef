@@ -6,10 +6,9 @@
 
 ```
 User Application
-    ??? rust-dicore (DI 容器，解析 Arc<dyn IDbContext>)
+    ??? rust-dicore (DI 容器，解析 Arc<DbContext>)
     ??? rust-ef (ORM 核心)
-          DbContext (type-map 存储，无实体特定字段)
-          ??? IDbContext      ??object-safe session trait
+          DbContext (type-map 存储，无实体特定字段，具体上下文类型)
           ??? IDbSet<T>       ??实体集合（变更操作）
           ??? IQueryable<T>   ??查询入口
           ??? ISaveChangesInterceptor ??提交前后钩子

@@ -11,13 +11,13 @@
 
 use std::sync::Arc;
 use rust_ef::prelude::*;
-use rust_ef::db_context::IDbContext;
+use rust_ef::db_context::DbContext;
 
 // ── Handler struct (DI-injectable) ──
 
 #[derive(Inject)]
 pub struct BlogHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 
 // ── CREATE ──

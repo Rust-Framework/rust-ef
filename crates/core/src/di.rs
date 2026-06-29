@@ -1,4 +1,4 @@
-//! DI integration — `AddDbContext` on `rust-dicore`, interface-oriented.
+//! DI integration — `AddDbContext` on `rust-dicore`.
 //!
 //! Supports single-context (default) and multi-context (keyed) registration.
 //!
@@ -17,7 +17,7 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! let ctx: Arc<dyn IDbContext> = provider.get();
+//! let ctx: Arc<DbContext> = provider.get();
 //! ```
 //!
 //! # Multiple databases (keyed)
@@ -35,8 +35,8 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
-//! let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+//! let primary: Arc<DbContext> = provider.get_keyed("primary");
+//! let logs: Arc<DbContext> = provider.get_keyed("logs");
 //! ```
 //!
 //! ## Scoped Lifetime
@@ -49,15 +49,15 @@
 //! Use `create_scope()` to create a scope for unit-of-work isolation:
 //! ```rust,ignore
 //! let scope = provider.create_scope();
-//! let ctx: Arc<dyn IDbContext> = scope.get();
+//! let ctx: Arc<DbContext> = scope.get();
 //! // Multiple `get` calls within `scope` return the same instance.
 //! ```
 //!
 //! > **rust-webapp**: the HTTP pipeline automatically creates a scope per
-//! > request. Handlers receive `Arc<dyn IDbContext>` pre-resolved — no
+//! > request. Handlers receive `Arc<DbContext>` pre-resolved — no
 //! > manual scope management needed.
 
-use crate::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use crate::db_context::{DbContext, DbContextOptionsBuilder};
 use std::sync::Arc;
 
 /// Adds `add_dbcontext` and `add_dbcontext_keyed` to `rust_dicore::ServiceCollection`.
@@ -65,7 +65,7 @@ pub trait DbContextServiceCollectionExt {
     /// Registers a `DbContext` as **scoped** with default key.
     ///
     /// The closure receives a `DbContextOptionsBuilder` for provider
-    /// configuration. Resolves as `Arc<dyn IDbContext>`.
+    /// configuration. Resolves as `Arc<DbContext>`.
     fn add_dbcontext(
         self,
         configure: impl FnOnce(&mut DbContextOptionsBuilder) + Send + Sync + 'static,
@@ -102,7 +102,7 @@ impl DbContextServiceCollectionExt for ::rust_dicore::ServiceCollection {
 
         self.scoped(move |_| {
             let ctx = DbContext::from_options(&options).expect("Failed to create DbContext");
-            Arc::new(ctx) as Arc<dyn IDbContext>
+            Arc::new(ctx) as Arc<DbContext>
         })
     }
 
@@ -118,7 +118,7 @@ impl DbContextServiceCollectionExt for ::rust_dicore::ServiceCollection {
 
         self.keyed_scoped(key, move |_| {
             let ctx = DbContext::from_options(&options).expect("Failed to create DbContext");
-            Arc::new(ctx) as Arc<dyn IDbContext>
+            Arc::new(ctx) as Arc<DbContext>
         })
     }
 }

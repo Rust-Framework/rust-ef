@@ -11,7 +11,6 @@ mod entities;
 
 use context::create_blog_context;
 use entities::{Blog, Post};
-use rust_ef::db_context::IDbContext;
 use rust_ef::linq;
 use rust_ef::prelude::*;
 

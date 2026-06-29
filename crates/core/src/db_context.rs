@@ -1,12 +1,11 @@
-//! DbContext trait, DbContextOptions, and ChangeTracker ??the session / unit-of-work layer.
+//! DbContext, DbContextOptions, and ChangeTracker — the session / unit-of-work layer.
 //!
 //! ## Architecture
 //!
-//! `IDbContext` is object-safe ??no `Sized`, no associated type, no generic methods.
-//! This enables `dyn IDbContext` resolution from DI containers.
-//!
-//! Entity sets use a type-map: `ctx.set::<Blog>()` lazy-creates `DbSet<Blog>`.
-//! `SetOps<T>` dispatchers enable `save_changes()` to iterate all entity types.
+//! `DbContext` is the concrete context type — used directly or via DI as
+//! `Arc<DbContext>`. Entity sets use a type-map: `ctx.set::<Blog>()`
+//! lazy-creates `DbSet<Blog>`. `SetOps<T>` dispatchers enable `save_changes()`
+//! to iterate all entity types.
 //!
 //! ## Provider Factory
 //!
@@ -23,20 +22,20 @@
 //! **Correct usage**: create one DI `Scope` per request / operation:
 //! ```rust,ignore
 //! let scope = provider.create_scope();
-//! let ctx = scope.get::<dyn IDbContext>().unwrap();
+//! let ctx: Arc<DbContext> = scope.get();
 //! // Multiple `get` calls within the same scope return the same instance
 //! // (unit-of-work semantics).
 //! ```
 //!
 //! > **rust-webapp**: the HTTP pipeline manages scopes automatically.
-//! > Handlers simply declare `ctx: Arc<dyn IDbContext>` — no manual
+//! > Handlers simply declare `ctx: Arc<DbContext>` — no manual
 //! > `create_scope()` needed.
 //!
 //! **Anti-pattern**: sharing via `Arc<Mutex<DbContext>>` causes tracking
 //! pollution — Thread A's `save_changes()` would commit Thread B's pending
 //! changes.
 //!
-//! Resolving `dyn IDbContext` directly from the root `ServiceProvider`
+//! Resolving `DbContext` directly from the root `ServiceProvider`
 //! degrades to a fresh instance per call (equivalent to transient).
 
 use crate::change_executor::ChangeExecutor;
@@ -516,66 +515,37 @@ impl DbContext {
 }
 
 // ---------------------------------------------------------------------------
-// IDbContext ??object-safe
+// DbContext inherent methods (formerly on IDbContext / IDbContextExt traits)
 // ---------------------------------------------------------------------------
 
-#[async_trait::async_trait]
-pub trait IDbContext: Send + Sync {
-    fn provider(&self) -> &dyn IDatabaseProvider;
-    fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
-    fn change_tracker(&self) -> &ChangeTracker;
-    async fn save_changes(&mut self) -> EFResult<SaveChangesResult>;
-
-    async fn begin_transaction(&self) -> EFResult<Box<dyn IAsyncConnection>> {
-        let mut conn = self.provider().get_connection().await?;
-        conn.begin_transaction().await?;
-        Ok(conn)
-    }
-}
-
-#[async_trait::async_trait]
-pub trait IDbContextExt: IDbContext {
-    async fn use_transaction<F, Fut, R>(&self, f: F) -> EFResult<R>
-    where
-        F: FnOnce(&mut dyn IAsyncConnection) -> Fut + Send,
-        Fut: Future<Output = EFResult<R>> + Send,
-        R: Send,
-    {
-        let mut conn = self.provider().get_connection().await?;
-        conn.begin_transaction().await?;
-        match f(&mut *conn).await {
-            Ok(r) => {
-                conn.commit_transaction().await?;
-                Ok(r)
-            }
-            Err(e) => {
-                let _ = conn.rollback_transaction().await;
-                Err(e)
-            }
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl<T: IDbContext + Send + Sync> IDbContextExt for T {}
-
-// ---------------------------------------------------------------------------
-// DbContext implements IDbContext
-// ---------------------------------------------------------------------------
-
-#[async_trait::async_trait]
-impl IDbContext for DbContext {
-    fn provider(&self) -> &dyn IDatabaseProvider {
+impl DbContext {
+    /// Returns the database provider.
+    pub fn provider(&self) -> &dyn IDatabaseProvider {
         &*self.provider
     }
-    fn change_tracker_mut(&mut self) -> &mut ChangeTracker {
-        &mut self.change_tracker
-    }
-    fn change_tracker(&self) -> &ChangeTracker {
+
+    /// Returns a read-only reference to the change tracker.
+    pub fn change_tracker(&self) -> &ChangeTracker {
         &self.change_tracker
     }
 
-    async fn save_changes(&mut self) -> EFResult<SaveChangesResult> {
+    /// Returns a mutable reference to the change tracker.
+    pub fn change_tracker_mut(&mut self) -> &mut ChangeTracker {
+        &mut self.change_tracker
+    }
+
+    /// Begins a new transaction and returns the connection.
+    pub async fn begin_transaction(&self) -> EFResult<Box<dyn IAsyncConnection>> {
+        let mut conn = self.provider.get_connection().await?;
+        conn.begin_transaction().await?;
+        Ok(conn)
+    }
+
+    /// Saves all pending changes across all DbSets.
+    ///
+    /// Detects changes, runs interceptors, executes INSERT/UPDATE/DELETE in a
+    /// transaction, and clears tracked entries on success.
+    pub async fn save_changes(&mut self) -> EFResult<SaveChangesResult> {
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         for type_id in &type_ids {
             let set = self.sets.get_mut(type_id).unwrap();
@@ -659,6 +629,29 @@ impl IDbContext for DbContext {
             updated: total_updated,
             deleted: total_deleted,
         })
+    }
+
+    /// Executes a closure within a transaction.
+    ///
+    /// Commits on success, rolls back on error.
+    pub async fn use_transaction<F, Fut, R>(&self, f: F) -> EFResult<R>
+    where
+        F: FnOnce(&mut dyn IAsyncConnection) -> Fut + Send,
+        Fut: Future<Output = EFResult<R>> + Send,
+        R: Send,
+    {
+        let mut conn = self.provider.get_connection().await?;
+        conn.begin_transaction().await?;
+        match f(&mut *conn).await {
+            Ok(r) => {
+                conn.commit_transaction().await?;
+                Ok(r)
+            }
+            Err(e) => {
+                let _ = conn.rollback_transaction().await;
+                Err(e)
+            }
+        }
     }
 }
 

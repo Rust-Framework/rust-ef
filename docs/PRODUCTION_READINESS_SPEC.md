@@ -41,7 +41,7 @@ Alpha 2 (35%) ──► v0.3.5 (~60%) ──► Beta 1 (~85%) ──► v0.5 RC 
 | 能力 | 状态 | 位置 |
 |------|:----:|------|
 | 类型映射 `DbContext`（`ctx.set::<T>()`） | ✅ | `crates/core/src/db_context.rs` |
-| `Arc<dyn IDbContext>` DI | ✅ | `crates/core/src/di.rs` |
+| `Arc<DbContext>` DI | ✅ | `crates/core/src/di.rs` |
 | Keyed 多库注册 | ✅ | `add_dbcontext_keyed` |
 | Provider 工厂注入 | ✅ | `DbContextOptions::provider_factory` |
 | `SetOps<T>` 类型擦除 SaveChanges | ✅ | `db_context.rs` |

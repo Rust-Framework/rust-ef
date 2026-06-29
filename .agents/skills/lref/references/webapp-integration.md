@@ -5,7 +5,7 @@
 ## 2.1 上下文注册（对标 AddDbContext）
 
 在 `main.rs` 的 `Host::builder()` 中使用 `add_dbcontext`，框架按 **Scoped** 生命周期管理。每个请求获得独立的 `DbContext` 实例，天然隔离，无需锁。
-> **rust-webapp 自动管理 Scope**：HTTP 管道为每个请求自动创建 DI Scope，Handler 中的 `ctx: Arc<dyn IDbContext>` 由框架自动解析注入，**无需手动 `create_scope()`**。只有非请求场景（如 `IHostedService` 启动任务）才需要手动创建 Scope。
+> **rust-webapp 自动管理 Scope**：HTTP 管道为每个请求自动创建 DI Scope，Handler 中的 `ctx: Arc<DbContext>` 由框架自动解析注入，**无需手动 `create_scope()`**。只有非请求场景（如 `IHostedService` 启动任务）才需要手动创建 Scope。
 ```rust
 // main.rs — 组合根
 use rust_webapp::*;
@@ -43,13 +43,13 @@ fn register_db_context(svc: ServiceCollection) -> ServiceCollection {
 **关键点：**
 - `add_dbcontext` 注册为 **Scoped**，不是 Singleton
 - 生产和开发环境自动切换数据库
-- 解析为 `Arc<dyn IDbContext>`，支持 trait object 跨层传递
+- 解析为 `Arc<DbContext>`，支持跨层传递
 
 **启动时初始化（种子数据 + 建表 + 全局查询过滤器）：**
 
 ```rust
 // startup.rs — 实现 IHostedService，在 host 启动时执行
-use rust_ef::db_context::IDbContext;
+use rust_ef::db_context::DbContext;
 // rust-webapp 自动管理 Scope，Handler 无需手动创建
 
 #[derive(Inject)]
@@ -63,7 +63,7 @@ impl IHostedService for DbInitService {
     async fn start(&self) -> Result<()> {
         // 创建独立 Scope，获得专有 DbContext
         let scope = self.provider.create_scope();
-        let ctx: Arc<dyn IDbContext> = scope.get();
+        let ctx: Arc<DbContext> = scope.get();
 
         // 注册种子数据到 model builder
         seed(&mut ctx);
@@ -86,8 +86,10 @@ impl IHostedService for DbInitService {
 
 ## 2.2 Handler 注入模式（≈ 构造函数注入）
 
-每个 Handler 是一个独立的 struct，通过 `#[derive(Inject)]` 声明依赖。`ctx: Arc<dyn IDbContext>` 字段由 DI 容器自动解析——类似 ASP.NET Core 的构造函数注入。
-> **无需管理 Scope**：rust-webapp 的 HTTP 管道已为每个请求创建 Scope，Handler 只需声明 `ctx: Arc<dyn IDbContext>`，框架自动注入对应的实例。
+每个 Handler 是一个独立的 struct，通过 `#[derive(Inject)]` 声明依赖。`ctx: Arc<DbContext>` 字段由 DI 容器自动解析——类似 ASP.NET Core 的构造函数注入。
+> **无需管理 Scope**：rust-webapp 的 HTTP 管道为每个请求创建 Scope，Handler 在此 Scope 内解析，每个请求获得独立 `DbContext` 实例，天然隔离，无需锁。
+>
+> **`&mut self` 要求**：`set::<T>()` 和 `save_changes()` 都需要 `&mut self`，因此 handler 方法使用 `&mut self`。
 
 **Handler 定义：**
 
@@ -95,27 +97,27 @@ impl IHostedService for DbInitService {
 // 每个操作一个 Handler struct（单一职责）
 #[derive(Inject)]
 pub struct ListBlogPostsHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 
 #[derive(Inject)]
 pub struct GetBlogPostHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 
 #[derive(Inject)]
 pub struct CreateBlogPostHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 
 #[derive(Inject)]
 pub struct UpdateBlogPostHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 
 #[derive(Inject)]
 pub struct DeleteBlogPostHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 ```
 
@@ -369,7 +371,7 @@ pub trait IBlogService: Send + Sync {
 // handlers/blog_service.rs — 实现层
 #[derive(Inject)]
 pub struct BlogService {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 
 impl IBlogService for BlogService {
@@ -398,7 +400,7 @@ impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHan
 
 | 场景 | 建议 |
 |------|------|
-| 简单 CRUD，无需 Handler 复用 | 直接注入 `Arc<dyn IDbContext>` |
+| 简单 CRUD，无需 Handler 复用 | 直接注入 `Arc<DbContext>` |
 | 复杂业务逻辑，多 Handler 共享 | 抽取 `I...Service`，注入 `Arc<dyn I...Service>` |
 | 需要 mock 测试 | 引入 Service 接口便于替换实现 |
 

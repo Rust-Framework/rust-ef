@@ -114,8 +114,8 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // 解析
-let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
-let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+let primary: Arc<DbContext> = provider.get_keyed("primary");
+let logs: Arc<DbContext> = provider.get_keyed("logs");
 ```
 
 实体通过 `#[context("key")]` 标记归属的数据库上下文。
@@ -136,11 +136,11 @@ let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
 ## 3.7 架构规则
 
 **应做：**
-- 所有 trait 以 `I` 为前缀（`IDbContext`, `IEntityType`, `IDatabaseProvider`）
+- 实体相关 trait 以 `I` 为前缀（`IEntityType`, `IDatabaseProvider`）
 - 使用 `DbContext`（无需自定义 context 结构体）
 - 通过 `add_dbcontext(|o| o.use_sqlite(...))` 注册
 - 多数据库使用 `add_dbcontext_keyed("key", |o| ...)`
-- 从 DI 解析为 `Arc<dyn IDbContext>`
+- 从 DI 解析为 `Arc<DbContext>`
 
 **不应做：**
 - 在 context 上定义 `DbSet<Blog>` 结构体字段

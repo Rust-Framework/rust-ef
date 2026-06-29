@@ -5,8 +5,6 @@
 ## use_transaction
 
 ```rust
-use rust_ef::db_context::IDbContextExt;
-
 let result = ctx.use_transaction(|conn| async move {
     // 在事务内执行自定义 SQL
     conn.execute("UPDATE accounts SET balance = balance - ? WHERE id = ?", &[

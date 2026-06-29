@@ -111,8 +111,8 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// "primary" 上下文只管理 Blog（context_key = None�?// "logs" 上下文只管理 LogEntry（context_key = Some("logs")�?let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
-let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+// "primary" 上下文只管理 Blog（context_key = None�?// "logs" 上下文只管理 LogEntry（context_key = Some("logs")�?let primary: Arc<DbContext> = provider.get_keyed("primary");
+let logs: Arc<DbContext> = provider.get_keyed("logs");
 ```
 
 ### 过滤规则

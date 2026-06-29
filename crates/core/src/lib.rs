@@ -50,7 +50,7 @@ pub use rust_ef_macros::{column, entity, linq, EntityType};
 /// Re-exports of the most commonly used types.
 pub mod prelude {
     pub use crate::db_context::{
-        DbContext, DbContextOptions, DbContextOptionsBuilder, IDbContext, SaveChangesResult,
+        DbContext, DbContextOptions, DbContextOptionsBuilder, SaveChangesResult,
     };
     pub use crate::db_set::{DbSet, IDbSet};
     pub use crate::di::DbContextServiceCollectionExt;

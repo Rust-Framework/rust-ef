@@ -4,9 +4,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://rf2026.github.io/rust-ef/)
 
-Interface-oriented, EFCore-inspired ORM for Rust ??`IDbContext` / `IDbSet<T>` / `IEntityType` with rust-dicore DI integration.
+EFCore-inspired ORM for Rust ‚Äî `DbContext` / `DbSet<T>` / `IEntityType` with rust-dicore DI integration.
 
-**[Âú®Á∫øÊñáÊ°£](https://rf2026.github.io/rust-ef/)** ?? mdBook ÊûÑÂª∫ÁöÑÂÆåÊï¥ÂºÄÂèëËÄÖÊâãÂÜ?
+**[Âú®Á∫øÊñáÊ°£](https://rf2026.github.io/rust-ef/)** ?? mdBook ÊûÑÂª∫ÁöÑÂÆåÊï¥ÂºÄÂèëËÄÖÊâãÔøΩ?
 
 ---
 
@@ -47,7 +47,7 @@ pub struct Post {
 
 ### Fluent Configuration (auto-discovered)
 
-`#[derive(EntityType)]` auto-registers entities at compile time. `DbContext::from_options()` automatically discovers all registered entities and applies `#[entity(T)]` configurations ‚Ä?no manual `discover_entities()` call needed.
+`#[derive(EntityType)]` auto-registers entities at compile time. `DbContext::from_options()` automatically discovers all registered entities and applies `#[entity(T)]` configurations ÔøΩ?no manual `discover_entities()` call needed.
 
 ```rust
 #[derive(Default)]
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // 2. Resolve as interface
-    let ctx: Arc<dyn IDbContext> = provider.get();
+    let ctx: Arc<DbContext> = provider.get();
 
     ctx.save_changes().await?;
     Ok(())
@@ -97,12 +97,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Tag entities with `#[context("key")]` to isolate them per keyed `DbContext`. `#[entity(T, "key")]` applies configurations to the matching context only.
 
 ```rust
-// Default context entity ‚Ä?no #[context] attribute
+// Default context entity ÔøΩ?no #[context] attribute
 #[derive(Debug, Clone, EntityType)]
 #[table("blogs")]
 pub struct Blog { /* ... */ }
 
-// Keyed context entity ‚Ä?tagged for "logs" context
+// Keyed context entity ÔøΩ?tagged for "logs" context
 #[derive(Debug, Clone, EntityType)]
 #[context("logs")]
 #[table("log_entries")]
@@ -119,9 +119,9 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
-let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
-// primary manages Blog; logs manages LogEntry ‚Ä?isolated by context_key
+let primary: Arc<DbContext> = provider.get_keyed("primary");
+let logs: Arc<DbContext> = provider.get_keyed("logs");
+// primary manages Blog; logs manages LogEntry ÔøΩ?isolated by context_key
 ```
 
 ### SaveChanges Interceptors
@@ -231,7 +231,7 @@ let affected = ctx
     .await?;
 ```
 
-### Attach ‚Ü?Modify ‚Ü?SaveChanges
+### Attach ÔøΩ?Modify ÔøΩ?SaveChanges
 
 ```rust
 let mut blog = ctx.set::<Blog>().query().find(1).await?.unwrap();
@@ -258,23 +258,23 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let read: Arc<dyn IDbContext> = provider.get_keyed("read");
-let write: Arc<dyn IDbContext> = provider.get_keyed("write");
+let read: Arc<DbContext> = provider.get_keyed("read");
+let write: Arc<DbContext> = provider.get_keyed("write");
 ```
 
 ---
 
 ## Web Application Integration
 
-`DbContext` is registered as **Scoped** via `add_dbcontext` ‚Ä?each request gets its own
+`DbContext` is registered as **Scoped** via `add_dbcontext` ÔøΩ?each request gets its own
 instance (unit-of-work isolation). No locks needed.
 
 ```rust
 use std::sync::Arc;
-use rust_ef::db_context::IDbContext;
+use rust_ef::db_context::DbContext;
 use rust_ef::di::*;
 
-// Register as Scoped (‚â?ASP.NET Core AddDbContext<T>)
+// Register as Scoped (ÔøΩ?ASP.NET Core AddDbContext<T>)
 let provider = ServiceCollection::new()
     .add_dbcontext(|options| {
         options.use_sqlite("data source=app.db");
@@ -284,36 +284,36 @@ let provider = ServiceCollection::new()
 
 // Each request creates a scope, resolving an isolated DbContext
 let scope = provider.create_scope();
-let ctx: Arc<dyn IDbContext> = scope.get();
+let ctx: Arc<DbContext> = scope.get();
 
 // Inject into handlers via DI
 #[derive(Inject)]
 pub struct MyHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 ```
 
 > **`Arc<Mutex<DbContext>>` is an anti-pattern**: it causes cross-request tracking
-> pollution ‚Ä?Thread A's `save_changes()` would commit Thread B's pending changes.
+> pollution ÔøΩ?Thread A's `save_changes()` would commit Thread B's pending changes.
 > Use Scoped lifecycle instead, aligned with EFCore design.
 
 ### Recommended patterns
 
 ```rust
-// ‚ú?Step-by-step let bindings ‚Ä?readable and debuggable
+// ÔøΩ?Step-by-step let bindings ÔøΩ?readable and debuggable
 let set = ctx.set::<Blog>();
 let expr = linq!(|b: Blog| b.slug == req.slug);
 let exists = set.filter(expr).first_or_default().await?;
 
-// ‚ú?linq! expression binding ‚Ä?filter logic independently named
+// ÔøΩ?linq! expression binding ÔøΩ?filter logic independently named
 let expr = linq!(|b: Blog| b.rating > 3);
 let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 
-// ‚ú?Create flow: check ‚Ü?insert ‚Ü?save ‚Ü?re-query by PK (for navigation)
+// ÔøΩ?Create flow: check ÔøΩ?insert ÔøΩ?save ÔøΩ?re-query by PK (for navigation)
 let mut blog = req.to_entity(uid, now);
 ctx.set::<Blog>().add(blog);
 ctx.save_changes().await?;
-// blog.id is now populated ‚Ä?no need to re-query just for the ID
+// blog.id is now populated ÔøΩ?no need to re-query just for the ID
 
 // Only re-query if you need navigation properties, and always by PRIMARY KEY
 let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
@@ -328,13 +328,13 @@ let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
 ### Don't re-query just for the auto-increment ID
 
 ```rust
-// ‚ù?WRONG: id is already on the entity
+// ÔøΩ?WRONG: id is already on the entity
 ctx.set::<Blog>().add(blog);
 ctx.save_changes().await?;
 let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q).first_or_default().await?;
 let id = saved.unwrap().id;
 
-// ‚ú?CORRECT: use the entity directly
+// ÔøΩ?CORRECT: use the entity directly
 ctx.set::<Blog>().add(blog);
 ctx.save_changes().await?;
 let id = blog.id; // already populated!
@@ -343,20 +343,20 @@ let id = blog.id; // already populated!
 ### Don't use string-based column names
 
 ```rust
-// ‚ù?WRONG: no compile-time checking
+// ÔøΩ?WRONG: no compile-time checking
 ctx.set::<Blog>().query().filter_column("slug", "=", "hello").to_list().await?;
 
-// ‚ú?CORRECT: type-safe linq! expressions
+// ÔøΩ?CORRECT: type-safe linq! expressions
 linq!(ctx.set::<Blog>(), |b: Blog| b.slug == "hello").to_list().await?;
 ```
 
-### Don't repeat `is_deleted` in every query ‚Ä?use global query filters
+### Don't repeat `is_deleted` in every query ÔøΩ?use global query filters
 
 ```rust
-// ‚ù?WRONG: repetitive, easy to forget
+// ÔøΩ?WRONG: repetitive, easy to forget
 linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q && !b.is_deleted)
 
-// ‚ú?CORRECT: register once at startup
+// ÔøΩ?CORRECT: register once at startup
 ctx.model().entity::<Blog>()
     .has_query_filter(linq!(filter |b: Blog| !b.is_deleted));
 // All queries now automatically exclude deleted records
@@ -365,33 +365,33 @@ ctx.model().entity::<Blog>()
 ctx.set::<Blog>().query_ignore_filters().to_list().await?;
 ```
 
-### Don't use `Arc<Mutex<DbContext>>` ‚Ä?use Scoped lifecycle
+### Don't use `Arc<Mutex<DbContext>>` ÔøΩ?use Scoped lifecycle
 
 ```rust
-// ‚ù?WRONG: cross-request tracking pollution
+// ÔøΩ?WRONG: cross-request tracking pollution
 #[derive(Inject)]
 pub struct MyHandler {
     ctx: Arc<Mutex<DbContext>>,
 }
 
-// ‚ú?CORRECT: Scoped registration, each request gets its own instance
+// ÔøΩ?CORRECT: Scoped registration, each request gets its own instance
 // main.rs:
 .add_dbcontext(|o| o.use_sqlite("app.db"));
 // handler:
 #[derive(Inject)]
 pub struct MyHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 ```
 
 ### Prefer `detect_changes()` over `update()` for modifications
 
 ```rust
-// ‚ù?LESS PRECISE: update() marks the entire entity as Modified
+// ÔøΩ?LESS PRECISE: update() marks the entire entity as Modified
 ctx.set::<Blog>().update(blog);
 ctx.save_changes().await?;
 
-// ‚ú?BETTER: detect_changes() only marks actually changed fields
+// ÔøΩ?BETTER: detect_changes() only marks actually changed fields
 blog.is_deleted = true;
 ctx.set::<Blog>().detect_changes();
 ctx.save_changes().await?;
@@ -417,10 +417,10 @@ See [`docs/rust-ef/INDEX.md`](docs/rust-ef/INDEX.md) for the complete best-pract
 
 ```
 User Application
-    ??? rust-dicore (crates.io ??DI, resolves Arc<dyn IDbContext>)
+    ??? rust-dicore (crates.io ??DI, resolves Arc<DbContext>)
     ??? rust-ef (ORM, workspace: crates/core)
           DbContext (type-map set storage, no entity-specific fields)
-          ??? IDbContext     ??object-safe session trait
+          ??? DbContext       ??concrete session/unit-of-work type
           ??? IDbSet<T>      ??entity collection (mutation)
           ??? IQueryable<T>  ??query entry point
           ??? ISaveChangesInterceptor ??before/after save hooks
@@ -439,13 +439,10 @@ IEntityType ??? IFromRow
 
 IQueryable<T> ??? IDbSet<T>
 
-IDbContext (object-safe ??dyn compatible)
+DbContext (concrete context type)
     ??? provider() ??&dyn IDatabaseProvider
     ??? save_changes() ??SaveChangesResult
     ??? change_tracker() ??&ChangeTracker
-
-IDbContextExt (non-object-safe ??generic helpers)
-    ??? use_transaction(f)
 
 IDatabaseProvider
     ??? sql_generator() ??ISqlGenerator
@@ -468,10 +465,8 @@ FromDbContextOptions (DI bridge)
 | Decision | Rationale |
 |----------|-----------|
 | No `DbSet<Blog>` struct fields | `DbContext` uses type-map; sets lazy-created via `set::<T>()` |
-| `IDbContext` is object-safe | Enables `Arc<dyn IDbContext>` DI resolution |
 | `provider_factory` in options | Provider extensions inject factory closures; core stays decoupled |
 | `SetOps<T>` dispatchers | Type-erased `save_changes()` iterates all entity types |
-| Generic methods on `IDbContextExt` | Keeps core trait object-safe |
 | Keyed registration for multi-DB | `add_dbcontext_keyed` + `provider.get_keyed()` |
 | Interceptor pipeline | `options.add_interceptor(...)` for cross-cutting concerns |
 
@@ -485,7 +480,7 @@ FromDbContextOptions (DI bridge)
 | **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation, IN/NOT IN subqueries |
 | **Advanced Query** | CTE (`linq!(with ...)` syntax sugar), Window functions (10 kinds), Lazy Loading (opt-in) |
 | **Persistence** | `save_changes()`, parameterized queries, transactions |
-| **DI** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`, `Arc<dyn IDbContext>`, multi-DB context key isolation |
+| **DI** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`, `Arc<DbContext>`, multi-DB context key isolation |
 | **Interception** | `ISaveChangesInterceptor` ??on_saving/on_saved/on_save_failed hooks |
 | **Migrations** | Model diff, Up/Down SQL, history tracking, `MigrationStore` |
 | **CLI** | `rust-ef-cli`: `migration init/add/apply/revert/list/script`, `scaffold dbcontext` |

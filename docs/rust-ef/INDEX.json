@@ -74,7 +74,7 @@
             {
               "id": "dbcontext-and-di",
               "title": "DbContext 与 DI 注册",
-              "summary": "add_dbcontext、类型映射与 Arc<dyn IDbContext>",
+              "summary": "add_dbcontext、类型映射与 Arc<DbContext>",
               "readingTime": 12,
               "difficulty": "beginner"
             },
@@ -315,7 +315,7 @@
             {
               "id": "manual-transactions",
               "title": "手动事务与 use_transaction",
-              "summary": "IDbContextExt::use_transaction 与显式控制",
+              "summary": "DbContext::use_transaction 与显式控制",
               "readingTime": 10,
               "difficulty": "intermediate"
             },

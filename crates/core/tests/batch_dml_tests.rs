@@ -6,7 +6,7 @@
 //! stays ≤ 900 (SQLite's variable limit is 999). This minimizes round trips
 //! for bulk operations.
 
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};

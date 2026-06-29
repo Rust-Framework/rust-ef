@@ -14,9 +14,9 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// 查询走读�?let read_ctx: Arc<dyn IDbContext> = provider.get_keyed("read");
+// 查询走读�?let read_ctx: Arc<DbContext> = provider.get_keyed("read");
 
-// 写入走主�?let write_ctx: Arc<dyn IDbContext> = provider.get_keyed("write");
+// 写入走主�?let write_ctx: Arc<DbContext> = provider.get_keyed("write");
 ```
 
 ## 多租户示�?
@@ -79,8 +79,8 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let primary: Arc<dyn IDbContext> = provider.get_keyed("primary");
-let logs: Arc<dyn IDbContext> = provider.get_keyed("logs");
+let primary: Arc<DbContext> = provider.get_keyed("primary");
+let logs: Arc<DbContext> = provider.get_keyed("logs");
 // primary 只管�?Blog（context_key = None�?// logs 只管�?LogEntry（context_key = Some("logs")�?```
 
 ### 过滤规则

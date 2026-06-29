@@ -5,7 +5,7 @@
 //! metadata and that `ChangeExecutor` includes token columns in UPDATE/DELETE
 //! WHERE clauses, returning `ConcurrencyConflict` when 0 rows are affected.
 
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::IEntityType;
 use rust_ef::error::EFError;
 use rust_ef::prelude::*;

@@ -475,7 +475,7 @@ mod sqlite_crud {
 
     #[tokio::test]
     async fn test_ensure_created_and_deleted() {
-        use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+        use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
         use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
         let mut builder = DbContextOptionsBuilder::new();

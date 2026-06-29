@@ -5,7 +5,7 @@
 //! before `add()`). UPDATE/DELETE WHERE clauses are AND-ed with the filter
 //! (e.g. `tenant_id = ?`), so rows outside the filter boundary are untouched.
 
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::IEntityType;
 use rust_ef::error::EFError;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};

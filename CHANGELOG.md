@@ -5,6 +5,8 @@ All notable changes to **rust-ef** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> 注：IDbContext trait 已在后续版本中移除，本文档中相关内容仅作历史记录。
+
 ---
 
 ## [1.1.0] — 2026-06-27 — Query Fidelity + Entity Auto-Discovery

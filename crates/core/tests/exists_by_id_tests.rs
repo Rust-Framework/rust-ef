@@ -4,7 +4,7 @@
 //! return `true` for existing rows and `false` for missing rows, and work for
 //! both single and composite primary keys.
 
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::prelude::*;
 use rust_ef::provider::DbValue;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;

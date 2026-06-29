@@ -18,7 +18,7 @@
 //!   after `save_changes()` returns
 
 use async_trait::async_trait;
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::EntityState;
 use rust_ef::error::EFResult;
 use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext};

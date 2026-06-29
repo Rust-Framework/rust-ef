@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/lref)](https://crates.io/crates/lref)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
 
-Interface-oriented ORM core: traits, query builder, change tracking, migration engine, DI integration.
+EFCore-inspired ORM core: traits, query builder, change tracking, migration engine, DI integration.
 
 ---
 
@@ -30,7 +30,7 @@ let provider = ServiceCollection::new()
     .add_dbcontext(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
-let ctx: Arc<dyn IDbContext> = provider.get();
+let ctx: Arc<DbContext> = provider.get();
 ```
 
 ---
@@ -42,7 +42,7 @@ lref/src/
 ├── entity.rs       �?IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
 ├── metadata.rs     �?EntityTypeMeta, PropertyMeta, NavigationMeta
 ├── provider.rs     �?IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
-├── db_context.rs   �?IDbContext, IDbContextExt, DbContext, DbContextOptions
+├── db_context.rs   �?DbContext, DbContextOptions
 ├── db_set.rs       �?IDbSet<T>, DbSet<T>
 ├── query.rs        �?IQueryable<T>, QueryBuilder<T>
 ├── change_executor.rs �?ChangeExecutor (INSERT/UPDATE/DELETE)
@@ -68,20 +68,19 @@ pub trait IGetKeyValues: IEntityType { fn key_values(&self) -> HashMap<String, D
 pub trait IEntitySnapshot: IEntityType { fn snapshot(&self) -> HashMap<String, DbValue>; }
 ```
 
-### Session (object-safe)
+### Session (concrete context type)
 
 ```rust
-#[async_trait]
-pub trait IDbContext: Send + Sync {
-    fn provider(&self) -> &dyn IDatabaseProvider;
-    fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
-    fn change_tracker(&self) -> &ChangeTracker;
-    async fn save_changes(&mut self) -> EFResult<SaveChangesResult>;
+pub struct DbContext {
+    // type-map set storage, no entity-specific fields
 }
 
-#[async_trait]
-pub trait IDbContextExt: IDbContext {
-    async fn use_transaction<F, Fut, R>(&self, f: F) -> EFResult<R>;
+impl DbContext {
+    pub fn provider(&self) -> &dyn IDatabaseProvider;
+    pub fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
+    pub fn change_tracker(&self) -> &ChangeTracker;
+    pub async fn save_changes(&mut self) -> EFResult<SaveChangesResult>;
+    pub async fn use_transaction<F, Fut, R>(&self, f: F) -> EFResult<R>;
 }
 ```
 
@@ -138,7 +137,7 @@ let provider = ServiceCollection::new()
     .add_dbcontext(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
-let ctx: Arc<dyn IDbContext> = provider.get();
+let ctx: Arc<DbContext> = provider.get();
 ```
 
 **Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider �?core stays fully decoupled.

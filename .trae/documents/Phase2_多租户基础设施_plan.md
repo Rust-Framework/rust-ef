@@ -1,3 +1,5 @@
+> **注**：本文档中 `IDbContext` trait 相关内容已过时。该 trait 已被移除，`DbContext` 现为具体上下文类型，通过 DI 注册为 `Arc<DbContext>`。
+
 # Phase 2: 多租户基础设施与并发安全
 
 ## Context

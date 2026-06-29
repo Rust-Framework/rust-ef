@@ -1,3 +1,5 @@
+> **注**：本文档中 `IDbContext` trait 相关内容已过时。该 trait 已被移除，`DbContext` 现为具体上下文类型，通过 DI 注册为 `Arc<DbContext>`。
+
 # Phase 2（续）：多租户 DML 隔离收尾与线程安全契约
 
 > 本计划回应 `/plan` 指令中的两个核心诉求：

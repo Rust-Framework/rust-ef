@@ -1,6 +1,6 @@
 //! Shared CRUD test entity and helpers for multi-provider integration tests.
 
-use rust_ef::db_context::{DbContext, DbContextOptionsBuilder, IDbContext};
+use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};

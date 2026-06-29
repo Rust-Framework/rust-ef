@@ -17,7 +17,7 @@ let provider = ServiceCollection::new()
 
 // 每个请求创建独立 Scope
 let scope = provider.create_scope();
-let ctx: Arc<dyn IDbContext> = scope.get();
+let ctx: Arc<DbContext> = scope.get();
 // 同一 scope 内多�?get 返回同一实例
 ```
 
@@ -31,7 +31,7 @@ let ctx = Arc::new(Mutex::new(ctx));
 
 ### 从根 ServiceProvider 直接解析
 
-从根 `ServiceProvider` 直接 `get::<dyn IDbContext>()` 退化为每次新实例（等价 transient），安全但失去单位工作语义�?
+从根 `ServiceProvider` 直接 `get::<DbContext>()` 退化为每次新实例（等价 transient），安全但失去单位工作语义�?
 
 ## 2. 多租户查询过滤器
 

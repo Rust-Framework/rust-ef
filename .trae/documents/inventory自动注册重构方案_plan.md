@@ -1,3 +1,5 @@
+> **注**：本文档中 `IDbContext` trait 相关内容已过时。该 trait 已被移除，`DbContext` 现为具体上下文类型，通过 DI 注册为 `Arc<DbContext>`。
+
 # inventory 自动注册重构方案
 
 **版本**：v0.5.1

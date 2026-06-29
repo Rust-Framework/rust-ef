@@ -18,25 +18,25 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // 解析�?trait object
-let ctx: Arc<dyn IDbContext> = provider.get();
+let ctx: Arc<DbContext> = provider.get();
 ```
 
 ## �?Handler 中注�?
 
 ```rust
 use rust_webapp::*;
-use rust_ef::db_context::IDbContext;
+use rust_ef::db_context::DbContext;
 use std::sync::Arc;
 
 pub struct ListBlogsHandler {
-    ctx: Arc<dyn IDbContext>,
+    ctx: Arc<DbContext>,
 }
 
 #[handler(inject)]
 #[async_trait]
 impl IRequestHandler<ListBlogsRequest, Vec<BlogDto>> for ListBlogsHandler {
     async fn handle(&self, _req: ListBlogsRequest) -> Result<Vec<BlogDto>> {
-        // 注意：IDbContext �?object-safe，但 set() 需�?&mut DbContext
+        // 注意：DbContext �?具体上下文类型，但 set() 需�?&mut DbContext
         // 实际使用时可向下转换或封�?Repository
         Ok(vec![])
     }
@@ -63,7 +63,7 @@ impl BlogRepository {
 
 | 实践 | 说明 |
 |------|------|
-| `Arc<dyn IDbContext>` 适合跨层传�?| object-safe，可�?trait 边界中使�?|
+| `Arc<DbContext>` 适合跨层传�?| 具体上下文类型，可�?trait 边界中使�?|
 | 实际查询时需�?`&mut DbContext` | 考虑�?Service/Repository 层持有具体类�?|
 | 每个请求一�?DbContext | 避免长生命周期导致的并发问题 |
 
