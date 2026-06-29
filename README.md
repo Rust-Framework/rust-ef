@@ -84,8 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap();
 
-    // 2. Resolve as interface
-    let ctx: Arc<DbContext> = provider.get();
+    // 2. Resolve as owned DbContext (&mut self access, no locks)
+    let mut ctx: DbContext = provider.get_owned();
 
     ctx.save_changes().await?;
     Ok(())
@@ -291,7 +291,7 @@ pub struct MyHandler {
     ctx: DbContext,
 }
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
     async fn handle(&mut self, req: MyRequest) -> Result<MyResponse> {
@@ -392,7 +392,7 @@ pub struct MyHandler {
     ctx: DbContext,  // bare T → owned resolution via get_owned()
 }
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
     async fn handle(&mut self, req: MyRequest) -> Result<MyResponse> {

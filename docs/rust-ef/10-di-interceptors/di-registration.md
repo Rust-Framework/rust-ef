@@ -38,7 +38,7 @@ pub struct ListBlogsHandler {
     ctx: DbContext,  // bare T → owned 解析
 }
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<ListBlogsRequest, Vec<BlogDto>> for ListBlogsHandler {
     async fn handle(&mut self, _req: ListBlogsRequest) -> Result<Vec<BlogDto>> {

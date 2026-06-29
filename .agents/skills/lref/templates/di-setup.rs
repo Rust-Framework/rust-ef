@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //       ctx: DbContext,  // bare T → owned resolution
 //   }
 //
-//   #[inject]
+//   #[inject(scoped)]
 //   #[async_trait]
 //   impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
 //       async fn handle(&mut self, req: MyRequest) -> Result<MyResponse> {

@@ -56,7 +56,7 @@ pub struct DbInitService {
     provider: Arc<ServiceProvider>,
 }
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IHostedService for DbInitService {
     async fn start(&self) -> Result<()> {
@@ -88,6 +88,8 @@ impl IHostedService for DbInitService {
 > **无需管理 Scope**：rust-webapp 的 HTTP 管道为每个请求创建 Scope，Handler 在此 Scope 内通过 `get_owned::<Handler>()` 解析，每个请求获得独立 `DbContext` 实例，天然隔离，无需锁。
 >
 > **Owned 解析 + `&mut self`**：`#[derive(Inject)]` 自动检测 bare `T` 字段并使用 `get_owned()` 解析。Handler 方法使用 `&mut self`，直接调用 `self.ctx.set::<T>()` / `self.ctx.save_changes()` —— 无需 `Arc<Mutex>`，无需内部可变性。
+>
+> **`#[inject(scoped)]` 必须**：`#[inject]` 默认注册为 Singleton，与 Scoped `DbContext` 形成 captive dependency。Handler 的 trait impl 必须使用 `#[inject(scoped)]`。
 
 **Handler 定义：**
 
@@ -161,7 +163,7 @@ impl IRequest<BlogPostModel> for CreateBlogPostRequest {}
 **列表查询（分页 + 导航 + 排序）：**
 
 ```rust
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<ListBlogPostsRequest, Vec<BlogPostSummary>> for ListBlogPostsHandler {
     async fn handle(&mut self, _: ListBlogPostsRequest) -> Result<Vec<BlogPostSummary>> {
@@ -178,7 +180,7 @@ impl IRequestHandler<ListBlogPostsRequest, Vec<BlogPostSummary>> for ListBlogPos
 **单条查询（按 slug / id）：**
 
 ```rust
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<GetBlogPostRequest, BlogPostModel> for GetBlogPostHandler {
     async fn handle(&mut self, req: GetBlogPostRequest) -> Result<BlogPostModel> {
@@ -197,7 +199,7 @@ impl IRequestHandler<GetBlogPostRequest, BlogPostModel> for GetBlogPostHandler {
 **按认证用户过滤（claims 注入）：**
 
 ```rust
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<ListMyBlogPostsRequest, Vec<BlogPostSummary>> for ListMyBlogPostsHandler {
     async fn handle(&mut self, req: ListMyBlogPostsRequest) -> Result<Vec<BlogPostSummary>> {
@@ -214,7 +216,7 @@ impl IRequestHandler<ListMyBlogPostsRequest, Vec<BlogPostSummary>> for ListMyBlo
 ## 2.4 创建操作（Create）
 
 ```rust
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHandler {
     async fn handle(&mut self, req: CreateBlogPostRequest) -> Result<BlogPostModel> {
@@ -254,7 +256,7 @@ impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHan
 ## 2.5 更新操作（Update）
 
 ```rust
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<UpdateBlogPostRequest, BlogPostModel> for UpdateBlogPostHandler {
     async fn handle(&mut self, req: UpdateBlogPostRequest) -> Result<BlogPostModel> {
@@ -294,7 +296,7 @@ impl IRequestHandler<UpdateBlogPostRequest, BlogPostModel> for UpdateBlogPostHan
 ## 2.6 删除操作（Delete — 软删除）
 
 ```rust
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<DeleteBlogPostRequest, String> for DeleteBlogPostHandler {
     async fn handle(&mut self, req: DeleteBlogPostRequest) -> Result<String> {
@@ -384,7 +386,7 @@ pub struct CreateBlogPostHandler {
     blog: Arc<dyn IBlogService>,  // 注入服务，而非直接注入 DbContext
 }
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHandler {
     async fn handle(&mut self, req: CreateBlogPostRequest) -> Result<BlogPostModel> {

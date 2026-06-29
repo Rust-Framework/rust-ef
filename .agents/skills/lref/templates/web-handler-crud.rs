@@ -22,7 +22,7 @@ pub struct BlogHandler {
 
 // ── CREATE ──
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<CreateBlogRequest, BlogModel> for BlogHandler {
     async fn handle(&mut self, req: CreateBlogRequest) -> Result<BlogModel> {
@@ -55,7 +55,7 @@ impl IRequestHandler<CreateBlogRequest, BlogModel> for BlogHandler {
 
 // ── READ (list) ──
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<ListBlogRequest, Paginated<BlogModel>> for BlogHandler {
     async fn handle(&mut self, req: ListBlogRequest) -> Result<Paginated<BlogModel>> {
@@ -71,7 +71,7 @@ impl IRequestHandler<ListBlogRequest, Paginated<BlogModel>> for BlogHandler {
 
 // ── READ (single) ──
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<GetBlogRequest, BlogModel> for BlogHandler {
     async fn handle(&mut self, req: GetBlogRequest) -> Result<BlogModel> {
@@ -84,7 +84,7 @@ impl IRequestHandler<GetBlogRequest, BlogModel> for BlogHandler {
 
 // ── UPDATE ──
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<UpdateBlogRequest, BlogModel> for BlogHandler {
     async fn handle(&mut self, req: UpdateBlogRequest) -> Result<BlogModel> {
@@ -113,7 +113,7 @@ impl IRequestHandler<UpdateBlogRequest, BlogModel> for BlogHandler {
 
 // ── DELETE (soft delete) ──
 
-#[inject]
+#[inject(scoped)]
 #[async_trait]
 impl IRequestHandler<DeleteBlogRequest, String> for BlogHandler {
     async fn handle(&mut self, req: DeleteBlogRequest) -> Result<String> {

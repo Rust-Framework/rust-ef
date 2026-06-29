@@ -31,14 +31,16 @@
 //! ```
 //!
 //! Handlers declare a bare `ctx: DbContext` field — `#[derive(Inject)]`
-//! auto-detects owned fields and resolves them via `get_owned()`:
+//! auto-detects owned fields and resolves them via `get_owned()`.
+//! Use `#[inject(scoped)]` (not bare `#[inject]`, which defaults to Singleton)
+//! to avoid captive dependency errors with the Scoped `DbContext`:
 //! ```rust,ignore
 //! #[derive(Inject)]
 //! pub struct CreateBlogHandler {
 //!     ctx: DbContext,            // bare T → owned resolution
 //! }
 //!
-//! #[inject]
+//! #[inject(scoped)]
 //! #[async_trait]
 //! impl IRequestHandler<CreateBlogRequest, BlogModel> for CreateBlogHandler {
 //!     async fn handle(&mut self, req: CreateBlogRequest) -> Result<BlogModel> {
