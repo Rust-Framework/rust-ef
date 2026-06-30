@@ -33,13 +33,13 @@ User Application
 
 ```toml
 [dependencies]
-rust-ef = { version = "1.1", features = ["chrono", "uuid", "decimal"] }
-rust-ef-sqlite = "1.1"
-rust-dicore = "0.2"
+rust-ef = { version = "1.3", features = ["chrono", "uuid", "decimal"] }
+rust-ef-sqlite = "1.3"
+rust-dicore = "0.5.1"
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
-rust-ef-cli = "1.1"
+rust-ef-cli = "1.3"
 ```
 
 ## 可选 Feature（v0.5 已实现）

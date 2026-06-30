@@ -2,7 +2,7 @@
 //
 // KEY RULES:
 // 1. add_dbcontext registers as Scoped — each request gets its own DbContext instance
-// 2. Handlers own DbContext directly (bare field) — #[derive(Inject)] resolves via get_owned()
+// 2. Handlers own DbContext directly — bare field marked #[inject(owned)] resolves via get_owned()
 // 3. handle(&mut self) — set::<T>() and save_changes() require &mut self
 // 4. After save_changes(), auto_increment IDs are populated on the entity
 // 5. Re-query by PRIMARY KEY (not slug/email) when you need navigation includes
@@ -17,7 +17,8 @@ use rust_ef::db_context::DbContext;
 
 #[derive(Inject)]
 pub struct BlogHandler {
-    ctx: DbContext,  // bare T → owned resolution via get_owned()
+    #[inject(owned)]
+    ctx: DbContext,  // bare T + #[inject(owned)] → get_owned()
 }
 
 // ── CREATE ──

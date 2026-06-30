@@ -11,12 +11,12 @@
 
 use rust_ef::di::*;                                  // DbContextServiceCollectionExt
 use rust_ef::db_context::DbContext;
-use rust_dicore::ServiceCollection;
+use rust_dicore::*;                                  // ServiceCollection, ServiceProvider
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;  // .use_sqlite()
 // use rust_ef_postgres::DbContextOptionsBuilderExt as _; // .use_postgres()
 // use rust_ef_mysql::DbContextOptionsBuilderExt as _;    // .use_mysql()
 
-fn build_provider() -> rust_dicore::ServiceProvider {
+fn build_provider() -> ServiceProvider {
     ServiceCollection::new()
         // --- Register additional services (optional) ---
         // .singleton(|_| Arc::new(Logger::new()))
@@ -66,12 +66,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // NOTE: In web applications, handlers own DbContext directly via owned
-// resolution. #[derive(Inject)] auto-detects bare T fields and resolves
-// them via get_owned(). Each request gets a fresh instance — no locks needed:
+// resolution. Mark bare T fields with #[inject(owned)] so #[derive(Inject)]
+// resolves them via get_owned(). Unmarked fields fall back to Default::default().
+// Each request gets a fresh instance — no locks needed:
 //
 //   #[derive(Inject)]
 //   pub struct MyHandler {
-//       ctx: DbContext,  // bare T → owned resolution
+//       #[inject(owned)]
+//       ctx: DbContext,  // bare T + #[inject(owned)] → get_owned()
 //   }
 //
 //   #[inject(scoped)]

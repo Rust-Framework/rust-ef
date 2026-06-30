@@ -55,7 +55,7 @@ Multiple interceptors run in registration order; the first error aborts the chai
 
 ## Multi-DB Context (Keyed Registration)
 
-Uses lrdi's `keyed_transient` mechanism:
+Uses lrdi's `keyed_scoped` mechanism:
 
 ```rust
 .add_dbcontext_keyed("primary", |o| o.use_postgres(...))

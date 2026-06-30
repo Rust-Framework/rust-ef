@@ -20,7 +20,7 @@ ctx.ensure_created().await?;  // 直接建表，元数据已就绪
 ## DI 注册（推荐）
 
 ```rust
-use rust_dicore::ServiceCollection;
+use rust_dicore::*;
 use rust_ef::di::*;
 use rust_ef::db_context::DbContext;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;

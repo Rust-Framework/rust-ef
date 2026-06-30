@@ -1,14 +1,14 @@
 //! End-to-end owned injection tests.
 //!
 //! Verifies the complete flow:
-//!   add_dbcontext (scoped) → #[inject] auto-registers + auto-detects bare
-//!   DbContext field → get_owned::<Handler>() → handle(&mut self) →
+//!   add_dbcontext (scoped) → #[inject] auto-registers + #[inject(owned)] on
+//!   bare DbContext field → get_owned::<Handler>() → handle(&mut self) →
 //!   self.ctx.set::<T>()
 //!
 //! This proves the framework is ready for the EFCore-aligned handler pattern
 //! without Arc<Mutex> or interior mutability.
 
-use rust_dicore::{inject, ServiceCollection};
+use rust_dicore::*;
 use rust_ef::db_context::DbContext;
 use rust_ef::di::DbContextServiceCollectionExt as _;
 use rust_ef::prelude::*;
@@ -33,12 +33,14 @@ struct Widget {
 //   1. Generates a constructor that resolves fields via DI
 //   2. Registers the type via inventory for ServiceCollection::from_injected()
 //
-// The bare `ctx: DbContext` field is auto-classified as Owned → resolved via
-// get_owned(), giving the handler exclusive &mut self access.
+// The bare `ctx: DbContext` field MUST be marked `#[inject(owned)]` so the
+// constructor resolves it via get_owned(), giving the handler exclusive
+// &mut self access. Unmarked fields fall back to Default::default().
 
 #[inject(scoped)]
 struct CreateWidgetHandler {
-    ctx: DbContext, // bare T → owned resolution via get_owned()
+    #[inject(owned)]
+    ctx: DbContext, // bare T + #[inject(owned)] → get_owned()
 }
 
 impl CreateWidgetHandler {
@@ -62,7 +64,8 @@ impl CreateWidgetHandler {
 
 #[inject(scoped)]
 struct SharedContextHandler {
-    ctx: Arc<DbContext>, // Arc<T> → shared resolution via get()
+    #[inject]
+    ctx: Arc<DbContext>, // Arc<T> + #[inject] → shared resolution via get()
 }
 
 impl SharedContextHandler {
@@ -73,7 +76,7 @@ impl SharedContextHandler {
     }
 }
 
-fn build_provider() -> Arc<rust_dicore::ServiceProvider> {
+fn build_provider() -> Arc<ServiceProvider> {
     Arc::new(
         ServiceCollection::from_injected()
             .add_dbcontext(|o| {
@@ -91,8 +94,8 @@ async fn owned_handler_can_mutate_dbcontext() {
     // so the handler calls ensure_created() itself before DML.
     let provider = build_provider();
 
-    // Resolve handler via get_owned — #[inject] auto-detects bare T
-    // and calls get_owned() for the DbContext field.
+    // Resolve handler via get_owned — #[inject(owned)] on the bare T field
+    // directs the constructor to call get_owned() for the DbContext field.
     let mut handler: CreateWidgetHandler = provider.get_owned();
     let result = handler.handle("test-widget").await;
     assert!(

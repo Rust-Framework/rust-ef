@@ -49,7 +49,7 @@ fn different_scopes_return_different_instances() {
 
 #[test]
 fn root_provider_caches_in_root_scope() {
-    // rust-dicore 0.5.0+: ServiceProvider is the root scope, so Scoped
+    // rust-dicore 0.5.1+: ServiceProvider is the root scope, so Scoped
     // services resolved from the root are cached in root_scoped_cache.
     // This matches EFCore semantics — the root provider IS a scope.
     let provider = build_provider();
