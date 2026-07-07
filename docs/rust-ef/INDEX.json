@@ -338,11 +338,11 @@
         {
           "id": "10-di-interceptors",
           "title": "DI 与拦截器",
-          "subtitle": "rust-dicore 集成、多数据库与横切关注点",
+          "subtitle": "rust-dix 集成、多数据库与横切关注点",
           "sections": [
             {
               "id": "di-registration",
-              "title": "rust-dicore 集成与注册模式",
+              "title": "rust-dix 集成与注册模式",
               "summary": "add_dbcontext、provider 解析与生命周期",
               "readingTime": 10,
               "difficulty": "intermediate"

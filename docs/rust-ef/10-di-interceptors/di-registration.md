@@ -1,11 +1,11 @@
-# rust-dicore 集成与注册模式
+# rust-dix 集成与注册模式
 
-`rust-ef` 与 `rust-dicore` DI 容器深度集成，支持构造函数注入和 owned/shared 两种解析模式。
+`rust-ef` 与 `rust-dix` DI 容器深度集成，支持构造函数注入和 owned/shared 两种解析模式。
 
 ## 基础注册
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use rust_ef::di::*;
 use rust_ef::db_context::DbContext;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;

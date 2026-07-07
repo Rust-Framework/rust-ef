@@ -1,6 +1,6 @@
 # 什么是 rust-ef
 
-`rust-ef`（Rust Entity Framework）是一个**EF Core 风格**的 Rust ORM 框架。它提供类型安全的实体映射、LINQ 风格的查询构造、变更跟踪与 Unit-of-Work 持久化，并与 `rust-dicore` DI 容器深度集成。
+`rust-ef`（Rust Entity Framework）是一个**EF Core 风格**的 Rust ORM 框架。它提供类型安全的实体映射、LINQ 风格的查询构造、变更跟踪与 Unit-of-Work 持久化，并与 `rust-dix` DI 容器深度集成。
 
 ## 核心设计目标
 

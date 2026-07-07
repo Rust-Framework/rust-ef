@@ -1,4 +1,4 @@
-//! DI integration — `AddDbContext` on `rust-dicore`.
+//! DI integration — `AddDbContext` on `rust-dix`.
 //!
 //! Supports single-context (default) and multi-context (keyed) registration.
 //! `DbContext` is registered as **Scoped** and can be resolved either as
@@ -12,11 +12,13 @@
 //! `get_owned()`, avoiding `Arc<Mutex>` and interior mutability entirely.
 //!
 //! ```rust,ignore
-//! use rust_dicore::*;
+//! use rust_dix::*;
 //! use rust_ef::di::*;
 //! use rust_ef::db_context::DbContext;
 //! use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 //!
+//! // rust-dix 0.6+: `build()` returns `Arc<ServiceProvider>` directly,
+//! // and `get_owned()` returns `Result<T, RdiError>`.
 //! let provider = ServiceCollection::new()
 //!     .add_dbcontext(|options| {
 //!         options.use_sqlite("data source=app.db");
@@ -25,7 +27,7 @@
 //!     .unwrap();
 //!
 //! // Owned: fresh instance, direct &mut self access — no locks needed.
-//! let mut ctx: DbContext = provider.get_owned();
+//! let mut ctx: DbContext = provider.get_owned().expect("DbContext");
 //! ctx.set::<Blog>().add(blog);
 //! ctx.save_changes().await?;
 //! ```
@@ -59,8 +61,10 @@
 //! (e.g. an `IHostedService` that seeds data before handlers run), resolve
 //! as `Arc<DbContext>`:
 //! ```rust,ignore
+//! use rust_dix::scope::ScopeFactory;  // for create_scope()
+//!
 //! let scope = provider.create_scope();
-//! let ctx: Arc<DbContext> = scope.get();
+//! let ctx: Arc<DbContext> = scope.get().expect("DbContext");
 //! // Additional get() calls within this scope return the same instance.
 //! ```
 //!
@@ -84,8 +88,8 @@
 //!     .unwrap();
 //!
 //! // Owned keyed resolution (recommended for handlers):
-//! let mut primary: DbContext = provider.get_keyed_owned("primary");
-//! let mut logs: DbContext = provider.get_keyed_owned("logs");
+//! let mut primary: DbContext = provider.get_keyed_owned("primary").expect("primary ctx");
+//! let mut logs: DbContext = provider.get_keyed_owned("logs").expect("logs ctx");
 //!
 //! // Shared keyed resolution (within a scope):
 //! // let primary: Arc<DbContext> = scope.get_keyed("primary");
@@ -107,7 +111,7 @@
 use crate::db_context::{DbContext, DbContextOptionsBuilder};
 use std::sync::Arc;
 
-/// Adds `add_dbcontext` and `add_dbcontext_keyed` to `rust_dicore::ServiceCollection`.
+/// Adds `add_dbcontext` and `add_dbcontext_keyed` to `rust_dix::ServiceCollection`.
 pub trait DbContextServiceCollectionExt {
     /// Registers a `DbContext` as **scoped** with default key.
     ///
@@ -142,7 +146,7 @@ pub trait DbContextServiceCollectionExt {
     ) -> Self;
 }
 
-impl DbContextServiceCollectionExt for ::rust_dicore::ServiceCollection {
+impl DbContextServiceCollectionExt for ::rust_dix::ServiceCollection {
     fn add_dbcontext(
         self,
         configure: impl FnOnce(&mut DbContextOptionsBuilder) + Send + Sync + 'static,
@@ -174,4 +178,4 @@ impl DbContextServiceCollectionExt for ::rust_dicore::ServiceCollection {
     }
 }
 
-pub use rust_dicore::{ServiceCollection, ServiceProvider};
+pub use rust_dix::{ServiceCollection, ServiceProvider};

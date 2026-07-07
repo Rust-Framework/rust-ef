@@ -9,7 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — 2026-06-30 — rust-dicore 0.5.1 sync
+## [Unreleased] — 2026-07-07 — rust-dicore → rust-dix 0.6 rename
+
+`rust-dicore` has been renamed to `rust-dix` upstream. The 0.6.0 release on
+crates.io is the renamed successor of `rust-dicore 0.5.1` — the API surface
+used by rust-ef (`ServiceCollection`, `ServiceProvider`, `scoped` / `keyed_scoped`,
+`get` / `get_owned` / `get_keyed_owned`, `create_scope`, `from_injected`) is
+identical. The rename only affects the crate name and the `rust_dix::` import
+path (formerly `rust_dicore::`). `rust-dix 0.6` also adds new additive APIs
+(`async_*` registration variants, `IServiceLocator`, `ServiceProviderWrapper`,
+named services) that rust-ef does not currently use.
+
+### Changed — rust-dix 0.6 sync
+
+- **`rust-dicore` renamed to `rust-dix`** (upstream): crate name, dependency
+  declaration, and the `rust_dix::` import path. No behavioral change to
+  rust-ef's DI integration.
+- **Dependency bump**: `rust-dicore = "0.5.1"` → `rust-dix = "0.6"` in
+  `crates/core/Cargo.toml`.
+- **Import path**: `rust_dicore::*` → `rust_dix::*` in
+  `crates/core/src/di.rs`, `crates/core/tests/owned_injection_tests.rs`.
+- **Re-exports**: `pub use rust_dix::{ServiceCollection, ServiceProvider}` in
+  `di.rs`.
+- **Documentation**: updated all `rust-dicore` / `rust_dicore` references in
+  `di.rs`, `crates/core/README.md`, top-level `README.md`, and
+  `docs/rust-ef/**` to `rust-dix` / `rust_dix`.
+
+### Migration — 1.3.x → Unreleased (rust-dix 0.6)
+
+1. **Cargo.toml**: replace `rust-dicore = "0.5.1"` with `rust-dix = "0.6"`.
+2. **Imports**: replace `use rust_dicore::*;` with `use rust_dix::*;` and
+   `rust_dicore::ServiceCollection` with `rust_dix::ServiceCollection`.
+3. **Attribute macros** (if used directly): `#[rust_dicore::inject]` →
+   `#[rust_dix::inject]`. rust-ef itself does not use this attribute directly;
+   handler structs use `#[derive(Inject)]` from `rust-ef-macros` which is
+   unaffected.
+4. **Behavior**: identical — ServiceProvider is still the root scope, Scoped
+   caches per-scope, `get_owned()` bypasses the cache, `from_injected()`
+   collects `#[inject]`-annotated services via `inventory`.
+
+---
+
+## [1.3.1] — 2026-06-30 — rust-dicore 0.5.1 sync
 
 Upgrades to `rust-dicore 0.5.1`. The 0.5.1 macros enforce **explicit field
 marking** (LRDI rule 8): bare `T` fields MUST be marked `#[inject(owned)]` and

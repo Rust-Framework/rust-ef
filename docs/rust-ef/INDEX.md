@@ -91,7 +91,7 @@
 
 ### [第十章 DI 与拦截器](10-di-interceptors/INDEX.md)
 
-- [rust-dicore 集成与注册模式](10-di-interceptors/di-registration.md)
+- [rust-dix 集成与注册模式](10-di-interceptors/di-registration.md)
 - [多数据库 Keyed 注册](10-di-interceptors/keyed-databases.md)
 - [SaveChanges 拦截器](10-di-interceptors/save-changes-interceptors.md)
 

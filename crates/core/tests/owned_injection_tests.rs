@@ -8,7 +8,7 @@
 //! This proves the framework is ready for the EFCore-aligned handler pattern
 //! without Arc<Mutex> or interior mutability.
 
-use rust_dicore::*;
+use rust_dix::*;
 use rust_ef::db_context::DbContext;
 use rust_ef::di::DbContextServiceCollectionExt as _;
 use rust_ef::prelude::*;
@@ -77,14 +77,13 @@ impl SharedContextHandler {
 }
 
 fn build_provider() -> Arc<ServiceProvider> {
-    Arc::new(
-        ServiceCollection::from_injected()
-            .add_dbcontext(|o| {
-                o.use_sqlite_in_memory();
-            })
-            .build()
-            .expect("build provider"),
-    )
+    // rust-dix 0.6+: `build()` returns `Arc<ServiceProvider>` directly.
+    ServiceCollection::from_injected()
+        .add_dbcontext(|o| {
+            o.use_sqlite_in_memory();
+        })
+        .build()
+        .expect("build provider")
 }
 
 #[tokio::test]
@@ -96,7 +95,7 @@ async fn owned_handler_can_mutate_dbcontext() {
 
     // Resolve handler via get_owned — #[inject(owned)] on the bare T field
     // directs the constructor to call get_owned() for the DbContext field.
-    let mut handler: CreateWidgetHandler = provider.get_owned();
+    let mut handler: CreateWidgetHandler = provider.get_owned().expect("get_owned handler");
     let result = handler.handle("test-widget").await;
     assert!(
         result.is_ok(),
@@ -109,8 +108,8 @@ async fn owned_handler_gets_fresh_instance_each_call() {
     // Each get_owned::<Handler>() creates a fresh Handler with a fresh DbContext.
     let provider = build_provider();
 
-    let h1: CreateWidgetHandler = provider.get_owned();
-    let h2: CreateWidgetHandler = provider.get_owned();
+    let h1: CreateWidgetHandler = provider.get_owned().expect("get_owned h1");
+    let h2: CreateWidgetHandler = provider.get_owned().expect("get_owned h2");
 
     let addr1 = &h1.ctx as *const _ as usize;
     let addr2 = &h2.ctx as *const _ as usize;
@@ -128,11 +127,11 @@ async fn shared_handler_uses_arc_resolution() {
 
     // Need to register the DbSet first via an owned context
     {
-        let mut ctx: DbContext = provider.get_owned();
+        let mut ctx: DbContext = provider.get_owned().expect("get_owned ctx");
         ctx.set::<Widget>();
     }
 
-    let handler: SharedContextHandler = provider.get_owned();
+    let handler: SharedContextHandler = provider.get_owned().expect("get_owned handler");
     let result = handler.ensure_schema().await;
     assert!(
         result.is_ok(),
@@ -143,17 +142,15 @@ async fn shared_handler_uses_arc_resolution() {
 #[tokio::test]
 async fn keyed_owned_resolution_works() {
     // Verify keyed owned resolution: get_keyed_owned::<DbContext>("key").
-    let provider = Arc::new(
-        ServiceCollection::new()
-            .add_dbcontext_keyed("primary", |o| {
-                o.use_sqlite_in_memory();
-            })
-            .build()
-            .unwrap(),
-    );
+    let provider: Arc<ServiceProvider> = ServiceCollection::new()
+        .add_dbcontext_keyed("primary", |o| {
+            o.use_sqlite_in_memory();
+        })
+        .build()
+        .unwrap();
 
-    let mut ctx1: DbContext = provider.get_keyed_owned("primary");
-    let mut ctx2: DbContext = provider.get_keyed_owned("primary");
+    let mut ctx1: DbContext = provider.get_keyed_owned("primary").expect("get_keyed_owned ctx1");
+    let mut ctx2: DbContext = provider.get_keyed_owned("primary").expect("get_keyed_owned ctx2");
 
     let addr1 = &ctx1 as *const _ as usize;
     let addr2 = &ctx2 as *const _ as usize;

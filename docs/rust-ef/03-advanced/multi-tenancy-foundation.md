@@ -39,7 +39,7 @@ let ctx = Arc::new(Mutex::new(ctx));
 
 ### 从根 ServiceProvider 直接解析
 
-从根 `ServiceProvider` 直接 `get::<DbContext>()` 会在 root scope 缓存中复用同一实例（rust-dicore 0.5.1+ 行为）。使用 `get_owned::<DbContext>()` 则每次返回新实例。
+从根 `ServiceProvider` 直接 `get::<DbContext>()` 会在 root scope 缓存中复用同一实例（rust-dix 0.6+ 行为）。使用 `get_owned::<DbContext>()` 则每次返回新实例。
 
 ## 2. 多租户查询过滤器
 

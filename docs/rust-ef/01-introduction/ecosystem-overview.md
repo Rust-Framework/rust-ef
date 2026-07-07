@@ -6,7 +6,7 @@
 
 ```
 User Application
-    ??? rust-dicore (DI 容器，解析 Arc<DbContext>)
+    ??? rust-dix (DI 容器，解析 Arc<DbContext>)
     ??? rust-ef (ORM 核心)
           DbContext (type-map 存储，无实体特定字段，具体上下文类型)
           ??? IDbSet<T>       ??实体集合（变更操作）
@@ -35,7 +35,7 @@ User Application
 [dependencies]
 rust-ef = { version = "1.3", features = ["chrono", "uuid", "decimal"] }
 rust-ef-sqlite = "1.3"
-rust-dicore = "0.5.1"
+rust-dix = "0.6"
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]

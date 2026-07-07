@@ -22,7 +22,7 @@ pub struct Blog {
 }
 
 // DI registration
-use rust_dicore::*;
+use rust_dix::*;
 use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
@@ -30,7 +30,7 @@ let provider = ServiceCollection::new()
     .add_dbcontext(|o| o.use_sqlite("app.db"))
     .build().unwrap();
 
-let mut ctx: DbContext = provider.get_owned();
+let mut ctx: DbContext = provider.get_owned().unwrap();
 ```
 
 ---
@@ -50,7 +50,7 @@ lref/src/
 ├── tracking.rs     �?ChangeTracker (property-level snapshots)
 ├── relations.rs    �?BelongsTo, HasMany, HasOne (no trait bounds)
 ├── migration.rs    �?MigrationEngine
-├── di.rs           ?rust-dicore integration (add_dbcontext / add_dbcontext_keyed)
+├── di.rs           ?rust-dix integration (add_dbcontext / add_dbcontext_keyed)
 ├── cache.rs        �?DbCache (Identity Map)
 └── error.rs        �?EFError, EFResult
 ```
@@ -129,7 +129,7 @@ pub trait IDatabaseProvider: Send + Sync {
 ## DI Integration
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
@@ -138,11 +138,12 @@ let provider = ServiceCollection::new()
     .build().unwrap();
 
 // Owned (recommended): &mut self access, no locks
-let mut ctx: DbContext = provider.get_owned();
+let mut ctx: DbContext = provider.get_owned().unwrap();
 
 // Shared (within a scope): Arc<DbContext>, &self only
+// use rust_dix::scope::ScopeFactory;
 // let scope = provider.create_scope();
-// let ctx: Arc<DbContext> = scope.get();
+// let ctx: Arc<DbContext> = scope.get().unwrap();
 ```
 
 **Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider �?core stays fully decoupled.

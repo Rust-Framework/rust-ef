@@ -51,6 +51,6 @@ return set.filter(expr).to_list().await?;
 
 ## 致谢
 
-`rust-ef` 站在 Rust 生态的肩膀上：`sqlx` 提供异步数据库底座，`rust-dicore` 提供 DI 容器，`quote`/`syn` 驱动 `linq!` 宏的编译时代码生成。感谢所有开源贡献者。
+`rust-ef` 站在 Rust 生态的肩膀上：`sqlx` 提供异步数据库底座，`rust-dix` 提供 DI 容器，`quote`/`syn` 驱动 `linq!` 宏的编译时代码生成。感谢所有开源贡献者。
 
 现在，让我们从第一章开始。

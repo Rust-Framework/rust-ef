@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://rf2026.github.io/rust-ef/)
 
-EFCore-inspired ORM for Rust — `DbContext` / `DbSet<T>` / `IEntityType` with rust-dicore DI integration.
+EFCore-inspired ORM for Rust — `DbContext` / `DbSet<T>` / `IEntityType` with rust-dix DI integration.
 
 **[在线文档](https://rf2026.github.io/rust-ef/)** ?? mdBook 构建的完整开发者手�?
 
@@ -16,7 +16,7 @@ EFCore-inspired ORM for Rust — `DbContext` / `DbSet<T>` / `IEntityType` with r
 [dependencies]
 rust-ef = "1.3"
 rust-ef-sqlite = "1.3"
-rust-dicore = "0.5.1"
+rust-dix = "0.6"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -69,7 +69,7 @@ impl IEntityTypeConfiguration<Blog> for BlogConfig {
 ### DI Registration + Usage (Single DB)
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use rust_ef::di::*;
 use rust_ef::db_context::DbContext;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
@@ -85,7 +85,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // 2. Resolve as owned DbContext (&mut self access, no locks)
-    let mut ctx: DbContext = provider.get_owned();
+    //    rust-dix 0.6+: get_owned() returns Result<T, RdiError>
+    let mut ctx: DbContext = provider.get_owned()?;
 
     ctx.save_changes().await?;
     Ok(())
@@ -438,7 +439,7 @@ See [`docs/rust-ef/INDEX.md`](docs/rust-ef/INDEX.md) for the complete best-pract
 
 ```
 User Application
-    ??? rust-dicore (crates.io ??DI, resolves Arc<DbContext>)
+    ??? rust-dix (crates.io ??DI, resolves Arc<DbContext>)
     ??? rust-ef (ORM, workspace: crates/core)
           DbContext (type-map set storage, no entity-specific fields)
           ??? DbContext       ??concrete session/unit-of-work type

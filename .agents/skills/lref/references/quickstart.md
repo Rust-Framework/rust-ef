@@ -134,7 +134,7 @@ ctx.save_changes().await?;
 ## 1.4 依赖注入
 
 ```rust
-use rust_dicore::*;
+use rust_dix::*;
 use rust_ef::di::*;
 use rust_ef::db_context::DbContext;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;

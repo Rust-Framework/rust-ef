@@ -6,7 +6,7 @@
 [dependencies]
 rust-ef = "1.3"
 rust-ef-sqlite = "1.3"
-rust-dicore = "0.5.1"
+rust-dix = "0.6"
 tokio = { version = "1", features = ["full"] }
 ```
 
