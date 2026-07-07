@@ -9,44 +9,235 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — 2026-07-07 — rust-dicore → rust-dix 0.6 rename
+## [Unreleased] — 2026-07-07 — Metadata cache + rust-dicore → rust-dix 0.6 rename
+
+### Added — Process-level metadata cache (priority 1 architecture iteration)
+
+Entity/relationship/settings metadata is now parsed once per `context_key`
+and shared as a singleton across all `DbContext` instances created from the
+same `DbContextOptions`. Previously, every `from_options()` call (i.e. every
+HTTP request via `get_owned()`) re-iterated `inventory::iter` and re-ran
+all `IEntityTypeConfiguration::configure()` callbacks.
+
+- **New module** `crates/core/src/metadata_cache.rs`: `MetadataCache` (a
+  `Mutex<HashMap<Option<String>, Arc<BuiltMetadata>>>` keyed by `context_key`)
+  + `BuiltMetadata` (snapshots `entity_metas`, `model_metas`, `configs`).
+- **`DbContextOptions`** gains a `metadata_cache: Arc<MetadataCache>` field.
+  Since `DbContextOptions` is already `Arc`-shared per `add_dbcontext`
+  registration, the cache is naturally singleton-per-registration.
+- **`DbContext::from_options()`** now calls `metadata_cache.get_or_build()`
+  instead of re-iterating inventory. First call builds; subsequent calls
+  `Arc::clone` the cached `BuiltMetadata`.
+- **`ModelBuilder::from_built()`** new `pub(crate)` constructor populates
+  `entity_metas` + `configs` from the cache, leaving `build_cache` /
+  `filter_cache` lazy. Per-instance mutations (`has_query_filter`, etc.)
+  only affect that `ModelBuilder` instance — the cache is never mutated.
+- **`DbContext::discover_entities()`** is now a no-op (method retained for
+  backward compatibility; metadata is pre-populated by `from_options()`).
+- **Removed**: `DbContext.context_key` field (orphaned by the no-op
+  `discover_entities()`; the key is read from `DbContextOptions` instead).
+- **`EntityConfig` / `PropertyConfigOverride`** changed from private to
+  `pub(crate)` so `MetadataCache::build()` can snapshot them.
+
+#### Performance impact
+
+For a 10-entity application, `from_options()` after the first call skips
+~10 `configure()` callback executions + ~10 `EntityTypeMeta` constructions
++ 2 `inventory::iter` traversals. Expected ~90% reduction in per-request
+metadata setup cost.
+
+#### What is NOT shared (v1 limitation)
+
+- `EntityTypeMeta.property_index` / `navigation_index` `OnceLock` caches
+  are per-DbContext (each context clones its own `EntityTypeMeta` from the
+  cache). The rebuild cost (~10-20 HashMap insertions per entity) is
+  negligible against DB I/O. Arc-wrapping `EntityTypeMeta` is deferred to v2.
+
+#### Backward compatibility
+
+- `from_options()`, `set::<T>()`, `save_changes()`, `model()` public APIs
+  are unchanged.
+- `discover_entities()` still compiles and runs (as a no-op).
+- `multi_db_context_tests` (context_key isolation) still passes — the cache
+  is keyed by `context_key`.
+
+### Added — Transaction interface extension (priority 2)
+
+Extends `IAsyncConnection` with savepoint and isolation level capabilities,
+and introduces an **ambient transaction** mechanism on `DbContext` so that
+`save_changes()` can reuse a transaction opened by the caller — aligning
+with EFCore's `Database.BeginTransaction()` / `Transaction.Commit()` pattern.
+
+- **New `IsolationLevel` enum** (`ReadUncommitted` / `ReadCommitted` /
+  `RepeatableRead` / `Serializable`) in `crates/core/src/provider.rs`,
+  re-exported via `prelude`.
+- **`IAsyncConnection` trait**: 4 new required methods —
+  `create_savepoint(name)`, `release_savepoint(name)`,
+  `rollback_to_savepoint(name)`, `set_transaction_isolation(level)`.
+  No default implementations because SQL dialects differ (SQLite uses
+  `RELEASE name` / `PRAGMA read_uncommitted`; PG/MySQL use
+  `RELEASE SAVEPOINT name` / `SET TRANSACTION ISOLATION LEVEL`).
+- **Provider implementations**: SQLite, PostgreSQL, MySQL each implement
+  the 4 new methods with dialect-correct SQL.
+- **`DbContext` ambient transaction**:
+  - New field `ambient_transaction: Option<Box<dyn IAsyncConnection>>`.
+  - `begin_transaction(&mut self) -> EFResult<()>` opens a transaction and
+    stores it; subsequent `save_changes()` calls reuse this connection and
+    do not begin/commit/rollback on their own (uses `take()`/restore pattern
+    to avoid `&mut self` borrow conflicts with `self.sets`).
+  - New `commit_transaction(&mut self)` / `rollback_transaction(&mut self)`.
+  - New `create_savepoint` / `release_savepoint` / `rollback_to_savepoint` /
+    `set_transaction_isolation` proxy methods (require active ambient
+    transaction; return `EFError::Transaction` otherwise).
+- **`save_changes()` integration**: when `ambient_transaction` is `Some`,
+  takes the connection, runs all DbSet saves, and restores it without
+  committing (the outer scope controls commit/rollback). When `None`,
+  behaves as before (self-managed transaction).
+
+### Breaking — `DbContext::begin_transaction` signature change
+
+```rust
+// Before:
+pub async fn begin_transaction(&self) -> EFResult<Box<dyn IAsyncConnection>>
+
+// After:
+pub async fn begin_transaction(&mut self) -> EFResult<()>
+```
+
+The old signature returned a raw connection with no ambient tracking —
+`save_changes()` could not reuse it (especially in PG/MySQL where each
+`get_connection()` returns a different pooled connection). The new signature
+stores the transaction in `DbContext` so `save_changes()` can reuse it.
+Verified no external callers via grep.
+
+### Migration — priority 2
+
+1. Replace `let conn = ctx.begin_transaction().await?;` with
+   `ctx.begin_transaction().await?;` (no return value).
+2. Use `ctx.commit_transaction().await?` / `ctx.rollback_transaction().await?`
+   to close the ambient transaction.
+3. `save_changes()` called between `begin_transaction` and `commit_transaction`
+   now reuses the ambient transaction (no code change needed).
+4. New savepoint/isolation APIs are available on `DbContext` directly:
+   `ctx.create_savepoint("sp1").await?` etc.
+
+### Changed — linq.rs subdirectory split
+
+Split `crates/macros/src/linq.rs` (2643 lines) into a `linq/` subdirectory
+with 6 child modules for clearer responsibility separation:
+
+- `ast.rs` (175 lines) — AST types (`LinqInput`, `QueryInput`, `LinqClause`,
+  `HavingExprAst`)
+- `parse.rs` (965 lines) — `impl Parse` + all `parse_*` functions + `ValueKind`
+  + `JoinKind`
+- `context.rs` (186 lines) — `LinqCtx` + `FieldKind` + `FieldRef` + field
+  extraction helpers
+- `compile.rs` (784 lines) — `compile_bool_expr` / `compile_expr` /
+  `compile_method` / `compile_order` / `compile_having_expr` + subquery
+  compilation
+- `expand.rs` (412 lines) — `expand_linq` entry point + `expand_clauses` +
+  `expand_join` (code generation)
+- `mod.rs` (11 lines) — module declarations + `pub use expand::expand_linq`
+
+Fixed E0027 (non-exhaustive match) in `expand_clauses`: the `LinqClause::With`
+arm now destructures all 6 fields (`name`, `entity`, `param`, `body`,
+`recursive`, `link`) and generates recursive CTE SQL via
+`with_recursive_cte_typed` when `recursive` is true.
+
+All internal items use `pub(crate)` visibility; only `expand_linq` is
+re-exported via `pub use`. `crates/macros/src/lib.rs` unchanged — `mod linq;`
+transparently resolves to `linq/mod.rs`.
+
+---
+
+## [1.3.1] — 2026-07-07 — rust-dicore → rust-dix 0.6 rename + breaking API sync
 
 `rust-dicore` has been renamed to `rust-dix` upstream. The 0.6.0 release on
-crates.io is the renamed successor of `rust-dicore 0.5.1` — the API surface
-used by rust-ef (`ServiceCollection`, `ServiceProvider`, `scoped` / `keyed_scoped`,
-`get` / `get_owned` / `get_keyed_owned`, `create_scope`, `from_injected`) is
-identical. The rename only affects the crate name and the `rust_dix::` import
-path (formerly `rust_dicore::`). `rust-dix 0.6` also adds new additive APIs
-(`async_*` registration variants, `IServiceLocator`, `ServiceProviderWrapper`,
-named services) that rust-ef does not currently use.
+crates.io is the renamed successor of `rust-dicore 0.5.1`, but it also
+introduces **breaking API changes** beyond the rename. rust-ef has been
+migrated to rust-dix 0.6 and updated to match the new resolution API.
 
 ### Changed — rust-dix 0.6 sync
 
 - **`rust-dicore` renamed to `rust-dix`** (upstream): crate name, dependency
-  declaration, and the `rust_dix::` import path. No behavioral change to
-  rust-ef's DI integration.
+  declaration, and the `rust_dix::` import path (formerly `rust_dicore::`).
 - **Dependency bump**: `rust-dicore = "0.5.1"` → `rust-dix = "0.6"` in
   `crates/core/Cargo.toml`.
-- **Import path**: `rust_dicore::*` → `rust_dix::*` in
-  `crates/core/src/di.rs`, `crates/core/tests/owned_injection_tests.rs`.
+- **Import path**: `rust_dicore::*` → `rust_dix::*` in `crates/core/src/di.rs`
+  and test files.
 - **Re-exports**: `pub use rust_dix::{ServiceCollection, ServiceProvider}` in
   `di.rs`.
-- **Documentation**: updated all `rust-dicore` / `rust_dicore` references in
-  `di.rs`, `crates/core/README.md`, top-level `README.md`, and
-  `docs/rust-ef/**` to `rust-dix` / `rust_dix`.
+
+### Breaking — rust-dix 0.6 resolution API (affects user code)
+
+The following changes in rust-dix 0.6 affect all rust-ef consumers that call
+`provider.get()`, `provider.get_owned()`, or `provider.get_keyed_owned()`
+directly. `#[derive(Inject)]`-generated constructors are unaffected — the
+macro emits the correct unwrap internally.
+
+1. **`ServiceCollection::build()` now returns `Arc<ServiceProvider>` directly**
+   (previously returned `ServiceProvider`, requiring user code to wrap in
+   `Arc::new()`). Remove the manual `Arc::new()` wrap:
+   ```rust
+   // Before (rust-dicore 0.5.1):
+   let provider = Arc::new(ServiceCollection::new().add_dbcontext(...).build().unwrap());
+
+   // After (rust-dix 0.6):
+   let provider: Arc<ServiceProvider> = ServiceCollection::new().add_dbcontext(...).build().unwrap();
+   ```
+
+2. **`get()` / `get_owned()` / `get_keyed_owned()` now return `Result<_, RdiError>`**
+   (previously returned the value directly, panicking on failure). Add
+   `.unwrap()` or `.expect("...")` (or `?` in functions returning `Result`):
+   ```rust
+   // Before:
+   let ctx: DbContext = provider.get_owned();
+   let ctx: Arc<DbContext> = scope.get();
+
+   // After:
+   let ctx: DbContext = provider.get_owned()?;
+   let ctx: Arc<DbContext> = scope.get()?;
+   ```
+
+3. **`create_scope()` moved to the `ScopeFactory` trait** — must be imported
+   before calling:
+   ```rust
+   use rust_dix::scope::ScopeFactory;
+   let scope = provider.create_scope();
+   ```
+   Alternatively, use the inherent `.scope()` method on `ServiceProvider`,
+   which does not require a trait import.
 
 ### Migration — 1.3.x → Unreleased (rust-dix 0.6)
 
 1. **Cargo.toml**: replace `rust-dicore = "0.5.1"` with `rust-dix = "0.6"`.
 2. **Imports**: replace `use rust_dicore::*;` with `use rust_dix::*;` and
    `rust_dicore::ServiceCollection` with `rust_dix::ServiceCollection`.
-3. **Attribute macros** (if used directly): `#[rust_dicore::inject]` →
+3. **Provider construction**: drop the `Arc::new()` wrap around
+   `ServiceCollection::...build().unwrap()`. `build()` already returns
+   `Arc<ServiceProvider>`.
+4. **Resolution calls**: append `?` (or `.unwrap()` / `.expect("...")`) to all
+   `provider.get()`, `provider.get_owned()`, `provider.get_keyed_owned()`,
+   `scope.get()`, `scope.get_owned()`, `scope.get_keyed_owned()` calls.
+5. **Scope creation**: add `use rust_dix::scope::ScopeFactory;` before calling
+   `provider.create_scope()` (or switch to `.scope()`).
+6. **Attribute macros** (if used directly): `#[rust_dicore::inject]` →
    `#[rust_dix::inject]`. rust-ef itself does not use this attribute directly;
    handler structs use `#[derive(Inject)]` from `rust-ef-macros` which is
    unaffected.
-4. **Behavior**: identical — ServiceProvider is still the root scope, Scoped
+7. **Behavior**: identical — ServiceProvider is still the root scope, Scoped
    caches per-scope, `get_owned()` bypasses the cache, `from_injected()`
    collects `#[inject]`-annotated services via `inventory`.
+
+### Documentation
+
+- Updated all `rust-dicore` / `rust_dicore` references in `di.rs`,
+  `crates/core/README.md`, top-level `README.md`, and `docs/rust-ef/**` to
+  `rust-dix` / `rust_dix`.
+- Updated doc examples to reflect the new `Result`-returning resolution API
+  (`get_owned().unwrap()` / `get_owned()?` instead of bare `get_owned()`).
+- Noted the `ScopeFactory` trait import requirement in scope-creation
+  examples.
 
 ---
 

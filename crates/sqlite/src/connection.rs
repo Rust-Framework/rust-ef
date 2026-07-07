@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
-use rust_ef::provider::{DbValue, IAsyncConnection};
+use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -70,5 +70,31 @@ impl IAsyncConnection for SqliteConnection {
 
     async fn rollback_transaction(&mut self) -> EFResult<()> {
         self.execute("ROLLBACK", &[]).await.map(|_| ())
+    }
+
+    async fn create_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.execute(&format!("SAVEPOINT {}", name), &[])
+            .await
+            .map(|_| ())
+    }
+
+    async fn release_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.execute(&format!("RELEASE {}", name), &[])
+            .await
+            .map(|_| ())
+    }
+
+    async fn rollback_to_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.execute(&format!("ROLLBACK TO {}", name), &[])
+            .await
+            .map(|_| ())
+    }
+
+    async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()> {
+        let sql = match level {
+            IsolationLevel::ReadUncommitted => "PRAGMA read_uncommitted = ON",
+            _ => "PRAGMA read_uncommitted = OFF",
+        };
+        self.execute(sql, &[]).await.map(|_| ())
     }
 }

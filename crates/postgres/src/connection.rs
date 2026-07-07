@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
-use rust_ef::provider::{DbValue, IAsyncConnection};
+use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
 use tokio_postgres::types::ToSql;
 use tokio_postgres::types::Type as PgType;
 
@@ -126,6 +126,47 @@ impl IAsyncConnection for PostgresConnection {
             .simple_query("ROLLBACK")
             .await
             .map_err(|e| EFError::Transaction(format!("ROLLBACK failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn create_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.client
+            .simple_query(&format!("SAVEPOINT {}", name))
+            .await
+            .map_err(|e| EFError::Transaction(format!("SAVEPOINT failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn release_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.client
+            .simple_query(&format!("RELEASE SAVEPOINT {}", name))
+            .await
+            .map_err(|e| EFError::Transaction(format!("RELEASE failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn rollback_to_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.client
+            .simple_query(&format!("ROLLBACK TO SAVEPOINT {}", name))
+            .await
+            .map_err(|e| EFError::Transaction(format!("ROLLBACK TO failed: {}", e)))?;
+        Ok(())
+    }
+
+    async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()> {
+        let sql = format!(
+            "SET TRANSACTION ISOLATION LEVEL {}",
+            match level {
+                IsolationLevel::ReadUncommitted => "READ UNCOMMITTED",
+                IsolationLevel::ReadCommitted => "READ COMMITTED",
+                IsolationLevel::RepeatableRead => "REPEATABLE READ",
+                IsolationLevel::Serializable => "SERIALIZABLE",
+            }
+        );
+        self.client
+            .simple_query(&sql)
+            .await
+            .map_err(|e| EFError::Transaction(format!("SET ISOLATION failed: {}", e)))?;
         Ok(())
     }
 }

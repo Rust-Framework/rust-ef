@@ -531,6 +531,15 @@ pub trait ISqlGenerator: Send + Sync {
     fn auto_increment_syntax(&self) -> &'static str;
 }
 
+/// ANSI SQL transaction isolation levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsolationLevel {
+    ReadUncommitted,
+    ReadCommitted,
+    RepeatableRead,
+    Serializable,
+}
+
 /// Trait for async database connections.
 #[async_trait]
 pub trait IAsyncConnection: Send + Sync {
@@ -544,6 +553,15 @@ pub trait IAsyncConnection: Send + Sync {
     async fn commit_transaction(&mut self) -> EFResult<()>;
     /// Rolls back the current transaction.
     async fn rollback_transaction(&mut self) -> EFResult<()>;
+    /// Creates a savepoint within the current transaction.
+    async fn create_savepoint(&mut self, name: &str) -> EFResult<()>;
+    /// Releases (commits) a previously created savepoint, discarding its rollback point.
+    async fn release_savepoint(&mut self, name: &str) -> EFResult<()>;
+    /// Rolls back to the named savepoint, preserving the outer transaction.
+    async fn rollback_to_savepoint(&mut self, name: &str) -> EFResult<()>;
+    /// Sets the isolation level of the current transaction.
+    /// Must be called after `begin_transaction` and before any query.
+    async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()>;
 }
 
 /// The database provider abstraction.

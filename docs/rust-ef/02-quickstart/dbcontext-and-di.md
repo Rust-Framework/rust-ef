@@ -33,11 +33,13 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // 推荐：owned 解析，直接 &mut self 访问
-let mut ctx: DbContext = provider.get_owned();
+// rust-dix 0.6+: get_owned() 返回 Result<T, RdiError>
+let mut ctx: DbContext = provider.get_owned().unwrap();
 
 // 或：共享解析（Arc<DbContext>，&self 访问，同一 scope 内共享）
+// use rust_dix::scope::ScopeFactory;
 // let scope = provider.create_scope();
-// let ctx: Arc<DbContext> = scope.get();
+// let ctx: Arc<DbContext> = scope.get().unwrap();
 ```
 
 ## 多数据库 Keyed 注册
@@ -54,8 +56,8 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // Owned 解析（推荐）：
-let mut primary: DbContext = provider.get_keyed_owned("primary");
-let mut logs: DbContext = provider.get_keyed_owned("logs");
+let mut primary: DbContext = provider.get_keyed_owned("primary").unwrap();
+let mut logs: DbContext = provider.get_keyed_owned("logs").unwrap();
 
 // 共享解析：
 // let primary: Arc<DbContext> = scope.get_keyed("primary");

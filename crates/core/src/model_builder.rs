@@ -20,21 +20,21 @@ use std::sync::OnceLock;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default)]
-struct EntityConfig {
-    table_name: Option<String>,
-    primary_key_fields: Option<Vec<String>>,
-    property_overrides: HashMap<String, PropertyConfigOverride>,
-    query_filter: Option<BoolExpr>,
-    seed_rows: Vec<HashMap<String, DbValue>>,
+pub(crate) struct EntityConfig {
+    pub(crate) table_name: Option<String>,
+    pub(crate) primary_key_fields: Option<Vec<String>>,
+    pub(crate) property_overrides: HashMap<String, PropertyConfigOverride>,
+    pub(crate) query_filter: Option<BoolExpr>,
+    pub(crate) seed_rows: Vec<HashMap<String, DbValue>>,
 }
 
 #[derive(Debug, Clone, Default)]
-struct PropertyConfigOverride {
-    column_name: Option<String>,
-    is_required: Option<bool>,
-    max_length: Option<usize>,
-    is_unique: Option<bool>,
-    has_index: Option<bool>,
+pub(crate) struct PropertyConfigOverride {
+    pub(crate) column_name: Option<String>,
+    pub(crate) is_required: Option<bool>,
+    pub(crate) max_length: Option<usize>,
+    pub(crate) is_unique: Option<bool>,
+    pub(crate) has_index: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +60,37 @@ impl ModelBuilder {
             build_cache: OnceLock::new(),
             filter_cache: OnceLock::new(),
         }
+    }
+
+    /// Constructs a `ModelBuilder` pre-populated from a cached `BuiltMetadata`.
+    ///
+    /// Used by `DbContext::from_options()` to skip re-iterating `inventory::iter`
+    /// + re-running `IEntityTypeConfiguration::configure()` on every request.
+    /// The `build_cache` and `filter_cache` are left empty (lazy) — they will
+    /// be populated on first access, same as the non-cached path.
+    ///
+    /// Per-instance mutations (`has_query_filter`, `entity::<T>()`, etc.) after
+    /// construction only affect this `ModelBuilder` instance, not the cache.
+    pub(crate) fn from_built(built: &crate::metadata_cache::BuiltMetadata) -> Self {
+        Self {
+            entity_metas: built.model_metas.clone(),
+            configs: built.configs.clone(),
+            build_cache: OnceLock::new(),
+            filter_cache: OnceLock::new(),
+        }
+    }
+
+    /// Read-only access to the `configs` map. Used by `MetadataCache::build()`
+    /// to snapshot the configs produced by `IEntityTypeConfiguration::configure()`
+    /// callbacks into the process-level cache.
+    pub(crate) fn configs(&self) -> &HashMap<TypeId, EntityConfig> {
+        &self.configs
+    }
+
+    /// Read-only access to the `entity_metas` vec. Used by `MetadataCache::build()`
+    /// to snapshot the registered entity metas into the process-level cache.
+    pub(crate) fn entity_metas_vec(&self) -> &[EntityTypeMeta] {
+        &self.entity_metas
     }
 
     /// Drops the cached `build()` and `filters_by_table()` results.

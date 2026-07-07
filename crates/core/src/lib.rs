@@ -34,12 +34,14 @@ pub mod lazy;
 pub mod metadata;
 pub mod migration;
 pub mod model_builder;
+pub(crate) mod metadata_cache;
 pub mod navigation_loader;
 pub mod provider;
 pub mod query;
 pub mod registration;
 pub mod relations;
 pub mod tracking;
+pub mod transaction;
 
 pub use async_trait;
 
@@ -71,12 +73,15 @@ pub mod prelude {
     };
     pub use crate::provider::DbValue;
     pub use crate::provider::IDatabaseProvider;
+    pub use crate::provider::IsolationLevel;
     pub use crate::query::{
-        BoolExpr, CteSpec, LinqSource, ParseFromDb, WindowFuncKind, WindowSpec,
+        BoolExpr, CteSpec, LinqSource, ParseFromDb, SetOperator, SetOpSpec,
+        WindowFuncKind, WindowSpec,
     };
     pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::tracking::ChangeTracker;
+    pub use crate::transaction::{DbTransaction, ITransaction};
     pub use rust_ef_macros::column;
     pub use rust_ef_macros::entity;
     pub use rust_ef_macros::linq;

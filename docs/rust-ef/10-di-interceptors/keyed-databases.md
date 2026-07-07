@@ -16,10 +16,10 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // 查询走读库（owned 解析，推荐）
-let mut read_ctx: DbContext = provider.get_keyed_owned("read");
+let mut read_ctx: DbContext = provider.get_keyed_owned("read").unwrap();
 
 // 写入走主库（owned 解析，推荐）
-let mut write_ctx: DbContext = provider.get_keyed_owned("write");
+let mut write_ctx: DbContext = provider.get_keyed_owned("write").unwrap();
 ```
 
 ## 多租户示例
@@ -87,8 +87,8 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // Owned 解析（推荐）：
-let mut primary: DbContext = provider.get_keyed_owned("primary");
-let mut logs: DbContext = provider.get_keyed_owned("logs");
+let mut primary: DbContext = provider.get_keyed_owned("primary").unwrap();
+let mut logs: DbContext = provider.get_keyed_owned("logs").unwrap();
 // primary 只管理 Blog（context_key = None）
 // logs 只管理 LogEntry（context_key = Some("logs")）
 

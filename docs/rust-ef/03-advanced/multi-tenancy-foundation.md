@@ -16,7 +16,8 @@ let provider = ServiceCollection::new()
     .build()?;
 
 // 推荐：owned 解析，直接 &mut self 访问
-let mut ctx: DbContext = provider.get_owned();
+// rust-dix 0.6+: get_owned() 返回 Result<T, RdiError>
+let mut ctx: DbContext = provider.get_owned()?;
 ```
 
 ### 共享解析（同一 Scope 内复用）
@@ -24,8 +25,10 @@ let mut ctx: DbContext = provider.get_owned();
 当多个消费者在同一 Scope 内需要共享同一实例时，使用 `scope.get()` 获取 `Arc<DbContext>`（仅 `&self` 访问）：
 
 ```rust,ignore
+use rust_dix::scope::ScopeFactory;  // create_scope() 在 ScopeFactory trait 上
+
 let scope = provider.create_scope();
-let ctx: Arc<DbContext> = scope.get();
+let ctx: Arc<DbContext> = scope.get()?;
 // 同一 scope 内多次 get 返回同一实例
 ```
 

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
-use rust_ef::provider::{DbValue, IAsyncConnection};
+use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
 use sqlx::{Column, Row};
 
 pub struct MySqlConnection {
@@ -74,5 +74,36 @@ impl IAsyncConnection for MySqlConnection {
 
     async fn rollback_transaction(&mut self) -> EFResult<()> {
         self.execute("ROLLBACK", &[]).await.map(|_| ())
+    }
+
+    async fn create_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.execute(&format!("SAVEPOINT {}", name), &[])
+            .await
+            .map(|_| ())
+    }
+
+    async fn release_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.execute(&format!("RELEASE SAVEPOINT {}", name), &[])
+            .await
+            .map(|_| ())
+    }
+
+    async fn rollback_to_savepoint(&mut self, name: &str) -> EFResult<()> {
+        self.execute(&format!("ROLLBACK TO SAVEPOINT {}", name), &[])
+            .await
+            .map(|_| ())
+    }
+
+    async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()> {
+        let sql = format!(
+            "SET TRANSACTION ISOLATION LEVEL {}",
+            match level {
+                IsolationLevel::ReadUncommitted => "READ UNCOMMITTED",
+                IsolationLevel::ReadCommitted => "READ COMMITTED",
+                IsolationLevel::RepeatableRead => "REPEATABLE READ",
+                IsolationLevel::Serializable => "SERIALIZABLE",
+            }
+        );
+        self.execute(&sql, &[]).await.map(|_| ())
     }
 }

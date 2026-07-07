@@ -352,6 +352,84 @@ async fn test_left_join_clause() {
 }
 
 #[tokio::test]
+async fn test_right_join_clause() {
+    let mut ctx = seed().await;
+    // RIGHT JOIN keeps all posts (right side), even if blog missing.
+    // Both posts belong to blog 1, so result has 2 rows.
+    let rows =
+        linq!(ctx.set::<DslBlog>(); right_join |a: DslBlog, b: DslPost| a.blog_id == b.blog_id)
+            .to_list()
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 2, "right join should yield one row per post");
+}
+
+#[tokio::test]
+async fn test_full_join_clause() {
+    let mut ctx = seed().await;
+    // FULL JOIN keeps all blogs and all posts. Blog 1 matches 2 posts,
+    // blogs 2 and 3 have no matching posts → 4 rows total.
+    let rows =
+        linq!(ctx.set::<DslBlog>(); full_join |a: DslBlog, b: DslPost| a.blog_id == b.blog_id)
+            .to_list()
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 4, "full join should yield blogs + posts");
+}
+
+#[tokio::test]
+async fn test_cross_join_clause() {
+    let mut ctx = seed().await;
+    // CROSS JOIN is the cartesian product: 3 blogs × 2 posts = 6 rows.
+    let rows = linq!(ctx.set::<DslBlog>(); cross_join b: DslPost)
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 6, "cross join should yield cartesian product");
+}
+
+#[tokio::test]
+async fn test_union_clause() {
+    let mut ctx = seed().await;
+    // Main: all blogs (3 rows). Operand: all blogs (3 rows, identical).
+    // UNION dedupes identical rows → 3 rows.
+    let op = ctx.set::<DslBlog>().query().compile_sql();
+    let rows = linq!(ctx.set::<DslBlog>(); union op)
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 3, "UNION should dedupe identical rows");
+}
+
+#[tokio::test]
+async fn test_union_all_clause() {
+    let mut ctx = seed().await;
+    // Main: all blogs (3 rows). Operand: all blogs (3 rows, identical).
+    // UNION ALL does not dedupe → 6 rows.
+    let op = ctx.set::<DslBlog>().query().compile_sql();
+    let rows = linq!(ctx.set::<DslBlog>(); union_all op)
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 6, "UNION ALL should not dedupe");
+}
+
+#[tokio::test]
+async fn test_except_clause() {
+    let mut ctx = seed().await;
+    // Main: all blogs (3 rows). EXCEPT operand: tech blogs (2 rows).
+    // Result: 1 row (Cooking, the food blog).
+    let op = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.category == "tech")
+        .compile_sql();
+    let rows = linq!(ctx.set::<DslBlog>(); except op)
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1, "EXCEPT should yield the difference");
+    assert_eq!(rows[0].category, "food");
+}
+
+#[tokio::test]
 async fn test_form_c_filter_produces_bool_expr() {
     use rust_ef::query::BoolExpr;
     let expr: BoolExpr = linq!(filter |b: DslBlog| b.published);

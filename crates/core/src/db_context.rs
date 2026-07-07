@@ -29,7 +29,8 @@
 //!
 //! ```rust,ignore
 //! // Owned — idiomatic &mut self, no locks:
-//! let mut ctx: DbContext = provider.get_owned();
+//! // rust-dix 0.6+: get_owned() returns Result<T, RdiError>
+//! let mut ctx: DbContext = provider.get_owned()?;
 //! ctx.set::<Blog>().add(blog);
 //! ctx.save_changes().await?;
 //! ```
@@ -43,7 +44,7 @@
 //! **Correct usage**: each request / operation owns its own `DbContext`
 //! instance (via `get_owned()` or a fresh scope):
 //! ```rust,ignore
-//! let mut ctx: DbContext = provider.get_owned();
+//! let mut ctx: DbContext = provider.get_owned()?;
 //! // This instance is exclusively owned — &mut self works directly.
 //! ```
 //!
@@ -64,11 +65,12 @@ use crate::metadata::EntityTypeMeta;
 use crate::migration::MigrationEngine;
 use crate::model_builder::ModelBuilder;
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
-use crate::registration::{EntityConfigRegistration, EntityRegistration};
 use crate::tracking::{ChangeTracker, EntityEntryView};
+use crate::transaction::{DbTransaction, ITransaction};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -90,6 +92,12 @@ pub struct DbContextOptions {
     /// Defaults to `false` (opt-in) to preserve v1.0 eager-only behavior.
     pub(crate) lazy_loading_enabled: bool,
     pub(crate) context_key: Option<String>,
+    /// Process-level cache of `discover_entities()` output, keyed by
+    /// `context_key`. Shared across all `DbContext` instances created from
+    /// the same `DbContextOptions` (which is `Arc`-shared per `add_dbcontext`
+    /// registration). The first `from_options()` call builds the metadata;
+    /// subsequent calls `Arc::clone` it.
+    pub(crate) metadata_cache: Arc<crate::metadata_cache::MetadataCache>,
 }
 
 impl std::fmt::Debug for DbContextOptions {
@@ -134,6 +142,7 @@ impl Default for DbContextOptions {
             interceptors: Vec::new(),
             lazy_loading_enabled: false,
             context_key: None,
+            metadata_cache: Arc::new(crate::metadata_cache::MetadataCache::new()),
         }
     }
 }
@@ -328,28 +337,41 @@ pub struct DbContext {
     provider: Arc<dyn IDatabaseProvider>,
     interceptor_pipeline: InterceptorPipeline,
     lazy_loading_enabled: bool,
-    context_key: Option<String>,
+    /// Ambient transaction: registered by `use_transaction()`. When present,
+    /// `save_changes()` reuses this transaction's connection and does not
+    /// begin/commit/rollback on its own. Uses `take()`/restore pattern to
+    /// avoid `&mut self` borrow conflicts with `self.sets` during save.
+    ///
+    /// Note: `begin_transaction()` returns a handle without registering it
+    /// here — only `use_transaction()` registers an ambient. This separates
+    /// manual handle-based control from scoped ambient control.
+    ambient_transaction: Option<Box<dyn ITransaction>>,
 }
 
 impl DbContext {
     /// Creates the context from options (uses the provider factory stored in options).
+    ///
+    /// Entity metadata is loaded from the process-level `MetadataCache` on
+    /// `DbContextOptions` — `inventory::iter` + `IEntityTypeConfiguration::configure()`
+    /// run once per `context_key` (first call), then the result is `Arc`-shared
+    /// across all `DbContext` instances. Per-instance `ModelBuilder` mutations
+    /// (`has_query_filter`, etc.) after construction only affect this instance.
     pub fn from_options(options: &DbContextOptions) -> EFResult<Self> {
         let provider = options.create_provider()?;
-        let mut ctx = Self {
+        let built = options
+            .metadata_cache
+            .get_or_build(options.context_key.as_deref());
+        let ctx = Self {
             sets: HashMap::new(),
             savers: HashMap::new(),
-            entity_metas: HashMap::new(),
-            model_builder: ModelBuilder::new(),
+            entity_metas: built.entity_metas.clone(),
+            model_builder: ModelBuilder::from_built(&built),
             change_tracker: ChangeTracker::new(),
             provider,
             interceptor_pipeline: InterceptorPipeline::new(options.interceptors.clone()),
             lazy_loading_enabled: options.lazy_loading_enabled,
-            context_key: options.context_key.clone(),
+            ambient_transaction: None,
         };
-        // Auto-discover all entities registered via #[derive(EntityType)] and
-        // apply all #[entity(T)] configurations. This is idempotent — manual
-        // discover_entities() calls after from_options() are safe no-ops.
-        ctx.discover_entities()?;
         Ok(ctx)
     }
 
@@ -412,46 +434,18 @@ impl DbContext {
         self.entity_metas.contains_key(&TypeId::of::<T>())
     }
 
-    /// Discovers all entity types registered via `#[derive(EntityType)]`
-    /// and applies all `#[entity(T)]` configurations to the model builder.
+    /// No-op since metadata caching was introduced.
     ///
-    /// After calling this, `ensure_created()` and `ensure_deleted()` will
-    /// process all discovered entities without requiring manual `set::<T>()`
-    /// calls. Calling `set::<T>()` for discovered entities is idempotent —
-    /// it only creates the `DbSet` instance and `SetOps` saver, since the
-    /// metadata is already present.
+    /// Historically, this method iterated `inventory::iter` to register entity
+    /// metadata and apply `#[entity(T)]` configurations. That work now happens
+    /// in `MetadataCache::build()`, invoked lazily by `from_options()` via
+    /// `MetadataCache::get_or_build()`. The result is `Arc`-shared across all
+    /// `DbContext` instances with the same `context_key`.
     ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let mut ctx = DbContext::from_options(&options)?;
-    /// // discover_entities() is called automatically by from_options()
-    /// ctx.ensure_created().await?;
-    /// ```
+    /// Retained as a public method for backward compatibility — existing code
+    /// calling `ctx.discover_entities()?` after `from_options()` continues to
+    /// compile and run (as a no-op). The metadata is already populated.
     pub fn discover_entities(&mut self) -> EFResult<()> {
-        let my_key = self.context_key.as_deref();
-
-        // Apply Fluent configurations matching this context's key.
-        for reg in inventory::iter::<EntityConfigRegistration> {
-            if reg.context_key == my_key {
-                (reg.apply_fn)(&mut self.model_builder);
-            }
-        }
-
-        // Register entity metadata for entities matching this context's key.
-        for reg in inventory::iter::<EntityRegistration> {
-            if reg.context_key == my_key {
-                let meta = reg.meta();
-                let type_id = reg.type_id;
-                self.entity_metas
-                    .entry(type_id)
-                    .or_insert_with(|| meta.clone());
-                if !self.model_builder.has_entity(type_id) {
-                    self.model_builder.register_entity_meta(meta);
-                }
-            }
-        }
-
         Ok(())
     }
 
@@ -551,11 +545,33 @@ impl DbContext {
         &mut self.change_tracker
     }
 
-    /// Begins a new transaction and returns the connection.
-    pub async fn begin_transaction(&self) -> EFResult<Box<dyn IAsyncConnection>> {
+    /// Returns a mutable reference to the ambient transaction handle, if one
+    /// is active (registered by `use_transaction()`).
+    ///
+    /// Inside a `use_transaction()` closure, use this to access the ambient
+    /// handle for savepoint and isolation operations. The borrow must be
+    /// released (by scoping) before calling `save_changes()` or other `&mut
+    /// self` methods.
+    pub fn transaction_mut(&mut self) -> Option<&mut Box<dyn ITransaction>> {
+        self.ambient_transaction.as_mut()
+    }
+
+    /// Begins a transaction and returns a typed handle.
+    ///
+    /// The returned `ITransaction` handle is **not** registered as ambient —
+    /// `save_changes()` calls will continue to self-manage their own
+    /// transactions. Use this when you need explicit control via
+    /// `txn.commit()` / `txn.rollback()` / `txn.create_point()` etc.
+    ///
+    /// For scoped ambient transactions where `save_changes()` should reuse
+    /// the same transaction, use [`DbContext::use_transaction`] instead.
+    ///
+    /// `commit` / `rollback` consume the handle by value, preventing
+    /// use-after-commit at the type level.
+    pub async fn begin_transaction(&mut self) -> EFResult<Box<dyn ITransaction>> {
         let mut conn = self.provider.get_connection().await?;
         conn.begin_transaction().await?;
-        Ok(conn)
+        Ok(Box::new(DbTransaction::new(conn)))
     }
 
     /// Saves all pending changes across all DbSets.
@@ -587,8 +603,23 @@ impl DbContext {
         let save_ctx = self.build_save_context();
         self.interceptor_pipeline.on_saving(&save_ctx).await?;
 
-        let mut conn = self.provider.get_connection().await?;
-        conn.begin_transaction().await?;
+        // === Transaction connection acquisition ===
+        // If an ambient transaction exists (registered by `use_transaction`),
+        // take it out and reuse its connection (no begin/commit/rollback —
+        // the outer scope manages that). Otherwise, self-manage a fresh
+        // transaction (original behavior).
+        enum TxnSource {
+            Ambient(Box<dyn ITransaction>),
+            Managed(Box<dyn IAsyncConnection>),
+        }
+        let mut txn = match self.ambient_transaction.take() {
+            Some(t) => TxnSource::Ambient(t),
+            None => {
+                let mut c = self.provider.get_connection().await?;
+                c.begin_transaction().await?;
+                TxnSource::Managed(c)
+            }
+        };
 
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         let mut total_added = 0usize;
@@ -601,13 +632,21 @@ impl DbContext {
                 .get(type_id)
                 .or_else(|| self.entity_metas.get(type_id))
                 .expect("meta not found for entity type");
+            let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                TxnSource::Ambient(t) => t.connection(),
+                TxnSource::Managed(c) => c.as_mut(),
+            };
             let (a, u, d) = match saver
-                .save(&mut *conn, &*self.provider, set.as_mut(), meta)
+                .save(conn_ref, &*self.provider, set.as_mut(), meta)
                 .await
             {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = conn.rollback_transaction().await;
+                    if let TxnSource::Managed(mut conn) = txn {
+                        let _ = conn.rollback_transaction().await;
+                    } else if let TxnSource::Ambient(t) = txn {
+                        self.ambient_transaction = Some(t);
+                    }
                     self.interceptor_pipeline
                         .on_save_failed(&save_ctx, &e)
                         .await;
@@ -618,11 +657,18 @@ impl DbContext {
             total_updated += u;
             total_deleted += d;
         }
-        if let Err(e) = conn.commit_transaction().await {
-            self.interceptor_pipeline
-                .on_save_failed(&save_ctx, &e)
-                .await;
-            return Err(e);
+        match txn {
+            TxnSource::Ambient(t) => {
+                self.ambient_transaction = Some(t);
+            }
+            TxnSource::Managed(mut conn) => {
+                if let Err(e) = conn.commit_transaction().await {
+                    self.interceptor_pipeline
+                        .on_save_failed(&save_ctx, &e)
+                        .await;
+                    return Err(e);
+                }
+            }
         }
         self.change_tracker.accept_all_changes();
         for type_id in &type_ids {
@@ -648,24 +694,53 @@ impl DbContext {
         })
     }
 
-    /// Executes a closure within a transaction.
+    /// Executes a closure within an ambient transaction.
     ///
-    /// Commits on success, rolls back on error.
-    pub async fn use_transaction<F, Fut, R>(&self, f: F) -> EFResult<R>
+    /// Registers the transaction as ambient for the duration of `f`, so that
+    /// `save_changes()` calls inside `f` reuse the same transaction. Commits
+    /// on `Ok`, rolls back on `Err`.
+    ///
+    /// The closure receives `&mut DbContext` and must return a pinned boxed
+    /// future. This signature works around Rust's async borrow checker by
+    /// letting the closure capture `ctx` by mutable reference while still
+    /// producing a `Send` future.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// ctx.use_transaction(|ctx| Box::pin(async move {
+    ///     ctx.set::<Blog>().add(blog);
+    ///     ctx.save_changes().await?;
+    ///     Ok(())
+    /// })).await?;
+    /// ```
+    pub async fn use_transaction<F, R>(&mut self, f: F) -> EFResult<R>
     where
-        F: FnOnce(&mut dyn IAsyncConnection) -> Fut + Send,
-        Fut: Future<Output = EFResult<R>> + Send,
-        R: Send,
+        for<'a> F:
+            FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = EFResult<R>> + Send + 'a>>,
+        R: Send + 'static,
     {
+        if self.ambient_transaction.is_some() {
+            return Err(EFError::Transaction(
+                "ambient transaction already active; nested use_transaction is not supported"
+                    .into(),
+            ));
+        }
         let mut conn = self.provider.get_connection().await?;
         conn.begin_transaction().await?;
-        match f(&mut *conn).await {
+        self.ambient_transaction = Some(Box::new(DbTransaction::new(conn)));
+        let result = f(self).await;
+        let txn = self
+            .ambient_transaction
+            .take()
+            .expect("ambient_transaction set above");
+        match result {
             Ok(r) => {
-                conn.commit_transaction().await?;
+                txn.commit().await?;
                 Ok(r)
             }
             Err(e) => {
-                let _ = conn.rollback_transaction().await;
+                let _ = txn.rollback().await;
                 Err(e)
             }
         }

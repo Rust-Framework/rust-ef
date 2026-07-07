@@ -284,7 +284,8 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // Each request creates a scope. Handlers own a fresh DbContext via get_owned().
-let mut ctx: DbContext = provider.get_owned();
+// rust-dix 0.6+: get_owned() returns Result<T, RdiError>
+let mut ctx: DbContext = provider.get_owned().unwrap();
 
 // Inject into handlers via DI — bare T field marked #[inject(owned)] → owned resolution
 #[derive(Inject)]
