@@ -22,7 +22,7 @@ pub struct Blog {
 }
 
 // DI registration
-use rust_dicore::ServiceCollection;
+use rust_dicore::*;
 use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
@@ -129,7 +129,7 @@ pub trait IDatabaseProvider: Send + Sync {
 ## DI Integration
 
 ```rust
-use rust_dicore::ServiceCollection;
+use rust_dicore::*;
 use lref::di::*;
 use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 

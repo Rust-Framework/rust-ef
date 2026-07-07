@@ -53,6 +53,7 @@ use rust_ef::db_context::DbContext;
 
 #[derive(Inject)]
 pub struct DbInitService {
+    #[inject]
     provider: Arc<ServiceProvider>,
 }
 
@@ -84,10 +85,10 @@ impl IHostedService for DbInitService {
 
 ## 2.2 Handler 注入模式（≈ 构造函数注入）
 
-每个 Handler 是一个独立的 struct，通过 `#[derive(Inject)]` 声明依赖。`ctx: DbContext` 字段（bare T）由 DI 容器通过 **owned 解析**自动注入——类似 ASP.NET Core 的构造函数注入。
+每个 Handler 是一个独立的 struct，通过 `#[derive(Inject)]` 声明依赖。`ctx: DbContext` 字段（bare T）必须标记 `#[inject(owned)]`，由 DI 容器通过 **owned 解析**注入——类似 ASP.NET Core 的构造函数注入。`Arc<T>` 字段标记 `#[inject]`，未标记字段走 `Default::default()`。
 > **无需管理 Scope**：rust-webapp 的 HTTP 管道为每个请求创建 Scope，Handler 在此 Scope 内通过 `get_owned::<Handler>()` 解析，每个请求获得独立 `DbContext` 实例，天然隔离，无需锁。
 >
-> **Owned 解析 + `&mut self`**：`#[derive(Inject)]` 自动检测 bare `T` 字段并使用 `get_owned()` 解析。Handler 方法使用 `&mut self`，直接调用 `self.ctx.set::<T>()` / `self.ctx.save_changes()` —— 无需 `Arc<Mutex>`，无需内部可变性。
+> **Owned 解析 + `&mut self`**：bare `T` 字段标记 `#[inject(owned)]` 后，`#[derive(Inject)]` 使用 `get_owned()` 解析；`Arc<T>` 字段标记 `#[inject]` 后使用 `get()` 解析。Handler 方法使用 `&mut self`，直接调用 `self.ctx.set::<T>()` / `self.ctx.save_changes()` —— 无需 `Arc<Mutex>`，无需内部可变性。
 >
 > **`#[inject(scoped)]` 必须**：`#[inject]` 默认注册为 Singleton，与 Scoped `DbContext` 形成 captive dependency。Handler 的 trait impl 必须使用 `#[inject(scoped)]`。
 
@@ -97,26 +98,31 @@ impl IHostedService for DbInitService {
 // 每个操作一个 Handler struct（单一职责）
 #[derive(Inject)]
 pub struct ListBlogPostsHandler {
-    ctx: DbContext,  // bare T → owned 解析
+    #[inject(owned)]
+    ctx: DbContext,  // bare T + #[inject(owned)] → get_owned()
 }
 
 #[derive(Inject)]
 pub struct GetBlogPostHandler {
+    #[inject(owned)]
     ctx: DbContext,
 }
 
 #[derive(Inject)]
 pub struct CreateBlogPostHandler {
+    #[inject(owned)]
     ctx: DbContext,
 }
 
 #[derive(Inject)]
 pub struct UpdateBlogPostHandler {
+    #[inject(owned)]
     ctx: DbContext,
 }
 
 #[derive(Inject)]
 pub struct DeleteBlogPostHandler {
+    #[inject(owned)]
     ctx: DbContext,
 }
 ```
@@ -371,7 +377,8 @@ pub trait IBlogService: Send + Sync {
 // handlers/blog_service.rs — 实现层
 #[derive(Inject)]
 pub struct BlogService {
-    ctx: DbContext,  // bare T → owned 解析
+    #[inject(owned)]
+    ctx: DbContext,  // bare T + #[inject(owned)] → get_owned()
 }
 
 impl IBlogService for BlogService {
@@ -383,6 +390,7 @@ impl IBlogService for BlogService {
 // handlers/blog_handler.rs — 调用 Handler
 #[derive(Inject)]
 pub struct CreateBlogPostHandler {
+    #[inject]
     blog: Arc<dyn IBlogService>,  // 注入服务，而非直接注入 DbContext
 }
 

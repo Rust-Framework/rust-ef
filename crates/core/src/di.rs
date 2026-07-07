@@ -12,7 +12,7 @@
 //! `get_owned()`, avoiding `Arc<Mutex>` and interior mutability entirely.
 //!
 //! ```rust,ignore
-//! use rust_dicore::ServiceCollection;
+//! use rust_dicore::*;
 //! use rust_ef::di::*;
 //! use rust_ef::db_context::DbContext;
 //! use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
@@ -30,14 +30,16 @@
 //! ctx.save_changes().await?;
 //! ```
 //!
-//! Handlers declare a bare `ctx: DbContext` field — `#[derive(Inject)]`
-//! auto-detects owned fields and resolves them via `get_owned()`.
-//! Use `#[inject(scoped)]` (not bare `#[inject]`, which defaults to Singleton)
-//! to avoid captive dependency errors with the Scoped `DbContext`:
+//! Handlers declare a bare `ctx: DbContext` field marked with
+//! `#[inject(owned)]` — `#[derive(Inject)]` resolves it via `get_owned()`.
+//! Unmarked fields fall back to `Default::default()`. Use `#[inject(scoped)]`
+//! (not bare `#[inject]`, which defaults to Singleton) to avoid captive
+//! dependency errors with the Scoped `DbContext`:
 //! ```rust,ignore
 //! #[derive(Inject)]
 //! pub struct CreateBlogHandler {
-//!     ctx: DbContext,            // bare T → owned resolution
+//!     #[inject(owned)]
+//!     ctx: DbContext,            // bare T + #[inject(owned)] → get_owned()
 //! }
 //!
 //! #[inject(scoped)]

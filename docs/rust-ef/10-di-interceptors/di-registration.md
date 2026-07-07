@@ -5,7 +5,7 @@
 ## 基础注册
 
 ```rust
-use rust_dicore::ServiceCollection;
+use rust_dicore::*;
 use rust_ef::di::*;
 use rust_ef::db_context::DbContext;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
@@ -27,7 +27,7 @@ let mut ctx: DbContext = provider.get_owned();
 
 ## 在 Handler 中注入
 
-`#[derive(Inject)]` 自动检测 bare `T` 字段并使用 `get_owned()` 解析，Handler 方法使用 `&mut self`：
+`#[derive(Inject)]` 要求 bare `T` 字段标记 `#[inject(owned)]`（`Arc<T>` 字段标记 `#[inject]`），未标记字段走 `Default::default()`。Handler 方法使用 `&mut self`：
 
 ```rust
 use rust_webapp::*;
@@ -35,7 +35,8 @@ use rust_ef::db_context::DbContext;
 
 #[derive(Inject)]
 pub struct ListBlogsHandler {
-    ctx: DbContext,  // bare T → owned 解析
+    #[inject(owned)]
+    ctx: DbContext,  // bare T + #[inject(owned)] → get_owned()
 }
 
 #[inject(scoped)]
@@ -71,6 +72,6 @@ impl BlogRepository {
 | Owned 解析（推荐） | `get_owned()` → `DbContext`，`&mut self` 访问，无需锁 |
 | Shared 解析 | `scope.get()` → `Arc<DbContext>`，`&self` 访问，同一 scope 内共享 |
 | 每个请求一个 DbContext | Scoped 生命周期，避免跨请求跟踪污染 |
-| `#[derive(Inject)]` 自动检测 | bare `T` 字段 → owned；`Arc<T>` 字段 → shared |
+| `#[derive(Inject)]` 显式标记 | bare `T` + `#[inject(owned)]` → owned；`Arc<T>` + `#[inject]` → shared；未标记 → `Default` |
 
 下一节：[多数据库 Keyed 注册](keyed-databases.md)

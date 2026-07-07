@@ -1,7 +1,6 @@
 ---
 name: lref
-description: |
-  Rust Entity Framework (REF) ORM 框架开发指南。涵盖实体定义、linq! 查询、DbContext/DI 集成、Web 应用集成、软删除、变更追踪。当用户编写或修改 REF 相关代码时使用。
+description: Rust Entity Framework (REF) ORM 框架开发指南。涵盖实体定义、linq! 查询、DbContext/DI 集成、Web 应用集成、软删除、变更追踪。当用户编写或修改 REF 相关代码时使用。
 ---
 
 # REF 框架开发指南
@@ -33,7 +32,7 @@ Rust Entity Framework（接口驱动、EFCore 风格 ORM）。本指南以**渐�
 | 主题 | 对标 ASP.NET Core | 要点 |
 |------|:---:|------|
 | 上下文注入 | `AddDbContext<T>` | `add_dbcontext` 注册为 **Scoped**，每个请求独立实例 |
-| Handler 注入 | 构造函数注入 | `DbContext`（owned）由 DI 容器通过 `get_owned()` 解析，`handle(&mut self)` |
+| Handler 注入 | 构造函数注入 | `ctx: DbContext` 字段标记 `#[inject(owned)]`，DI 容器通过 `get_owned()` 解析，`handle(&mut self)` |
 | 读取操作 | `[HttpGet]` | 分页 + 导航 + 排序一条 linq! 完成 |
 | 创建操作 | `[HttpPost]` | 唯一性校验 → 插入 → save_changes → 按主键回查导航 |
 | 更新操作 | `[HttpPut]` | 加载 → 权限校验 → 应用变更 → detect_changes → 保存 |
@@ -44,7 +43,7 @@ Rust Entity Framework（接口驱动、EFCore 风格 ORM）。本指南以**渐�
 **核心设计：Scoped 生命周期，无需锁**
 
 `add_dbcontext` 注册为 Scoped，每个请求通过 DI Scope 获得独立的 `DbContext` 实例，天然隔离，无需 `Arc<Mutex<>>`。这是 EFCore 的设计范式。
-> **`Arc<Mutex<DbContext>>` 是反模式**：会导致跨请求跟踪污染、虚假并发竞争和性能退化。详见 [references/pitfalls.md#p1](references/pitfalls.md#p1-arcmutexdbcontext-反模式）
+> **`Arc<Mutex<DbContext>>` 是反模式**：会导致跨请求跟踪污染、虚假并发竞争和性能退化。详见 [references/pitfalls.md#p1](references/pitfalls.md#p1-arcmutexdbcontext-反模式)
 ---
 
 ## 第三层：深入理解
@@ -81,6 +80,8 @@ Rust Entity Framework（接口驱动、EFCore 风格 ORM）。本指南以**渐�
 | 模板 | 用途 |
 |------|------|
 | [templates/entity-definition.rs](templates/entity-definition.rs) | 完整实体定义示例 |
+| [templates/dbcontext.rs](templates/dbcontext.rs) | DbContext 用法（type-map 模式、自动发现） |
+| [templates/query-patterns.rs](templates/query-patterns.rs) | LINQ 风格查询模式（Form A/B/C） |
 | [templates/web-handler-crud.rs](templates/web-handler-crud.rs) | Web Handler CRUD 完整模板 |
 | [templates/soft-delete.rs](templates/soft-delete.rs) | 软删除完整模板 |
 | [templates/di-setup.rs](templates/di-setup.rs) | DI 注册配置模板 |

@@ -21,8 +21,9 @@
 //!
 //! - **Owned** (recommended for handlers): `provider.get_owned::<DbContext>()`
 //!   returns a fresh `DbContext` with direct `&mut self` access. Handlers
-//!   declare a bare `ctx: DbContext` field; `#[derive(Inject)]` auto-detects
-//!   owned fields and resolves them via `get_owned()`.
+//!   declare a bare `ctx: DbContext` field marked with `#[inject(owned)]`;
+//!   `#[derive(Inject)]` resolves it via `get_owned()`. Unmarked fields fall
+//!   back to `Default::default()`.
 //! - **Shared** (within a scope): `scope.get::<DbContext>()` returns
 //!   `Arc<DbContext>` for consumers that only need `&self` access.
 //!

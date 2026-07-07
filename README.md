@@ -14,9 +14,9 @@ EFCore-inspired ORM for Rust — `DbContext` / `DbSet<T>` / `IEntityType` with r
 
 ```toml
 [dependencies]
-rust-ef = "1.1"
-rust-ef-sqlite = "1.1"
-rust-dicore = "0.2"
+rust-ef = "1.3"
+rust-ef-sqlite = "1.3"
+rust-dicore = "0.5.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -69,7 +69,7 @@ impl IEntityTypeConfiguration<Blog> for BlogConfig {
 ### DI Registration + Usage (Single DB)
 
 ```rust
-use rust_dicore::ServiceCollection;
+use rust_dicore::*;
 use rust_ef::di::*;
 use rust_ef::db_context::DbContext;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
@@ -285,9 +285,10 @@ let provider = ServiceCollection::new()
 // Each request creates a scope. Handlers own a fresh DbContext via get_owned().
 let mut ctx: DbContext = provider.get_owned();
 
-// Inject into handlers via DI — bare T field → owned resolution
+// Inject into handlers via DI — bare T field marked #[inject(owned)] → owned resolution
 #[derive(Inject)]
 pub struct MyHandler {
+    #[inject(owned)]
     ctx: DbContext,
 }
 
@@ -389,7 +390,8 @@ pub struct MyHandler {
 // handler:
 #[derive(Inject)]
 pub struct MyHandler {
-    ctx: DbContext,  // bare T → owned resolution via get_owned()
+    #[inject(owned)]
+    ctx: DbContext,  // bare T + #[inject(owned)] → get_owned()
 }
 
 #[inject(scoped)]

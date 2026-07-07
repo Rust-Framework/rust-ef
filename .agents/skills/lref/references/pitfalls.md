@@ -28,7 +28,7 @@ let mut ctx: DbContext = provider.get_owned();
 ```
 
 从根 `ServiceProvider` 直接解析退化为 transient（每次新实例），安全但失去单位工作语义。
-Handler 推荐使用 `get_owned()` 获取 owned `DbContext`，`#[derive(Inject)]` 自动检测 bare `T` 字段。
+Handler 推荐使用 `get_owned()` 获取 owned `DbContext`，bare `T` 字段必须标记 `#[inject(owned)]`（`Arc<T>` 字段标记 `#[inject]`），未标记字段走 `Default::default()`。
 
 ## P2: save_changes() 后不要回查 ID
 

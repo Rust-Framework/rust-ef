@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — 2026-06-30 — rust-dicore 0.5.1 sync
+
+Upgrades to `rust-dicore 0.5.1`. The 0.5.1 macros enforce **explicit field
+marking** (LRDI rule 8): bare `T` fields MUST be marked `#[inject(owned)]` and
+`Arc<T>` fields MUST be marked `#[inject]`. Unmarked fields fall back to
+`Default::default()`. The previous 0.5.0 "auto-detect bare T" behavior is
+removed — this is a breaking change for any handler struct that relied on
+implicit owned resolution.
+
+### Changed — 0.5.1 sync
+
+- **`rust-dicore` upgraded from 0.5.0 to 0.5.1**: `rust-dicore-macros` also
+  upgraded to 0.5.1. The `gen_field_init` macro now treats unmarked fields as
+  internal state (`Default::default()`), matching the documented LRDI rule 8.
+- **Handler structs require explicit `#[inject(owned)]`**: every bare
+  `ctx: DbContext` field in `#[derive(Inject)]` structs MUST now be marked
+  `#[inject(owned)]`. `Arc<T>` fields MUST be marked `#[inject]`.
+- **Documentation**: updated all handler examples across `di.rs`,
+  `db_context.rs`, README files, `docs/rust-ef/**`, and the `lref` skill
+  templates/references to reflect the explicit marking requirement. Fixed
+  `rust_dicore::` fully-qualified paths to `use rust_dicore::*;` (LRDI rule 6).
+- **`lref` skill**: fixed `keyed_transient` → `keyed_scoped` in
+  `architecture.md`; fixed `rust_dicore::ServiceProvider` fully-qualified path
+  in `di-setup.rs` template.
+
+### Migration — 1.3.0 → 1.3.1 (0.5.1 sync)
+
+1. **Handler structs**: add `#[inject(owned)]` to every bare `T` field
+   (e.g. `ctx: DbContext`). Add `#[inject]` to every `Arc<T>` field.
+2. **Unmarked fields**: confirm they implement `Default` — unmarked fields now
+   use `Default::default()` instead of auto-detection.
+3. **Imports**: ensure `use rust_dicore::*;` at the file top — fully-qualified
+   `rust_dicore::` paths are forbidden (LRDI rule 6).
+
+### Added — 0.5.1 (upstream)
+
+- `try_get_owned::<T>() -> Option<T>` — non-panicking owned resolution
+  (returns `None` for unregistered or Singleton services).
+- `Option<T>` field support in `#[derive(Inject)]` → resolves via
+  `try_get_owned`; `Option<Arc<T>>` field → resolves via `try_get`.
+
+---
+
 ## [1.3.0] — 2026-06-29 — Owned Resolution + rust-dicore 0.5.0
 
 Upgrades to `rust-dicore 0.5.0` with owned resolution support, eliminating the

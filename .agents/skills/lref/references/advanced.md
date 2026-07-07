@@ -142,7 +142,7 @@ let mut logs: DbContext = provider.get_keyed_owned("logs");
 - 使用 `DbContext`（无需自定义 context 结构体）
 - 通过 `add_dbcontext(|o| o.use_sqlite(...))` 注册
 - 多数据库使用 `add_dbcontext_keyed("key", |o| ...)`
-- Handler 使用 owned 解析（`get_owned()` → `DbContext`，`&mut self` 访问）
+- Handler 使用 owned 解析（bare `T` 字段标记 `#[inject(owned)]` → `get_owned()` → `DbContext`，`&mut self` 访问）
 
 **不应做：**
 - 在 context 上定义 `DbSet<Blog>` 结构体字段
