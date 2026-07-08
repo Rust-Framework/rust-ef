@@ -1,4 +1,5 @@
 use crate::sql_generator::PostgresSqlGenerator;
+use crate::tls::PgTlsMode;
 use async_trait::async_trait;
 use deadpool_postgres::{Config, Pool, Runtime};
 use rust_ef::error::{EFError, EFResult};
@@ -6,23 +7,6 @@ use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::IAsyncConnection;
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 use tokio_postgres::NoTls;
-
-/// TLS mode for PostgreSQL connections.
-///
-/// `Disable` uses plaintext connections (`tokio_postgres::NoTls`) — the
-/// pre-v1.4 default, kept for backward compatibility.
-///
-/// `Require` enforces TLS via the platform's native TLS implementation
-/// (SChannel on Windows, OpenSSL on Linux, Secure Transport on macOS). The
-/// connector is cloned per pool acquisition, so it must be `Clone`
-/// (`native_tls::TlsConnector` satisfies this).
-#[derive(Clone)]
-pub enum PgTlsMode {
-    /// Plaintext connection (backward compatible with v1.3).
-    Disable,
-    /// Enforce TLS using the provided `native_tls::TlsConnector`.
-    Require(native_tls::TlsConnector),
-}
 
 pub struct PostgresProvider {
     pool: Pool,

@@ -1,4 +1,4 @@
-use crate::provider::PgTlsMode;
+use crate::tls::PgTlsMode;
 use rust_ef::provider::IDatabaseProvider;
 use std::sync::Arc;
 

@@ -1,4 +1,4 @@
-use crate::provider::MySqlTlsMode;
+use crate::tls::MySqlTlsMode;
 use rust_ef::provider::IDatabaseProvider;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use std::sync::Arc;
