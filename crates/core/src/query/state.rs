@@ -9,9 +9,7 @@
 
 use crate::provider::DbValue;
 
-use super::ast::{
-    BoolExpr, FilterCondition, HavingExpr, IncludePath, JoinSpec, OrderBy,
-};
+use super::ast::{BoolExpr, FilterCondition, HavingExpr, IncludePath, JoinSpec, OrderBy};
 use super::compile::{build_where_clauses, compile_bool_expr, PortablePlaceholderGenerator};
 use super::cte::{CteSpec, SetOpSpec, SetOperator};
 use super::window::WindowSpec;
@@ -283,7 +281,11 @@ impl QueryState {
                 };
                 cte_parts.push(part);
             }
-            let with_kw = if has_recursive { "WITH RECURSIVE" } else { "WITH" };
+            let with_kw = if has_recursive {
+                "WITH RECURSIVE"
+            } else {
+                "WITH"
+            };
             sql = format!("{} {} {}", with_kw, cte_parts.join(", "), sql);
         }
 

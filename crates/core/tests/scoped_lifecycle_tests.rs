@@ -6,10 +6,10 @@
 //!   - root provider resolution caches in root scope (same instance per call)
 //!   - owned resolution always returns a fresh instance (bypasses cache)
 
+use rust_dix::scope::ScopeFactory;
 use rust_ef::db_context::DbContext;
 use rust_ef::di::{DbContextServiceCollectionExt, ServiceCollection};
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
-use rust_dix::scope::ScopeFactory;
 use std::sync::Arc;
 
 fn build_provider() -> Arc<rust_ef::di::ServiceProvider> {

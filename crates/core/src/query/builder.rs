@@ -17,8 +17,8 @@ use crate::error::EFResult;
 use crate::provider::{DbValue, DbValueConvertError, IDatabaseProvider};
 
 use super::ast::{
-    AggKind, BoolExpr, CompareOp, CompiledFilter, FilterCondition, HavingExpr, IncludePath,
-    InSubquerySpec, JoinSpec, OrderBy, OrderDirection, SubquerySpec,
+    AggKind, BoolExpr, CompareOp, CompiledFilter, FilterCondition, HavingExpr, InSubquerySpec,
+    IncludePath, JoinSpec, OrderBy, OrderDirection, SubquerySpec,
 };
 use super::compile::{
     build_where_clauses, collect_bool_expr_values, compile_bool_expr, convert_aggregate_cell,

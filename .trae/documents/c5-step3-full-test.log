@@ -1,0 +1,717 @@
+﻿cargo : [1m[93mwarning[0m[1m[97m: unused import: `super::compile::PortablePlaceholderGenerator`[0m
+At line:15 char:6102
++ ... $env:CI=''; cargo test --workspace --all-features --no-fail-fast 2>&1 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([1m[93mwarnin...rGenerator`[0m:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  [1m[96m--> [0mcrates\core\src\query\select.rs:15:5
+   [1m[96m|[0m
+[1m[96m15[0m [1m[96m|[0m use super::compile::PortablePlaceholderGenerator;
+   [1m[96m|[0m     [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m: `rust-ef` (lib) generated 1 warning (run `cargo fix --lib -p rust-ef` to apply 1 suggestion)
+[1m[93mwarning[0m: `rust-ef` (lib test) generated 1 warning (1 duplicate)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`test` profile
+ [unoptimized + debuginfo]]8;;\ target(s) in 0.75s
+[1m[92m     Running[0m unittests src\lib.rs (target\debug\deps\rust_ef-a54b25c76a96da9a.exe)
+
+running 3 tests
+test metadata_cache::tests::test_cache_hit_returns_same_arc ... ok
+test metadata_cache::tests::test_poison_recovery ... ok
+test metadata_cache::tests::test_different_context_keys_are_isolated ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\advanced_tests.rs (target\debug\deps\advanced_tests-883c02d1634a6a06.exe)
+
+running 6 tests
+test advanced_tests::test_change_tracker_states ... ok
+test advanced_tests::test_model_snapshot_creation ... ok
+test advanced_tests::test_migration_down_sql_reverses_create ... ok
+test advanced_tests::test_foreign_key_migration_from_navigation ... ok
+test advanced_tests::test_composite_primary_key_migration ... ok
+test advanced_tests::test_single_primary_key_migration ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\auto_registration_integration_tests.rs (target\debug\deps\auto_registration_integration
+_tests-e4ea209fb3d3fb8c.exe)
+
+running 4 tests
+test test_ensure_deleted_with_discover ... ok
+test test_set_after_discover_is_idempotent ... ok
+test test_discover_then_ensure_created_applies_override ... ok
+test test_backward_compat_set_without_discover ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\auto_registration_tests.rs (target\debug\deps\auto_registration_tests-bdbed8f556f9e975.
+exe)
+
+running 7 tests
+test test_entity_config_registration_exists ... ok
+test test_entity_registration_exists ... ok
+test test_inventory_iter_non_empty ... ok
+test test_register_entity_meta_is_idempotent ... ok
+test test_model_builder_build_applies_config ... ok
+test test_has_entity_returns_correct_value ... ok
+test test_other_entity_keeps_default_table_name ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\batch_dml_tests.rs (target\debug\deps\batch_dml_tests-5b225d285228f410.exe)
+
+running 4 tests
+test test_batch_delete_with_query_filter ... ok
+test test_batch_insert_multiple_rows ... ok
+test test_batch_delete_multiple_rows ... ok
+test test_batch_insert_large_set_auto_batches ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\bool_expr_tests.rs (target\debug\deps\bool_expr_tests-6f25dce538f479ef.exe)
+
+running 5 tests
+test bool_expr_tests::test_and_or_combination_sql ... ok
+test bool_expr_tests::test_complex_or_and_pattern ... ok
+test bool_expr_tests::test_filter_in_placeholders ... ok
+test bool_expr_tests::test_not_filter_sql ... ok
+test bool_expr_tests::test_raw_filter_no_params ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\clone_tests.rs (target\debug\deps\clone_tests-9cc4174b013b226e.exe)
+
+running 6 tests
+test test_clone_with_linq_filter_reuse ... ok
+test test_execute_update_builder_clone ... ok
+test test_select_query_builder_clone ... ok
+test test_clone_divergence_independent_state ... ok
+test test_query_builder_clone_compiles_and_runs ... ok
+test test_clone_preserves_state ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests\concurrency_tests.rs (target\debug\deps\concurrency_tests-735579852c995daa.exe)
+
+running 6 tests
+test test_macro_concurrency_token_meta ... ok
+test test_delete_succeeds_no_concurrent_modification ... ok
+test test_delete_conflict_stale_token ... ok
+test test_update_succeeds_no_concurrent_modification ... ok
+test test_update_conflict_stale_token ... ok
+test test_update_after_token_refresh ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\connection_pool_tests.rs (target\debug\deps\connection_pool_tests-e2859d03136e59d1.exe)
+
+running 4 tests
+test test_postgres_pool_size_api_exists ... ok
+test test_mysql_pool_options_api_exists ... ok
+test test_sqlite_busy_timeout_set ... ok
+test test_sqlite_wal_mode_enabled ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+[1m[92m     Running[0m tests\cte_syntax_tests.rs (target\debug\deps\cte_syntax_tests-c4bb2af1e5f2c981.exe)
+
+running 13 tests
+test test_pg_compound_where_cte_placeholder_count ... ok
+test test_pg_multi_cte_with_main_where_contiguous ... ok
+test test_pg_multiple_typed_ctes_contiguous_placeholders ... ok
+test test_pg_single_typed_cte_uses_dollar_n ... ok
+test test_typed_cte_compound_where ... ok
+test test_typed_cte_multiple_ctes ... ok
+test test_typed_cte_parameter_ordering ... ok
+test test_typed_cte_compound_execution ... ok
+test test_typed_cte_sql_generation ... ok
+test test_typed_cte_execution ... ok
+test test_typed_cte_with_or_condition ... ok
+test test_typed_cte_with_main_where ... ok
+test test_typed_cte_with_order_by ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\exists_by_id_tests.rs (target\debug\deps\exists_by_id_tests-aaaeb9ae7c5eeba0.exe)
+
+running 8 tests
+test test_exists_by_key_false_when_one_component_missing ... ok
+test test_exists_by_key_true_for_existing_composite ... ok
+test test_exists_by_id_consistent_with_find ... ok
+test test_exists_by_id_false_on_empty_table ... ok
+test test_exists_by_key_false_on_empty_table ... ok
+test test_exists_by_id_false_for_missing_row ... ok
+test test_exists_by_id_true_for_existing_row ... ok
+test test_exists_by_id_uses_pk_metadata_not_hardcoded_id ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\extended_types_tests.rs (target\debug\deps\extended_types_tests-0b4d031baeee3050.exe)
+
+running 6 tests
+test map_column_type_chrono_uuid_decimal ... ok
+test map_column_type_existing_types_still_match ... ok
+test multiple_transactions_query ... ok
+test chrono_uuid_decimal_round_trip ... ok
+test update_with_chrono_fields ... ok
+test datetime_filter_query ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\having_pagination_dialect_tests.rs (target\debug\deps\having_pagination_dialect_tests-7
+1311e159a557b9b.exe)
+
+running 20 tests
+test test_collect_params_matches_placeholder_order ... ok
+test test_mysql_limit_offset_clause_order ... ok
+test test_mysql_having_uses_question_mark_placeholder ... ok
+test test_mysql_offset_only_uses_large_limit ... ok
+test test_mysql_full_query_where_having_pagination ... ok
+test test_no_pagination_emits_nothing ... ok
+test test_pg_full_query_where_having_pagination ... ok
+test test_pg_having_index_continues_through_or_with_where ... ok
+test test_pg_having_compare_agg_emits_no_placeholder ... ok
+test test_pg_having_index_continues_from_where ... ok
+test test_pg_having_uses_dollar_n_placeholder ... ok
+test test_pg_having_index_continues_through_and_combination ... ok
+test test_pg_having_multiple_clauses_join_with_and ... ok
+test test_pg_having_not_preserves_index ... ok
+test test_pg_limit_offset_clause_order ... ok
+test test_pg_limit_only ... ok
+test test_pg_offset_only ... ok
+test test_sqlite_having_uses_question_mark_placeholder ... ok
+test test_sqlite_limit_offset_clause_order ... ok
+test test_sqlite_limit_only ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\in_subquery_tests.rs (target\debug\deps\in_subquery_tests-fa0ec369a89ef7bc.exe)
+
+running 6 tests
+test test_in_subquery_form_c_filter ... ok
+test test_in_subquery_form_a ... ok
+test test_not_in_subquery_form_a ... ok
+test test_not_in_subquery_empty_subquery_result ... ok
+test test_in_subquery_combined_with_other_filter ... ok
+test test_in_subquery_empty_subquery_result ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests\index_diff_tests.rs (target\debug\deps\index_diff_tests-734a86ac5149a863.exe)
+
+running 10 tests
+test test_add_column_with_index ... ok
+test test_add_index_to_existing_column ... ok
+test test_index_name_helper ... ok
+test test_mysql_drop_index_syntax ... ok
+test test_new_table_with_unique_column ... ok
+test test_no_index_change_no_index_sql ... ok
+test test_remove_index_from_column ... ok
+test test_change_non_unique_to_unique ... ok
+test test_new_table_with_indexed_column ... ok
+test test_apply_migration_creates_index_in_db ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\integration_tests.rs (target\debug\deps\integration_tests-a8100652feeaf159.exe)
+
+running 16 tests
+test tests::test_change_tracker ... ok
+test tests::test_query_state_to_sql_with_order ... ok
+test tests::test_migration_alter_column_mysql ... ok
+test tests::test_entity_state_enum ... ok
+test tests::test_migration_dialect_quote ... ok
+test tests::test_migration_binary_type_mapping ... ok
+test tests::test_metadata_entity_type ... ok
+test tests::test_migration_foreign_key_naming ... ok
+test tests::test_migration_dialect_type_mapping ... ok
+test tests::test_query_state_to_sql_count ... ok
+test tests::test_query_state_to_sql_pagination ... ok
+test tests::test_query_state_to_sql_with_filter ... ok
+test tests::test_db_value_display ... ok
+test tests::test_save_changes_result ... ok
+test tests::test_query_state_to_sql_basic ... ok
+test tests::test_db_value_from_traits ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\lazy_loading_tests.rs (target\debug\deps\lazy_loading_tests-a53365f3e5cba845.exe)
+
+running 7 tests
+test test_hasmany_lazy_load ... ok
+test test_nested_lazy_load_attaches_child_contexts ... ok
+test test_lazy_loading_disabled_load_is_noop ... ok
+test test_include_takes_precedence_over_lazy ... ok
+test test_belongs_to_lazy_load ... ok
+test test_lazy_loading_disabled_by_default ... ok
+test test_double_load_is_noop ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\let_binding_tests.rs (target\debug\deps\let_binding_tests-4a114df12f99599a.exe)
+
+running 8 tests
+test test_untyped_closure_aggregate ... ok
+test test_untyped_closure_count ... ok
+test test_untyped_closure_basic_filter ... ok
+test test_reusable_filter_untyped_closure_with_typed_source ... ok
+test test_untyped_closure_with_include ... ok
+test test_untyped_closure_with_select ... ok
+test test_untyped_closure_with_order_by ... ok
+test test_typed_closure_still_works ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\linq_dsl_tests.rs (target\debug\deps\linq_dsl_tests-ef3866bcd4960926.exe)
+
+running 28 tests
+test test_form_c_key_produces_str_slice ... ok
+test test_form_c_index_produces_str_slice ... ok
+test test_form_c_filter_produces_bool_expr ... ok
+test test_distinct_clause ... ok
+test test_count_clause ... ok
+test test_having_with_not ... ok
+test test_except_clause ... ok
+test test_group_by_with_having ... ok
+test test_having_with_or ... ok
+test test_having_compare_agg ... ok
+test test_inner_join_clause ... ok
+test test_left_join_clause ... ok
+test test_max_typed_return_i32 ... ok
+test test_max_typed_return_i64 ... ok
+test test_min_typed_return_i32 ... ok
+test test_order_by_clause_asc ... ok
+test test_having_with_and ... ok
+test test_right_join_clause ... ok
+test test_having_nested_and_or ... ok
+test test_min_empty_returns_none ... ok
+test test_union_all_clause ... ok
+test test_take_skip_clauses ... ok
+test test_union_clause ... ok
+test test_cross_join_clause ... ok
+test test_full_join_clause ... ok
+test test_set_execute_update ... ok
+test test_select_clause_returns_raw_rows ... ok
+test test_order_by_clause_desc ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\linq_terminal_tests.rs (target\debug\deps\linq_terminal_tests-5551a3e0434077c9.exe)
+
+running 18 tests
+test test_contains_missing_pk ... ok
+test test_contains_existing_pk ... ok
+test test_all_true_on_empty ... ok
+test test_single_errors_on_empty ... ok
+test test_last_errors_on_empty ... ok
+test test_distinct_method ... ok
+test test_single_errors_on_multiple ... ok
+test test_single_or_default_none_on_empty ... ok
+test test_last_or_default_some_on_nonempty ... ok
+test test_last_or_default_none_on_empty ... ok
+test test_all_true_when_all_match ... ok
+test test_single_returns_one ... ok
+test test_single_or_default_errors_on_multiple ... ok
+test test_single_or_default_some_on_one ... ok
+test test_long_count_matches_count ... ok
+test test_to_dictionary_by_id ... ok
+test test_last_returns_entity ... ok
+test test_all_false_when_some_dont_match ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\linq_tests.rs (target\debug\deps\linq_tests-aab53ad071ddd39b.exe)
+
+running 7 tests
+test linq_tests::test_reusable_linq_expr ... ok
+test linq_tests::test_linq_and_or_parens_not_contains ... ok
+test linq_tests::test_linq_query_filter ... ok
+test linq_tests::test_linq_filter_on_set ... ok
+test linq_tests::test_linq_legacy_expr_form ... ok
+test linq_tests::test_linq_order_by ... ok
+test linq_tests::test_linq_from_set ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\m2m_tests.rs (target\debug\deps\m2m_tests-c3fe2c5f37e67678.exe)
+
+running 2 tests
+test m2m_tests::test_many_to_many_has_many_join_generic ... ok
+test m2m_tests::test_many_to_many_through_attribute ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\metadata_cache_tests.rs (target\debug\deps\metadata_cache_tests-2b1576adcf609d6f.exe)
+
+running 3 tests
+test test_discover_entities_noop_is_safe ... ok
+test test_per_instance_model_mutation_isolation ... ok
+test test_cache_populates_metadata_correctly ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\migration_cli_tests.rs (target\debug\deps\migration_cli_tests-d2302abc2dfa5c37.exe)
+
+running 13 tests
+test test_generate_script_empty_migrations_noop ... ok
+test test_generate_script_from_equals_to_noop ... ok
+test test_generate_script_from_none_to_none ... ok
+test test_generate_script_from_none_to_specific ... ok
+test test_generate_script_from_specific_to_none ... ok
+test test_generate_script_reverse_range ... ok
+test test_generate_script_unknown_from_errors ... ok
+test test_generate_script_unknown_to_errors ... ok
+test test_generate_script_forward_range ... ok
+test test_revert_to_target_at_last_yields_empty ... ok
+test test_revert_to_target_none_reverts_all ... ok
+test test_revert_to_target_not_applied_errors ... ok
+test test_revert_to_target_reverts_only_after_target ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\model_builder_cache_tests.rs (target\debug\deps\model_builder_cache_tests-a7f30599a4757
+666.exe)
+
+running 7 tests
+test build_populates_cache_and_reuses ... ok
+test filters_keyed_by_compile_time_table_name_not_override ... ok
+test has_query_filter_invalidates_filter_cache ... ok
+test register_entity_meta_invalidates_caches ... ok
+test property_override_invalidates_build_cache ... ok
+test filters_by_table_populates_cache_and_returns_arc ... ok
+test to_table_invalidates_build_cache ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\multi_db_context_tests.rs (target\debug\deps\multi_db_context_tests-c76fb9ba1c4b45c0.ex
+e)
+
+running 6 tests
+test test_config_context_key_tags ... ok
+test test_context_key_registration_tags ... ok
+test test_keyed_context_filters_out_default_entities ... ok
+test test_default_context_filters_out_keyed_entities ... ok
+test test_keyed_context_applies_config_overrides ... ok
+test test_default_context_applies_config_overrides ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\mysql_crud_tests.rs (target\debug\deps\mysql_crud_tests-d1eca878549b7b10.exe)
+
+running 8 tests
+test test_mysql_empty_result_handling ... ok
+test test_mysql_count_and_any ... ok
+test test_mysql_aggregation_queries ... ok
+test test_mysql_crud_lifecycle ... ok
+test test_mysql_filter_with_in_operator ... ok
+test test_mysql_limit_and_offset ... ok
+test test_mysql_has_data_seed ... ok
+test test_mysql_ensure_created_and_deleted ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\navigation_perf_tests.rs (target\debug\deps\navigation_perf_tests-5281bfd5791cdfad.exe)
+
+running 2 tests
+test test_many_to_many_large_join ... ok
+test test_has_many_large_result_set ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\navigation_tests.rs (target\debug\deps\navigation_tests-525615ea6b380b58.exe)
+
+running 2 tests
+test navigation_tests::test_then_include_nested ... ok
+test navigation_tests::test_include_has_many_and_belongs_to ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\owned_injection_tests.rs (target\debug\deps\owned_injection_tests-073149ed8346a8fb.exe)
+
+running 4 tests
+test owned_handler_can_mutate_dbcontext ... ok
+test owned_handler_gets_fresh_instance_each_call ... ok
+test shared_handler_uses_arc_resolution ... ok
+test keyed_owned_resolution_works ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m tests\postgres_crud_tests.rs (target\debug\deps\postgres_crud_tests-e6a133e7dd4aa0b4.exe)
+
+running 8 tests
+test test_postgres_count_and_any ... ok
+test test_postgres_aggregation_queries ... ok
+test test_postgres_ensure_created_and_deleted ... ok
+test test_postgres_limit_and_offset ... ok
+test test_postgres_crud_lifecycle ... ok
+test test_postgres_empty_result_handling ... ok
+test test_postgres_has_data_seed ... ok
+test test_postgres_filter_with_in_operator ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\production_tests.rs (target\debug\deps\production_tests-935c91b6d77d82f2.exe)
+
+running 6 tests
+test production_tests::test_exists_by_id ... ok
+test production_tests::test_migration_apply_and_revert ... ok
+test production_tests::test_composite_primary_key_crud ... ok
+test production_tests::test_concurrency_conflict_on_stale_token ... FAILED
+test production_tests::test_save_changes_rollback_on_failure ... FAILED
+test production_tests::test_migration_store_apply_pending ... ok
+
+failures:
+
+---- production_tests::test_concurrency_conflict_on_stale_token stdout ----
+
+thread 'production_tests::test_concurrency_conflict_on_stale_token' (19764) panicked at crates\core\tests\production_tests.rs:180:9:
+assertion failed: matches!(result, Err(EFError::ConcurrencyConflict(_)))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- production_tests::test_save_changes_rollback_on_failure stdout ----
+
+thread 'production_tests::test_save_changes_rollback_on_failure' (21516) panicked at crates\core\tests\production_tests.rs:227:9:
+assertion failed: matches!(err, Err(EFError::ConcurrencyConflict(_)))
+
+
+failures:
+    production_tests::test_concurrency_conflict_on_stale_token
+    production_tests::test_save_changes_rollback_on_failure
+
+test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[91merror[0m: test failed, to rerun pass `-p rust-ef --test production_tests`
+[1m[92m     Running[0m tests\projection_typed_tests.rs (target\debug\deps\projection_typed_tests-3aa49b0b1b7918ad.ex
+e)
+
+running 8 tests
+test test_field_type_constants ... ok
+test test_typed_projection_via_linq_select ... ok
+test test_typed_projection_with_filter ... ok
+test test_to_list_typed_2 ... ok
+test test_to_list_typed_4 ... ok
+test test_to_list_typed_1 ... ok
+test test_typed_projection_with_aggregate ... ok
+test test_to_list_typed_3 ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\query_filter_exec_tests.rs (target\debug\deps\query_filter_exec_tests-46fc0d714a84c03a.
+exe)
+
+running 4 tests
+test delete_across_tenant_filtered_out ... ok
+test query_ignore_filters_returns_all_tenants ... ok
+test update_across_tenant_filtered_out ... ok
+test update_within_tenant_succeeds ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\query_filter_nav_tests.rs (target\debug\deps\query_filter_nav_tests-3ea9520cd00fe343.ex
+e)
+
+running 3 tests
+test hasmany_navigation_respects_tenant_filter ... ok
+test nested_include_respects_tenant_filter ... ok
+test hasmany_navigation_without_filter_returns_all ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests\scoped_lifecycle_tests.rs (target\debug\deps\scoped_lifecycle_tests-d80adb27e03fea58.ex
+e)
+
+running 5 tests
+test root_provider_caches_in_root_scope ... ok
+test same_scope_returns_same_instance ... ok
+test different_scopes_return_different_instances ... ok
+test owned_resolution_bypasses_scope_cache ... ok
+test owned_resolution_returns_fresh_instance ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\sqlite_crud_tests.rs (target\debug\deps\sqlite_crud_tests-c59cb2f8af226a8c.exe)
+
+running 9 tests
+test sqlite_crud::test_filter_with_in_operator ... ok
+test sqlite_crud::test_limit_and_offset ... ok
+test sqlite_crud::test_empty_result_handling ... ok
+test sqlite_crud::test_aggregation_queries ... ok
+test sqlite_crud::test_has_data_seed_on_ensure_created ... ok
+test sqlite_crud::test_update_and_delete ... ok
+test sqlite_crud::test_count_and_any ... ok
+test sqlite_crud::test_insert_and_query ... ok
+test sqlite_crud::test_ensure_created_and_deleted ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\subquery_tests.rs (target\debug\deps\subquery_tests-b14a4a27cdaccd66.exe)
+
+running 8 tests
+test test_form_c_filter_subquery ... ok
+test test_any_published_post ... ok
+test test_none_published_post ... ok
+test test_any_combined_with_and ... ok
+test test_not_all_published ... ok
+test test_any_with_complex_predicate ... ok
+test test_not_any_published ... ok
+test test_all_posts_published ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests\tracking_consistency_tests.rs (target\debug\deps\tracking_consistency_tests-538e17c8a92
+80854.exe)
+
+running 1 test
+test interceptor_sees_pending_entries_from_dbset ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests\transaction_composite_tests.rs (target\debug\deps\transaction_composite_tests-f0faa4833
+c5150fd.exe)
+
+running 6 tests
+test test_save_changes_commits_all_on_success ... ok
+test test_composite_pk_insert_and_find_by_key ... ok
+test test_save_changes_rolls_back_on_error ... ok
+test test_composite_pk_find_by_key_returns_none_for_partial_match ... ok
+test test_composite_pk_update ... ok
+test test_composite_pk_delete ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests\transaction_ext_tests.rs (target\debug\deps\transaction_ext_tests-e9c5f971f91bcdb6.exe)
+
+running 10 tests
+test test_transaction_mut_none_without_ambient ... ok
+test test_use_transaction_multiple_save_changes_share_ambient ... ok
+test test_use_transaction_commits_on_ok ... ok
+test test_set_isolation_level_serializable ... ok
+test test_savepoint_release_then_rollback_to_fails ... ok
+test test_use_transaction_rolls_back_on_err ... ok
+test test_begin_transaction_returns_handle ... ok
+test test_savepoint_create_and_rollback_to ... ok
+test test_nested_use_transaction_errors ... ok
+test test_begin_transaction_rollback_consumes_handle ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[92m     Running[0m tests\window_function_tests.rs (target\debug\deps\window_function_tests-37c07b71315ae112.exe)
+
+running 12 tests
+test test_cte_sql_generation ... ok
+test test_dense_rank_window_sql_generation ... ok
+test test_cte_with_explicit_columns ... ok
+test test_multiple_windows_in_one_query ... ok
+test test_lag_window_sql_generation ... ok
+test test_rank_window_no_partition ... ok
+test test_row_number_sql_generation ... ok
+test test_sum_window_sql_generation ... ok
+test test_row_number_execution ... ok
+test test_cte_with_parameters ... ok
+test test_window_with_where_filter ... ok
+test test_sum_window_execution ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src\main.rs (target\debug\deps\rust_ef_audit_example-3fd6aec10e605c6e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src\main.rs (target\debug\deps\rust_ef_blog_example-e54953cd9d866ae0.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src\main.rs (target\debug\deps\rust_ef-3d28bf14c6ec4d8d.exe)
+
+running 1 test
+test scaffold::tests::render_blog_entity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src\lib.rs (target\debug\deps\rust_ef_macros-370c16b82d8fa597.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src\lib.rs (target\debug\deps\rust_ef_mysql-b59a71089207d28e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src\lib.rs (target\debug\deps\rust_ef_postgres-82be4bbc24299f91.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src\main.rs (target\debug\deps\rust_ef_soft_delete_example-4fb7b58a2aba76e2.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src\lib.rs (target\debug\deps\rust_ef_sqlite-b3538cc0ae0e0c32.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rust_ef
+
+running 13 tests
+test crates\core\src\db_context.rs - db_context (line 30) ... ignored
+test crates\core\src\db_context.rs - db_context (line 46) ... ignored
+test crates\core\src\db_context.rs - db_context::DbContext::use_transaction (line 710) ... ignored
+test crates\core\src\db_context.rs - db_context::DbContextOptionsBuilder::add_interceptor (line 189) ... ignored
+test crates\core\src\db_context.rs - db_context::DbContextOptionsBuilder::use_lazy_loading (line 215) ... ignored
+test crates\core\src\di.rs - di (line 14) ... ignored
+test crates\core\src\di.rs - di (line 40) ... ignored
+test crates\core\src\di.rs - di (line 63) ... ignored
+test crates\core\src\di.rs - di (line 77) ... ignored
+test crates\core\src\di.rs - di::DbContextServiceCollectionExt::add_dbcontext_keyed (line 137) ... ignored
+test crates\core\src\interceptor.rs - interceptor (line 9) ... ignored
+test crates\core\src\lib.rs - (line 8) ... ignored
+test crates\core\src\query\builder.rs - query::builder::QueryBuilder<T>::from_cte (line 781) ... ignored
+
+test result: ok. 0 passed; 0 failed; 13 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m   Doc-tests[0m rust_ef_macros
+
+running 3 tests
+test crates\macros\src\entity_config.rs - entity_config (line 9) ... ignored
+test crates\macros\src\lib.rs - entity (line 61) ... ignored
+test crates\macros\src\lib.rs - linq (line 40) ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rust_ef_mysql
+
+running 1 test
+test crates\mysql\src\di_extension.rs - di_extension::DbContextOptionsBuilderExt::use_mysql_with_pool (line 12) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rust_ef_postgres
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m rust_ef_sqlite
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[91merror[0m: 1 target failed:
+    `-p rust-ef --test production_tests`

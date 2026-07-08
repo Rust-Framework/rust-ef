@@ -231,9 +231,9 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
                 let bool_expr_code = compile_bool_expr(&cte_ctx, body)?;
                 let name_str = name.as_str();
                 if *recursive {
-                    let (fk_expr, pk_expr) = link.as_ref().expect(
-                        "recursive CTE must have `link <fk> to <pk>`",
-                    );
+                    let (fk_expr, pk_expr) = link
+                        .as_ref()
+                        .expect("recursive CTE must have `link <fk> to <pk>`");
                     let fk_col = extract_field_name_only(&fk_expr)?;
                     let pk_col = extract_field_name_only(&pk_expr)?;
                     chain = quote! {

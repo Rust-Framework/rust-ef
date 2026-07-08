@@ -149,8 +149,12 @@ async fn keyed_owned_resolution_works() {
         .build()
         .unwrap();
 
-    let mut ctx1: DbContext = provider.get_keyed_owned("primary").expect("get_keyed_owned ctx1");
-    let mut ctx2: DbContext = provider.get_keyed_owned("primary").expect("get_keyed_owned ctx2");
+    let mut ctx1: DbContext = provider
+        .get_keyed_owned("primary")
+        .expect("get_keyed_owned ctx1");
+    let mut ctx2: DbContext = provider
+        .get_keyed_owned("primary")
+        .expect("get_keyed_owned ctx2");
 
     let addr1 = &ctx1 as *const _ as usize;
     let addr2 = &ctx2 as *const _ as usize;

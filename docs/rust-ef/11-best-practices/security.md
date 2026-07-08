@@ -83,9 +83,26 @@ builder.connection_string(&user_supplied_url);  // 绝不要这样做
 
 ### TLS / 传输加密
 
-> **注意**：当前 PostgreSQL Provider 使用 `NoTls`，数据传输默认不加密。在生产环境中，如果数据库连接跨越不可信网络，建议：
-> - 使用 SSH 隧道或 VPN 加密传输通道
-> - 或在 Provider 中启用 TLS 支持（后续版本规划）
+PostgreSQL Provider 自 v1.4 起支持可配置 TLS：
+
+```rust
+use rust_ef_postgres::{PostgresProvider, PgTlsMode};
+
+// 方式 1: 显式 NoTls（向后兼容 v1.3，仅用于本地开发）
+let provider = PostgresProvider::new(&url, 5)?;
+
+// 方式 2: 强制 TLS（生产推荐）
+let connector = native_tls::TlsConnector::builder()
+    .add_root_certificate(/* 加载 CA 证书 */)
+    .build()?;
+let provider = PostgresProvider::new_with_tls(
+    &url, 5, PgTlsMode::Require(connector)
+)?;
+```
+
+`PgTlsMode::Require` 使用平台原生 TLS 实现（Windows SChannel / Linux OpenSSL / macOS Secure Transport）。TLS 类型在 `deadpool_postgres::Manager` 内部通过 `Box<dyn Connect>` 擦除，因此 `Pool` 与 `PostgresConnection` 保持非泛型 API — TLS 是构造期决策，非类型参数。
+
+> **MySQL/SQLite**：MySQL 经 sqlx 已支持 `mysql://...?tls=true` 连接串参数；SQLite 为进程内数据库，无需 TLS。生产部署若跨不可信网络，仍建议结合 SSH 隧道或 VPN。
 
 ---
 
@@ -169,7 +186,7 @@ builder.has_query_filter(linq!(filter |b: Blog| b.tenant_id == current_tenant_id
 - 标识符来源：编译期实体元数据，不接受运行时输入
 - 连接字符串：部署配置层，非运行时用户输入
 - 迁移脚本：开发者受信代码，设计行为
-- 已知限制：PostgreSQL `NoTls`（部署硬化范畴，非框架漏洞）
+- 已知限制：PostgreSQL 默认 `NoTls`（v1.4 起可通过 `PgTlsMode::Require` 启用 TLS，见上文）
 
 ---
 

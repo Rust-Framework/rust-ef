@@ -16,6 +16,11 @@ pub struct TestItem {
     pub value: f64,
 }
 
+impl TestItem {
+    pub const COLUMN_NAME: &'static str = "name";
+    pub const COLUMN_VALUE: &'static str = "value";
+}
+
 impl IEntityType for TestItem {
     fn entity_meta() -> EntityTypeMeta {
         EntityTypeMeta {
@@ -196,5 +201,227 @@ pub async fn run_crud_lifecycle(
     assert_eq!(deleted.deleted, 1);
     assert_eq!(ctx.set::<TestItem>().query().count().await?, 1);
 
+    Ok(())
+}
+
+/// linq! filter + IS NULL / IS NOT NULL (SQLite scenario 2).
+pub async fn run_filter_with_in_operator(
+    provider: Arc<dyn IDatabaseProvider>,
+    dialect: MigrationDialect,
+) -> EFResult<()> {
+    use rust_ef::linq;
+    reset_schema(&*provider, dialect).await?;
+    let mut ctx = db_context_with_provider(provider);
+    ctx.set::<TestItem>().add(TestItem {
+        id: 0,
+        name: "A".into(),
+        value: 1.0,
+    });
+    ctx.set::<TestItem>().add(TestItem {
+        id: 0,
+        name: "B".into(),
+        value: 2.0,
+    });
+    ctx.set::<TestItem>().add(TestItem {
+        id: 0,
+        name: "C".into(),
+        value: 3.0,
+    });
+    ctx.save_changes().await?;
+
+    let items = ctx
+        .set::<TestItem>()
+        .filter(linq!(TestItem, |t| t.value > 1.5))
+        .to_list()
+        .await?;
+    assert_eq!(items.len(), 2);
+
+    let items_null = ctx
+        .set::<TestItem>()
+        .filter(linq!(TestItem, |t| t.value.is_null()))
+        .to_list()
+        .await?;
+    assert_eq!(items_null.len(), 0);
+
+    let items_not_null = ctx
+        .set::<TestItem>()
+        .filter(linq!(TestItem, |t| t.name.is_not_null()))
+        .to_list()
+        .await?;
+    assert_eq!(items_not_null.len(), 3);
+    Ok(())
+}
+
+/// Pagination take/skip (SQLite scenario 3).
+pub async fn run_limit_and_offset(
+    provider: Arc<dyn IDatabaseProvider>,
+    dialect: MigrationDialect,
+) -> EFResult<()> {
+    reset_schema(&*provider, dialect).await?;
+    let mut ctx = db_context_with_provider(provider);
+    for i in 0..10 {
+        ctx.set::<TestItem>().add(TestItem {
+            id: 0,
+            name: format!("Item{}", i),
+            value: i as f64,
+        });
+    }
+    ctx.save_changes().await?;
+
+    let items = ctx.set::<TestItem>().query().take(3).to_list().await?;
+    assert_eq!(items.len(), 3);
+
+    let items = ctx
+        .set::<TestItem>()
+        .query()
+        .skip(8)
+        .take(5)
+        .to_list()
+        .await?;
+    assert_eq!(items.len(), 2);
+    Ok(())
+}
+
+/// count + any existence checks (SQLite scenario 4).
+pub async fn run_count_and_any(
+    provider: Arc<dyn IDatabaseProvider>,
+    dialect: MigrationDialect,
+) -> EFResult<()> {
+    use rust_ef::linq;
+    reset_schema(&*provider, dialect).await?;
+    let mut ctx = db_context_with_provider(provider);
+    for i in 0..5 {
+        ctx.set::<TestItem>().add(TestItem {
+            id: 0,
+            name: "X".into(),
+            value: i as f64,
+        });
+    }
+    ctx.save_changes().await?;
+
+    let count = ctx.set::<TestItem>().query().count().await?;
+    assert_eq!(count, 5);
+
+    let any = ctx
+        .set::<TestItem>()
+        .filter(linq!(TestItem, |t| t.value == 3))
+        .any()
+        .await?;
+    assert!(any);
+
+    let any_none = ctx
+        .set::<TestItem>()
+        .filter(linq!(TestItem, |t| t.value == 99))
+        .any()
+        .await?;
+    assert!(!any_none);
+    Ok(())
+}
+
+/// Aggregation sum/avg (SQLite scenario 6).
+pub async fn run_aggregation_queries(
+    provider: Arc<dyn IDatabaseProvider>,
+    dialect: MigrationDialect,
+) -> EFResult<()> {
+    use rust_ef::linq;
+    reset_schema(&*provider, dialect).await?;
+    let mut ctx = db_context_with_provider(provider);
+    for i in 1..=5 {
+        ctx.set::<TestItem>().add(TestItem {
+            id: 0,
+            name: "Agg".into(),
+            value: i as f64,
+        });
+    }
+    ctx.save_changes().await?;
+
+    let sum = linq!(ctx.set::<TestItem>().query(), |b: TestItem| true; sum b.value).await?;
+    assert!((sum - 15.0).abs() < 0.01, "sum should be 15.0, got {}", sum);
+
+    let avg = linq!(ctx.set::<TestItem>().query(), |b: TestItem| true; avg b.value).await?;
+    assert!((avg - 3.0).abs() < 0.01, "avg should be 3.0, got {}", avg);
+    Ok(())
+}
+
+/// Empty table query returns [] / count 0 / any false / first_or_default None (SQLite scenario 7).
+pub async fn run_empty_result_handling(
+    provider: Arc<dyn IDatabaseProvider>,
+    dialect: MigrationDialect,
+) -> EFResult<()> {
+    reset_schema(&*provider, dialect).await?;
+    let mut ctx = db_context_with_provider(provider);
+
+    let items = ctx.set::<TestItem>().query().to_list().await?;
+    assert!(items.is_empty());
+
+    let count = ctx.set::<TestItem>().query().count().await?;
+    assert_eq!(count, 0);
+
+    let any = ctx.set::<TestItem>().query().any().await?;
+    assert!(!any);
+
+    let first = ctx.set::<TestItem>().query().first_or_default().await?;
+    assert!(first.is_none());
+    Ok(())
+}
+
+/// ensure_created → insert → ensure_deleted → ensure_created resets (SQLite scenario 8).
+pub async fn run_ensure_created_and_deleted(
+    provider: Arc<dyn IDatabaseProvider>,
+    dialect: MigrationDialect,
+) -> EFResult<()> {
+    // Start from a clean slate: ensure_deleted then ensure_created.
+    let meta = TestItem::entity_meta();
+    let engine = MigrationEngine::new(dialect);
+    let _ = engine
+        .ensure_deleted(&*provider, std::slice::from_ref(&meta))
+        .await;
+
+    let mut ctx = db_context_with_provider(provider);
+    ctx.set::<TestItem>();
+    ctx.ensure_created().await?;
+
+    ctx.set::<TestItem>().add(TestItem {
+        id: 0,
+        name: "Created".into(),
+        value: 1.0,
+    });
+    let result = ctx.save_changes().await?;
+    assert_eq!(result.added, 1);
+
+    let items = ctx.set::<TestItem>().query().to_list().await?;
+    assert_eq!(items.len(), 1);
+
+    ctx.ensure_deleted().await?;
+    ctx.ensure_created().await?;
+    let items = ctx.set::<TestItem>().query().to_list().await?;
+    assert!(items.is_empty());
+    Ok(())
+}
+
+/// has_data seed rows materialized on ensure_created (SQLite scenario 9).
+pub async fn run_has_data_seed(
+    provider: Arc<dyn IDatabaseProvider>,
+    dialect: MigrationDialect,
+) -> EFResult<()> {
+    let meta = TestItem::entity_meta();
+    let engine = MigrationEngine::new(dialect);
+    let _ = engine
+        .ensure_deleted(&*provider, std::slice::from_ref(&meta))
+        .await;
+
+    let mut ctx = db_context_with_provider(provider);
+    ctx.model().entity::<TestItem>().has_data(&[TestItem {
+        id: 1,
+        name: "Seed".into(),
+        value: 9.0,
+    }]);
+    ctx.set::<TestItem>();
+    ctx.ensure_created().await?;
+
+    let items = ctx.set::<TestItem>().query().to_list().await?;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].name, "Seed");
+    assert!((items[0].value - 9.0).abs() < f64::EPSILON);
     Ok(())
 }

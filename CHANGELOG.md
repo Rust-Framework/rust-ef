@@ -9,7 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — 2026-07-07 — Metadata cache + rust-dicore → rust-dix 0.6 rename
+## [1.4.0] — 2026-07-08 — Production hardening (P0+P1) + metadata cache + rust-dix 0.6
+
+### Fixed — P0-1 MySQL `cell_to_string` 类型分发
+
+MySQL Provider 的 `cell_to_string` 之前仅尝试 `String` 反序列化，对非
+String 列（BOOL / INTEGER / FLOAT / DATETIME / UUID 等）静默失败并返回
+`"NULL"`，导致 `IFromRow::from_row` 解析出错误值。现按 sqlx 类型顺序分发：
+bool → i64 → u64 → f64 → NaiveDateTime → NaiveDate → Uuid → String →
+Vec\<u8\>，每种类型用 `try_get` 尝试，首个成功者序列化为字符串。覆盖
+`crates/mysql/src/connection.rs:20-68`。
+
+### Fixed — P0-2 MetadataCache poison 恢复
+
+`MetadataCache` 使用 `Mutex<HashMap>` 共享进程级元数据缓存。此前
+`get_or_build()` 在 mutex 中毒时（前一个持有者 panic）调用
+`.expect("MetadataCache poisoned")`，导致整个进程永久不可用。现改为：
+捕获 `PoisonError` 后清空缓存中可能不完整的条目，重建后返回。3 个单元
+测试覆盖（`test_poison_recovery` / `test_clear_after_poison` /
+`test_concurrent_build_safe`），位于 `crates/core/src/metadata_cache.rs`。
+
+### Added — P1-3 SQLite r2d2 连接池
+
+SQLite Provider 引入 `SqliteProviderInner` 枚举区分两种连接策略：
+
+- **`Pooled(r2d2::Pool<SqliteConnectionManager>)`** — 文件模式，默认 8
+  连接。每个连接在 acquire 时执行
+  `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`，支持并发读 + 写
+  等待，避免 `SQLITE_BUSY` 立即失败。
+- **`Single(Arc<Mutex<rusqlite::Connection>>)`** — `:memory:` 模式，保留
+  单连接语义以确保测试隔离（SQLite `:memory:` 数据库是 per-connection
+  的，必须共享同一连接）。
+
+`SqliteProvider::new(path)` 创建池化 provider；`new_in_memory()` 保留
+旧行为。WAL 模式允许读写并发，5s busy_timeout 让写者等待锁释放而非
+立即报错。
+
+### Added — P1-6 PostgreSQL TLS 可配置
+
+PostgreSQL Provider 引入 `PgTlsMode` 枚举：
+
+- **`Disable`** — 使用 `tokio_postgres::NoTls`（向后兼容 v1.3，仅用于
+  本地开发）
+- **`Require(native_tls::TlsConnector)`** — 强制 TLS，使用平台原生实现
+  （Windows SChannel / Linux OpenSSL / macOS Secure Transport）
+
+新增 API：
+
+- `PostgresProvider::new_with_tls(connection_string, pool_size, tls: PgTlsMode)`
+- `DbContextOptionsBuilderExt::use_postgres_with_tls(connection_string, pool_size, tls)`
+
+TLS 类型在 `deadpool_postgres::Manager` 内部通过 `Box<dyn Connect>`
+擦除，因此 `Pool` 与 `PostgresConnection` 保持非泛型 API — TLS 是构造
+期决策，非类型参数。依赖 `postgres-native-tls 0.5` + `native-tls 0.2`。
+
+### Added — P1-5 PG/MySQL 集成测试对齐 SQLite 9 场景
+
+`crates/core/tests/common/mod.rs` 此前仅有 `run_crud_lifecycle`
+（insert/query/update/delete）。新增 7 个共享 helper 对齐 SQLite 的
+9 场景：
+
+- `run_filter_with_in_operator` — linq! 过滤 + IS NULL / IS NOT NULL
+- `run_limit_and_offset` — take/skip 分页
+- `run_count_and_any` — count + any 存在性检查
+- `run_aggregation_queries` — sum/avg via linq! 宏
+- `run_empty_result_handling` — 空表 to_list/count/any/first_or_default
+- `run_ensure_created_and_deleted` — ensure_created → insert → ensure_deleted → ensure_created 重置
+- `run_has_data_seed` — has_data 种子数据在 ensure_created 时物化
+
+PG/MySQL 测试文件各追加 7 个 `#[tokio::test]`，与 SQLite 9 场景对齐
+（scenario 5 update/delete 已在 `run_crud_lifecycle` 内）。CI 三库
+matrix 全覆盖，本地无 DB 时优雅跳过。
 
 ### Added — Process-level metadata cache (priority 1 architecture iteration)
 
@@ -757,6 +827,7 @@ Project skeleton, workspace layout, and the `IDbContext` / `IDbSet<T>`
 
 ---
 
+[1.4.0]: https://gitcode.com/rf2026/rust-ef/releases/tag/v1.4.0
 [1.1.0]: https://gitcode.com/rf2026/rust-ef/releases/tag/v1.1.0
 [1.0.0]: https://gitcode.com/rf2026/rust-ef/releases/tag/v1.0.0
 [0.5]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.5

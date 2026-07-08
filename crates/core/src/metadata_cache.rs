@@ -57,9 +57,24 @@ impl MetadataCache {
     ///
     /// Lock is held only during lookup/insertion. After return, the
     /// `Arc<BuiltMetadata>` is lock-free.
+    ///
+    /// If the mutex is poisoned (a previous holder panicked), the cache is
+    /// cleared and rebuilt rather than panicking. A poison indicates the
+    /// prior build was interrupted, so cached entries may be incomplete.
+    /// Clearing forces a fresh `build()` on the next access.
     pub fn get_or_build(&self, context_key: Option<&str>) -> Arc<BuiltMetadata> {
         let key = context_key.map(|s| s.to_string());
-        let mut cache = self.by_key.lock().expect("MetadataCache poisoned");
+        let mut cache = match self.by_key.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // Recover from poison: clear potentially-incomplete entries
+                // and proceed. The current request will rebuild from
+                // inventory; subsequent requests re-cache the result.
+                let mut guard = poisoned.into_inner();
+                guard.clear();
+                guard
+            }
+        };
         if let Some(built) = cache.get(&key) {
             return Arc::clone(built);
         }
@@ -117,5 +132,82 @@ impl MetadataCache {
 impl Default for MetadataCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies that a poisoned `MetadataCache` recovers gracefully instead of
+    /// panicking.
+    ///
+    /// A poison occurs when a thread panics while holding the lock. Previously
+    /// `get_or_build` called `.expect("MetadataCache poisoned")`, which would
+    /// propagate the panic to every subsequent caller — a single failure
+    /// permanently broke the whole process. The fix clears the cache on poison
+    /// and rebuilds from inventory.
+    #[test]
+    fn test_poison_recovery() {
+        let cache = MetadataCache::new();
+
+        // First call builds and caches the metadata for context_key=None.
+        let built1 = cache.get_or_build(None);
+        let first_entity_count = built1.entity_metas.len();
+        let first_model_count = built1.model_metas.len();
+
+        // Intentionally poison the mutex by panicking while holding the lock.
+        // catch_unwind isolates the panic so the test process continues.
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = cache.by_key.lock().unwrap();
+            panic!("intentional poison for test");
+        });
+
+        // The mutex is now poisoned. get_or_build must recover (clear + rebuild)
+        // rather than panic. This is the core assertion — if the fix regresses,
+        // this call panics and the test fails.
+        let built2 = cache.get_or_build(None);
+
+        // The rebuilt metadata should have the same shape as the first build
+        // (same number of entities and models), proving the rebuild is
+        // deterministic and complete.
+        assert_eq!(
+            first_entity_count,
+            built2.entity_metas.len(),
+            "rebuilt metadata should have the same entity count as the first build"
+        );
+        assert_eq!(
+            first_model_count,
+            built2.model_metas.len(),
+            "rebuilt metadata should have the same model count as the first build"
+        );
+    }
+
+    /// A second call with the same context_key should return the cached
+    /// `Arc<BuiltMetadata>` (cheap clone), not rebuild.
+    #[test]
+    fn test_cache_hit_returns_same_arc() {
+        let cache = MetadataCache::new();
+        let built1 = cache.get_or_build(None);
+        let built2 = cache.get_or_build(None);
+        // Arc::ptr_eq checks pointer identity — a cache hit returns a clone
+        // of the same Arc, not a freshly built one.
+        assert!(
+            Arc::ptr_eq(&built1, &built2),
+            "second call with same key should return the same cached Arc"
+        );
+    }
+
+    /// Different context_keys should produce independent `BuiltMetadata`
+    /// entries (no cross-key leakage).
+    #[test]
+    fn test_different_context_keys_are_isolated() {
+        let cache = MetadataCache::new();
+        let built_default = cache.get_or_build(None);
+        let built_keyed = cache.get_or_build(Some("other"));
+        assert!(
+            !Arc::ptr_eq(&built_default, &built_keyed),
+            "different context_keys should produce independent BuiltMetadata"
+        );
     }
 }

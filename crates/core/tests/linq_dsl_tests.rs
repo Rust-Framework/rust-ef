@@ -419,8 +419,7 @@ async fn test_except_clause() {
     let mut ctx = seed().await;
     // Main: all blogs (3 rows). EXCEPT operand: tech blogs (2 rows).
     // Result: 1 row (Cooking, the food blog).
-    let op = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.category == "tech")
-        .compile_sql();
+    let op = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.category == "tech").compile_sql();
     let rows = linq!(ctx.set::<DslBlog>(); except op)
         .to_list()
         .await

@@ -32,9 +32,9 @@ pub mod error;
 pub mod interceptor;
 pub mod lazy;
 pub mod metadata;
+pub(crate) mod metadata_cache;
 pub mod migration;
 pub mod model_builder;
-pub(crate) mod metadata_cache;
 pub mod navigation_loader;
 pub mod provider;
 pub mod query;
@@ -75,8 +75,8 @@ pub mod prelude {
     pub use crate::provider::IDatabaseProvider;
     pub use crate::provider::IsolationLevel;
     pub use crate::query::{
-        BoolExpr, CteSpec, LinqSource, ParseFromDb, SetOperator, SetOpSpec,
-        WindowFuncKind, WindowSpec,
+        BoolExpr, CteSpec, LinqSource, ParseFromDb, SetOpSpec, SetOperator, WindowFuncKind,
+        WindowSpec,
     };
     pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};

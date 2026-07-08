@@ -103,21 +103,24 @@ fn test_per_instance_model_mutation_isolation() {
     let ctx2 = DbContext::from_options(&options).expect("ctx2 from_options");
 
     // ctx1 adds a query filter — this writes to ctx1's per-instance ModelBuilder.
-    ctx1
-        .model()
+    ctx1.model()
         .has_query_filter::<CacheBlog>(linq!(filter |b: CacheBlog| b.rating > 5));
 
     let blog_type_id = TypeId::of::<CacheBlog>();
 
     // ctx1 should have the filter.
     assert!(
-        ctx1.model_builder().get_query_filter(&blog_type_id).is_some(),
+        ctx1.model_builder()
+            .get_query_filter(&blog_type_id)
+            .is_some(),
         "ctx1 should have the query filter it just registered"
     );
 
     // ctx2 should NOT have the filter — per-instance isolation.
     assert!(
-        ctx2.model_builder().get_query_filter(&blog_type_id).is_none(),
+        ctx2.model_builder()
+            .get_query_filter(&blog_type_id)
+            .is_none(),
         "ctx2 should not see ctx1's per-instance query filter (cache must not be mutated)"
     );
 }

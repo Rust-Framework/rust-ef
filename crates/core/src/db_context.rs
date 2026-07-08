@@ -716,8 +716,7 @@ impl DbContext {
     /// ```
     pub async fn use_transaction<F, R>(&mut self, f: F) -> EFResult<R>
     where
-        for<'a> F:
-            FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = EFResult<R>> + Send + 'a>>,
+        for<'a> F: FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = EFResult<R>> + Send + 'a>>,
         R: Send + 'static,
     {
         if self.ambient_transaction.is_some() {

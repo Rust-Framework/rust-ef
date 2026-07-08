@@ -5,12 +5,50 @@ use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 use tokio_postgres::NoTls;
 
+/// TLS mode for PostgreSQL connections.
+///
+/// `Disable` uses plaintext connections (`tokio_postgres::NoTls`) — the
+/// pre-v1.4 default, kept for backward compatibility.
+///
+/// `Require` enforces TLS via the platform's native TLS implementation
+/// (SChannel on Windows, OpenSSL on Linux, Secure Transport on macOS). The
+/// connector is cloned per pool acquisition, so it must be `Clone`
+/// (`native_tls::TlsConnector` satisfies this).
+#[derive(Clone)]
+pub enum PgTlsMode {
+    /// Plaintext connection (backward compatible with v1.3).
+    Disable,
+    /// Enforce TLS using the provided `native_tls::TlsConnector`.
+    Require(native_tls::TlsConnector),
+}
+
 pub struct PostgresProvider {
     pool: Pool,
 }
 
 impl PostgresProvider {
+    /// Creates a provider with `NoTls` (backward compatible with v1.3).
+    ///
+    /// For production deployments requiring encrypted connections, use
+    /// [`PostgresProvider::new_with_tls`] with [`PgTlsMode::Require`].
     pub fn new(connection_string: &str, pool_size: usize) -> EFResult<Self> {
+        Self::new_with_tls(connection_string, pool_size, PgTlsMode::Disable)
+    }
+
+    /// Creates a provider with configurable TLS.
+    ///
+    /// `PgTlsMode::Disable` is equivalent to [`PostgresProvider::new`].
+    /// `PgTlsMode::Require(connector)` enforces TLS for all pooled connections.
+    ///
+    /// The TLS connector type is erased inside `deadpool_postgres::Manager`
+    /// (via `Box<dyn Connect>`), so [`Pool`] and [`PostgresConnection`] are
+    /// non-generic — TLS configuration is a per-pool construction-time
+    /// decision, not a type-level parameter.
+    pub fn new_with_tls(
+        connection_string: &str,
+        pool_size: usize,
+        tls: PgTlsMode,
+    ) -> EFResult<Self> {
         let config: tokio_postgres::Config = connection_string
             .parse()
             .map_err(|e| EFError::Connection(format!("Invalid connection string: {}", e)))?;
@@ -24,14 +62,20 @@ impl PostgresProvider {
         cfg.password = config
             .get_password()
             .map(|p| String::from_utf8_lossy(p).to_string());
-        // Apply the requested pool size. `pool_size = 0` falls back to
-        // deadpool's default (which is typically the CPU count).
         if pool_size > 0 {
             cfg.pool.get_or_insert_default().max_size = pool_size;
         }
-        let pool = cfg
-            .create_pool(Some(Runtime::Tokio1), NoTls)
-            .map_err(|e| EFError::Connection(format!("Failed to create pool: {}", e)))?;
+
+        let pool = match tls {
+            PgTlsMode::Disable => cfg
+                .create_pool(Some(Runtime::Tokio1), NoTls)
+                .map_err(|e| EFError::Connection(format!("Failed to create pool: {}", e)))?,
+            PgTlsMode::Require(connector) => {
+                let tls = postgres_native_tls::MakeTlsConnector::new(connector);
+                cfg.create_pool(Some(Runtime::Tokio1), tls)
+                    .map_err(|e| EFError::Connection(format!("Failed to create pool: {}", e)))?
+            }
+        };
         Ok(Self { pool })
     }
 }
@@ -48,7 +92,7 @@ impl IDatabaseProvider for PostgresProvider {
             .get()
             .await
             .map_err(|e| EFError::Connection(format!("Pool error: {}", e)))?;
-        Ok(Box::new(crate::connection::PostgresConnection { client }))
+        Ok(Box::new(crate::connection::PostgresConnection::new(client)))
     }
 
     async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {

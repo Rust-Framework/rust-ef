@@ -10,9 +10,7 @@
 
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 use quote::quote;
-use syn::{
-    parse::Parse, BinOp, Expr, ExprBinary, ExprPath, ExprUnary, Ident, Token, Type, UnOp,
-};
+use syn::{parse::Parse, BinOp, Expr, ExprBinary, ExprPath, ExprUnary, Ident, Token, Type, UnOp};
 
 use super::ast::*;
 

@@ -8,6 +8,12 @@ pub struct PostgresConnection {
     pub(crate) client: deadpool_postgres::Client,
 }
 
+impl PostgresConnection {
+    pub(crate) fn new(client: deadpool_postgres::Client) -> Self {
+        Self { client }
+    }
+}
+
 /// Converts a cell from a `tokio_postgres::Row` into a `String` suitable for
 /// the `IFromRow::from_row(&[String])` interface.
 ///

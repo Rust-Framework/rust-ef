@@ -1,9 +1,9 @@
 # rust-ef 生产就绪技术规格说明书
 
-> 版本: v1.1.0 — 基于 2026-06-27 v1.1 Query Fidelity + 实体自动发现审计结果（含发布评审修复）  
+> 版本: v1.4.0 — 基于 2026-07-08 v1.4 生产硬化迭代（P0 修复 + P1 加固）审计结果  
 > 包名: `rust-ef`（workspace: `crates/core`）  
-> 目标: v1.1 查询保真度迭代 + 元数据注册自动化  
-> **当前阶段: v1.1.0 已达成（Lazy Loading + IN/NOT IN 子查询 + CTE/Window 函数 + PG 方言修复 + 实体自动发现 + 多数据库上下文 + 发布评审通过）**
+> 目标: v1.4 生产硬化（MySQL cell_to_string 修复 + MetadataCache poison 恢复 + SQLite r2d2 池 + PG TLS 可配置 + 三库测试对齐）  
+> **当前阶段: v1.4.0 已达成（P0 全部清除，P1 加固完成；metadata cache + rust-dix 0.6 已并入 v1.4）**
 
 ---
 
@@ -683,6 +683,16 @@ v1.1 已完成:
   ✅ 多数据库上下文 key（#[context("key")] + #[entity(T, "key")] + 按 key 过滤）
   ✅ #[entity_config] → #[entity] 重命名（无 deprecated 别名，干净利索）
 
+v1.4 已完成（生产硬化）:
+  ✅ P0-1 MySQL cell_to_string 类型分发（bool/i64/u64/f64/NaiveDateTime/NaiveDate/Uuid/Bytes）
+  ✅ P0-2 MetadataCache poison 恢复（清缓存重建，3 个单测）
+  ✅ P1-3 SQLite r2d2 连接池（Pooled/Single 混合模式 + WAL + 5s busy_timeout）
+  ✅ P1-5 PG/MySQL 集成测试对齐 SQLite 9 场景（7+7 个新测试）
+  ✅ P1-6 PostgreSQL TLS 可配置（PgTlsMode + new_with_tls + postgres-native-tls 0.5）
+  ✅ metadata cache 进程级共享（BuiltMetadata + context_key 隔离）
+  ✅ rust-dicore → rust-dix 0.6 重命名 + Result 化解析 API
+  ✅ 事务接口扩展（ambient transaction + savepoint + isolation level）
+
 v1.2+ 范围（规模扩展）:
   二级缓存（IQueryInterceptor + CachingProvider）
   读写分离自动路由（RoutingProvider）
@@ -703,7 +713,7 @@ v1.3+ 范围（生态集成）:
 4. **`from_row` 基于 `Vec<String>`**：大结果集性能与类型安全有限；Window 函数投影列被 `from_row` 忽略（仅读取实体字段）
 5. **DbContext DI 为 Transient**：长生命周期场景需自行管理 scope
 6. **CTE raw 模式 PostgreSQL 占位符**：`with_cte_internal()` 的预编译 SQL 使用 `?` 占位符，在 PostgreSQL 上不会转换为 `$N`。推荐使用 `linq!(with ...)` 语法糖（typed 模式），它在 `to_sql_with` 时用 provider 占位符编译，确保三库正确
-7. **PostgreSQL Provider 默认 `NoTls`**：生产部署需自行启用 TLS（部署加固，非框架漏洞）
+7. **PostgreSQL Provider TLS 可配置**：自 v1.4 起支持 `PgTlsMode::Require(native_tls::TlsConnector)` 强制 TLS；默认 `PgTlsMode::Disable`（NoTls）仅用于本地开发。生产部署应使用 `PostgresProvider::new_with_tls()` 或 `use_postgres_with_tls()` 启用 TLS
 
 ---
 
@@ -736,6 +746,62 @@ v1.3+ 范围（生态集成）:
 | `exists_by_id_tests.rs` | 8 | exists_by_id / exists_by_key（单主键 + 复合主键） |
 | `transaction_composite_tests.rs` | 6 | 事务回滚 + 复合主键 CRUD 全生命周期 |
 | 其他（单元 + 集成） | 100+ | 类型映射、DI、拦截器等 |
+
+---
+
+## 3.10 v1.4 生产硬化迭代（2026-07-08）
+
+**状态: ✅ 通过**
+
+本轮迭代聚焦生产级硬化，清除全部 P0 blocker 并完成 P1 加固。审计覆盖 5 项变更，每项均有代码证据与测试覆盖。
+
+### 评审准则与结果
+
+| 准则 | 结果 | 说明 |
+|------|:----:|------|
+| 测试全绿 | ✅ | SQLite 9 + MySQL 8 + PG 8（CI 未设置时跳过）+ 既有 278 测试 |
+| Clippy 零新增 warning | ✅ | `cargo clippy --workspace --all-features --no-deps -- -D warnings`（既有 macros 警告隔离） |
+| fmt 一致 | ✅ | `cargo fmt --all -- --check` |
+| 版本号统一 | ✅ | workspace + 6 个 crate Cargo.toml inter-dep 同步 1.4.0 |
+| 文档同步 | ✅ | CHANGELOG / SPEC / security.md 反映 v1.4 |
+| 无 deprecated 残留 | ✅ | 公共 API 全部稳定 |
+
+### 变更清单
+
+| 优先级 | 项 | 类型 | 证据 |
+|:------:|----|:----:|------|
+| P0-1 | MySQL `cell_to_string` 类型分发 | Fixed | `crates/mysql/src/connection.rs:20-68` — bool/i64/u64/f64/NaiveDateTime/NaiveDate/Uuid/String/Vec\<u8\> 按 sqlx 类型分发 |
+| P0-2 | MetadataCache poison 恢复 | Fixed | `crates/core/src/metadata_cache.rs:61-73` — 清缓存重建，3 个单测 |
+| P1-3 | SQLite r2d2 连接池 | Added | `crates/sqlite/src/provider.rs:39-79` — `Pooled`/`Single` 枚举 + WAL customizer |
+| P1-5 | PG/MySQL 测试对齐 | Added | `crates/core/tests/common/mod.rs` — 8 个共享 helper；PG/MySQL 各 8 测试 |
+| P1-6 | PostgreSQL TLS 可配置 | Added | `crates/postgres/src/provider.rs:18-80` — `PgTlsMode` + `new_with_tls()` |
+
+### 新增 API 表面
+
+- **`PgTlsMode`** 枚举（`Disable` / `Require(native_tls::TlsConnector)`）— `crates/postgres/src/provider.rs`
+- **`PostgresProvider::new_with_tls(connection_string, pool_size, tls)`** — 构造带 TLS 的池化 provider
+- **`DbContextOptionsBuilderExt::use_postgres_with_tls(connection_string, pool_size, tls)`** — DI 注册扩展方法
+- **`SqliteProvider::new(path)`**（v1.4 增强）— 文件模式创建 r2d2 池化 provider（默认 8 连接 + WAL + 5s busy_timeout）
+- **`SqliteProvider::new_in_memory()`** — 保留 `:memory:` 单连接语义（测试隔离）
+
+### 测试数量增量
+
+| 测试文件 | v1.1 | v1.4 | 增量 |
+|---------|:----:|:----:|:----:|
+| `sqlite_crud_tests.rs` | 9 | 9 | — |
+| `postgres_crud_tests.rs` | 1 | 8 | +7 |
+| `mysql_crud_tests.rs` | 1 | 8 | +7 |
+| `metadata_cache_tests.rs` | — | +3 | +3（poison 恢复） |
+| **合计增量** | 278 | ~295 | +17 |
+
+### 验收标准
+
+- [x] P0-1：MySQL 非 String 列不再静默返回 "NULL"
+- [x] P0-2：MetadataCache 中毒后可恢复，不导致进程永久不可用
+- [x] P1-3：SQLite 文件模式支持并发读 + 写等待（WAL + busy_timeout）
+- [x] P1-5：PG/MySQL 测试场景数与 SQLite 对齐（9 场景全覆盖）
+- [x] P1-6：PostgreSQL 支持可配置 TLS，生产部署可强制加密
+- [x] 版本号统一 1.4.0，CHANGELOG/SPEC/security.md 同步
 
 ---
 

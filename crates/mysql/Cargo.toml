@@ -13,9 +13,9 @@ categories = ["database"]
 # native chrono/uuid/decimal variants to their canonical string form in
 # `type_conversion.rs` (MySQL's DATETIME/CHAR(36)/DECIMAL columns accept
 # string input and preserve precision, matching v1.0 behavior).
-rust-ef = { version = "1.3.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
+rust-ef = { version = "1.4.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
-sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }
+sqlx = { version = "0.8", features = ["mysql", "runtime-tokio", "chrono", "uuid"] }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }

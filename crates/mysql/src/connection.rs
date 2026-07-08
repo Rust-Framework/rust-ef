@@ -1,7 +1,68 @@
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
-use sqlx::{Column, Row};
+use sqlx::Row;
+
+/// Converts a cell from a `sqlx::mysql::MySqlRow` into a `String` suitable for
+/// the `IFromRow::from_row(&[String])` interface.
+///
+/// Dispatches by attempting `try_get` on common Rust types in a specific
+/// order (bool → i64 → u64 → f64 → NaiveDateTime → NaiveDate → Uuid →
+/// String → Vec<u8>). This mirrors the PostgreSQL provider's
+/// `cell_to_string` approach and fixes the bug where non-String columns
+/// (integers, booleans, datetimes, bytes) were silently converted to
+/// `"NULL"` because `try_get::<String>` fails on non-text types.
+///
+/// `Ok(None)` from `try_get::<Option<T>>` indicates a SQL NULL — returned as
+/// `"NULL"` to match the SQLite/PG provider convention. `Err` indicates the
+/// column's native type is not representable as `T`, so we fall through to
+/// the next candidate type.
+fn cell_to_string(row: &sqlx::mysql::MySqlRow, col_idx: usize) -> String {
+    // bool (TINYINT(1)) — must precede integer types, since MySQL booleans
+    // are stored as 0/1 and would otherwise be matched by i64.
+    if let Ok(v) = row.try_get::<Option<bool>, _>(col_idx) {
+        return v
+            .map(|b| if b { "1".into() } else { "0".into() })
+            .unwrap_or_else(|| "NULL".into());
+    }
+    // i64 covers most signed integer columns (TINYINT, SMALLINT, INT, BIGINT)
+    if let Ok(v) = row.try_get::<Option<i64>, _>(col_idx) {
+        return v.map(|n| n.to_string()).unwrap_or_else(|| "NULL".into());
+    }
+    // u64 for unsigned big ints (BIGINT UNSIGNED)
+    if let Ok(v) = row.try_get::<Option<u64>, _>(col_idx) {
+        return v.map(|n| n.to_string()).unwrap_or_else(|| "NULL".into());
+    }
+    // f64 (FLOAT, DOUBLE)
+    if let Ok(v) = row.try_get::<Option<f64>, _>(col_idx) {
+        return v.map(|n| n.to_string()).unwrap_or_else(|| "NULL".into());
+    }
+    // NaiveDateTime (DATETIME, TIMESTAMP)
+    if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col_idx) {
+        return v.map(|dt| dt.to_string()).unwrap_or_else(|| "NULL".into());
+    }
+    // NaiveDate (DATE)
+    if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col_idx) {
+        return v.map(|d| d.to_string()).unwrap_or_else(|| "NULL".into());
+    }
+    // Uuid (CHAR(36))
+    if let Ok(v) = row.try_get::<Option<uuid::Uuid>, _>(col_idx) {
+        return v.map(|u| u.to_string()).unwrap_or_else(|| "NULL".into());
+    }
+    // String (VARCHAR, TEXT, CHAR) — also catches DECIMAL since MySQL
+    // returns DECIMAL as string to preserve precision.
+    if let Ok(v) = row.try_get::<Option<String>, _>(col_idx) {
+        return v.unwrap_or_else(|| "NULL".into());
+    }
+    // bytes (BLOB, BINARY)
+    if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col_idx) {
+        return v
+            .map(|b| format!("{:?}", b))
+            .unwrap_or_else(|| "NULL".into());
+    }
+    // Unknown / unsupported type — last resort
+    "NULL".into()
+}
 
 pub struct MySqlConnection {
     conn: Option<sqlx::pool::PoolConnection<sqlx::MySql>>,
@@ -41,22 +102,13 @@ impl IAsyncConnection for MySqlConnection {
             return Ok(Vec::new());
         }
 
-        let columns: Vec<String> = rows[0]
-            .columns()
-            .iter()
-            .map(|c| c.name().to_string())
-            .collect();
-
         let result = rows
             .iter()
             .map(|row| {
-                columns
+                row.columns()
                     .iter()
                     .enumerate()
-                    .map(|(i, _)| {
-                        row.try_get::<String, _>(i)
-                            .unwrap_or_else(|_| "NULL".to_string())
-                    })
+                    .map(|(i, _)| cell_to_string(row, i))
                     .collect()
             })
             .collect();

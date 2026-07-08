@@ -11,9 +11,7 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{
-    BinOp, Expr, ExprClosure, ExprMethodCall, ExprUnary, Ident, Pat, Type, UnOp,
-};
+use syn::{BinOp, Expr, ExprClosure, ExprMethodCall, ExprUnary, Ident, Pat, Type, UnOp};
 
 use super::ast::HavingExprAst;
 use super::context::{
@@ -119,7 +117,10 @@ pub(crate) fn compile_bool_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Re
 }
 
 /// Compiles method-call boolean expressions for Form C (is_null, is_not_null, contains, etc.).
-pub(crate) fn compile_bool_method(ctx: &LinqCtx<'_>, call: &ExprMethodCall) -> syn::Result<TokenStream2> {
+pub(crate) fn compile_bool_method(
+    ctx: &LinqCtx<'_>,
+    call: &ExprMethodCall,
+) -> syn::Result<TokenStream2> {
     let method = call.method.to_string();
 
     // G5: Subquery methods — `b.posts.any(|p: Post| p.published)` etc.
@@ -342,7 +343,10 @@ pub(crate) fn compile_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<
     })
 }
 
-pub(crate) fn compile_negated_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<TokenStream2> {
+pub(crate) fn compile_negated_comparison(
+    ctx: &LinqCtx<'_>,
+    expr: &Expr,
+) -> syn::Result<TokenStream2> {
     match expr {
         Expr::Group(g) => compile_negated_comparison(ctx, &g.expr),
         Expr::Paren(p) => compile_negated_comparison(ctx, &p.expr),
@@ -667,7 +671,10 @@ pub(crate) fn compile_in_subquery_bool(
     })
 }
 
-pub(crate) fn compile_method(ctx: &LinqCtx<'_>, call: &ExprMethodCall) -> syn::Result<TokenStream2> {
+pub(crate) fn compile_method(
+    ctx: &LinqCtx<'_>,
+    call: &ExprMethodCall,
+) -> syn::Result<TokenStream2> {
     let method = call.method.to_string();
 
     // G5: Subquery methods — `b.posts.any(|p: Post| p.published)` etc.
@@ -727,7 +734,11 @@ pub(crate) fn compile_method(ctx: &LinqCtx<'_>, call: &ExprMethodCall) -> syn::R
     }
 }
 
-pub(crate) fn compile_order(ctx: &LinqCtx<'_>, expr: &Expr, descending: bool) -> syn::Result<TokenStream2> {
+pub(crate) fn compile_order(
+    ctx: &LinqCtx<'_>,
+    expr: &Expr,
+    descending: bool,
+) -> syn::Result<TokenStream2> {
     let column = extract_field(ctx, expr)?;
     if descending {
         Ok(quote! { .order_by_desc_column(#column) })
@@ -746,7 +757,10 @@ pub(crate) fn compile_order(ctx: &LinqCtx<'_>, expr: &Expr, descending: bool) ->
 /// Column references are resolved to `Entity::COLUMN_*` constants via
 /// `extract_field`, and value literals via `extract_value`. Aggregate names
 /// and operators (validated during parsing) are mapped to enum variants.
-pub(crate) fn compile_having_expr(ast: &HavingExprAst, ctx: &LinqCtx<'_>) -> syn::Result<TokenStream2> {
+pub(crate) fn compile_having_expr(
+    ast: &HavingExprAst,
+    ctx: &LinqCtx<'_>,
+) -> syn::Result<TokenStream2> {
     match ast {
         HavingExprAst::Compare {
             agg,
