@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.1] — 2026-07-08 — De-String 物化管道 + 生产硬化 M1
+
+### Changed — De-String 物化管道（M2）
+
+查询结果物化路径从 `Vec<Vec<String>>` 重构为原生 `DbValue` 管道，消除
+String 往返解析导致的静默数据丢失风险：
+
+- `IFromRow::from_row` 签名改为接收 `&[DbValue]`
+- 移除 `ParseFromDb` trait 及 `parse_column` helper
+- `IAsyncConnection::query` / `execute` 返回 `Vec<DbValue>` 行
+- 三个 provider 新增 `row_conversion.rs`，按数据库原生类型直接映射 `DbValue`
+- 宏生成的 `from_row` 解析逻辑改用 `try_into()` 而非 `.parse()`
+
+### Changed — 生产硬化 M1（P0 安全与连接池）
+
+- **M1.1 连接池单例化**：provider 内部连接池改为进程级单例，避免重复创建
+- **M1.2 Debug 脱敏**：`DbContextOptions` Debug 输出隐藏连接串密码
+- **M1.3 BoolExpr::raw 收窄**：`BoolExpr::raw` 标记 `#[doc(hidden)]`，引导使用类型安全构造器
+- **M1.4 TLS 安全优先**：PostgreSQL / MySQL 默认启用 TLS；新增 `new_insecure()` 逃生舱
+
+### Changed — Provider 代码结构
+
+- 提取 `tls.rs`（MySQL / PostgreSQL TLS 配置）
+- SQLite 新增 `pool_strategy.rs` / `sync_ops.rs` 模块
+- 统一三个 provider 的公共代码结构
+
+### Changed — 错误类型
+
+- 统一 `EFError` 构造函数调用风格
+- 新增类型转换 / 连接 / 事务等细分错误变体
+
+### Fixed
+
+- 修复 MySQL `row_conversion.rs` 未使用 import 编译警告
+- 同步更新 examples / tests / CLI 以适配 `DbValue` 管道
+
+### Migration — 1.5.0 → 1.5.1
+
+1. 手动实现 `IFromRow` 的类型：`from_row(values: &[String])` → `from_row(values: &[DbValue])`
+2. 移除对 `ParseFromDb` / `parse_column` 的直接使用（已删除）
+3. PostgreSQL / MySQL 连接若需明文：改用 `new_insecure()` 或 `PgTlsMode::Disabled` /
+   `MySqlTlsMode::Disabled`
+
+---
+
 ## [1.5.0] — 2026-07-08 — tracing 集成 + SemVer 严格化 + MySQL TLS 显式 API
 
 ### Added — tracing 集成（慢查询 + 连接池指标）
