@@ -106,7 +106,7 @@ async fn test_use_transaction_rolls_back_on_err() {
             Box::pin(async move {
                 add_item(ctx, "beta").await;
                 ctx.save_changes().await?;
-                Err(EFError::Transaction("forced failure".into()))
+                Err(EFError::transaction("forced failure"))
             })
         })
         .await;

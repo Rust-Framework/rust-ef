@@ -104,7 +104,7 @@ impl ITransaction for DbTransaction {
         Box::pin(async move {
             self.conn
                 .as_mut()
-                .ok_or_else(|| crate::error::EFError::transaction("transaction consumed".into()))?
+                .ok_or_else(|| crate::error::EFError::transaction("transaction consumed"))?
                 .create_savepoint(name)
                 .await
         })
@@ -117,7 +117,7 @@ impl ITransaction for DbTransaction {
         Box::pin(async move {
             self.conn
                 .as_mut()
-                .ok_or_else(|| crate::error::EFError::transaction("transaction consumed".into()))?
+                .ok_or_else(|| crate::error::EFError::transaction("transaction consumed"))?
                 .release_savepoint(name)
                 .await
         })
@@ -130,7 +130,7 @@ impl ITransaction for DbTransaction {
         Box::pin(async move {
             self.conn
                 .as_mut()
-                .ok_or_else(|| crate::error::EFError::transaction("transaction consumed".into()))?
+                .ok_or_else(|| crate::error::EFError::transaction("transaction consumed"))?
                 .rollback_to_savepoint(name)
                 .await
         })
@@ -143,7 +143,7 @@ impl ITransaction for DbTransaction {
         Box::pin(async move {
             self.conn
                 .as_mut()
-                .ok_or_else(|| crate::error::EFError::transaction("transaction consumed".into()))?
+                .ok_or_else(|| crate::error::EFError::transaction("transaction consumed"))?
                 .set_transaction_isolation(level)
                 .await
         })

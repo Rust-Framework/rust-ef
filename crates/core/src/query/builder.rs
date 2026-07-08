@@ -1087,7 +1087,10 @@ impl<T: IEntityType> QueryBuilder<T> {
                     return Ok(0);
                 }
                 return i64::try_from(first_val.clone()).map_err(|e| {
-                    crate::error::EFError::type_conversion(format!("COUNT result is not i64: {}", e))
+                    crate::error::EFError::type_conversion(format!(
+                        "COUNT result is not i64: {}",
+                        e
+                    ))
                 });
             }
         }

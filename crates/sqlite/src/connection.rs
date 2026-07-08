@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_ef::error::EFResult;
+use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -12,10 +12,16 @@ use crate::sync_ops::{execute_sync, query_sync};
 /// The underlying SQLite connection handle.
 ///
 /// `Pooled` wraps an `r2d2::PooledConnection` (used for file-based databases
-/// with a connection pool). `Shared` wraps an `Arc<tokio::sync::Mutex<Connection>>`
-/// (used for `:memory:` databases, which must share a single connection).
+/// with a connection pool). The `Option` allows temporarily taking the
+/// connection out so it can be moved into `spawn_blocking` — the connection is
+/// returned from the blocking task and put back for subsequent operations.
+///
+/// `Shared` wraps an `Arc<tokio::sync::Mutex<Connection>>` (used for `:memory:`
+/// databases, which must share a single connection). Operations on `Shared`
+/// call `rusqlite` directly (in-memory operations are sub-millisecond, so
+/// blocking the tokio worker is acceptable).
 enum SqliteConnectionInner {
-    Pooled(StdMutex<PooledConnection<SqliteConnectionManager>>),
+    Pooled(StdMutex<Option<PooledConnection<SqliteConnectionManager>>>),
     Shared(Arc<TokioMutex<rusqlite::Connection>>),
 }
 
@@ -28,7 +34,7 @@ pub struct SqliteConnection {
 impl SqliteConnection {
     pub(crate) fn new_pooled(conn: PooledConnection<SqliteConnectionManager>) -> Self {
         Self {
-            inner: SqliteConnectionInner::Pooled(StdMutex::new(conn)),
+            inner: SqliteConnectionInner::Pooled(StdMutex::new(Some(conn))),
             #[cfg(feature = "tracing")]
             slow_query_threshold: None,
         }
@@ -60,10 +66,24 @@ impl IAsyncConnection for SqliteConnection {
         let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         match &self.inner {
             SqliteConnectionInner::Pooled(m) => {
-                // &mut self guarantees no contention; poison is recovered
-                // rather than propagated.
-                let conn = m.lock().unwrap_or_else(|p| p.into_inner());
-                execute_sync(&conn, sql, params)
+                let conn = {
+                    let mut guard = m.lock().unwrap_or_else(|p| p.into_inner());
+                    guard.take().ok_or_else(|| {
+                        EFError::query(
+                            "SQLite connection unavailable (previous spawn_blocking panicked)",
+                        )
+                    })?
+                };
+                let sql_owned = sql.to_string();
+                let params_owned = params.to_vec();
+                let (result, conn) = tokio::task::spawn_blocking(move || {
+                    (execute_sync(&conn, &sql_owned, &params_owned), conn)
+                })
+                .await
+                .map_err(|e| EFError::query(format!("spawn_blocking panicked: {}", e)))?;
+                let mut guard = m.lock().unwrap_or_else(|p| p.into_inner());
+                *guard = Some(conn);
+                result
             }
             SqliteConnectionInner::Shared(m) => {
                 let conn = m.lock().await;
@@ -76,8 +96,24 @@ impl IAsyncConnection for SqliteConnection {
         let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         match &self.inner {
             SqliteConnectionInner::Pooled(m) => {
-                let conn = m.lock().unwrap_or_else(|p| p.into_inner());
-                query_sync(&conn, sql, params)
+                let conn = {
+                    let mut guard = m.lock().unwrap_or_else(|p| p.into_inner());
+                    guard.take().ok_or_else(|| {
+                        EFError::query(
+                            "SQLite connection unavailable (previous spawn_blocking panicked)",
+                        )
+                    })?
+                };
+                let sql_owned = sql.to_string();
+                let params_owned = params.to_vec();
+                let (result, conn) = tokio::task::spawn_blocking(move || {
+                    (query_sync(&conn, &sql_owned, &params_owned), conn)
+                })
+                .await
+                .map_err(|e| EFError::query(format!("spawn_blocking panicked: {}", e)))?;
+                let mut guard = m.lock().unwrap_or_else(|p| p.into_inner());
+                *guard = Some(conn);
+                result
             }
             SqliteConnectionInner::Shared(m) => {
                 let conn = m.lock().await;

@@ -102,9 +102,7 @@ impl<T> BelongsTo<T> {
             return Ok(());
         };
         if ctx.depth() >= MAX_LAZY_DEPTH {
-            return Err(EFError::other(
-                "lazy loading recursion limit exceeded".into(),
-            ));
+            return Err(EFError::other("lazy loading recursion limit exceeded"));
         }
         let maybe_entity = load_scalar_lazy::<T>(ctx.as_ref()).await?;
         if let Some(mut entity) = maybe_entity {
@@ -240,9 +238,7 @@ impl<T, Join> HasMany<T, Join> {
             return Ok(());
         };
         if ctx.depth() >= MAX_LAZY_DEPTH {
-            return Err(EFError::other(
-                "lazy loading recursion limit exceeded".into(),
-            ));
+            return Err(EFError::other("lazy loading recursion limit exceeded"));
         }
         let mut entities = load_collection_lazy::<T>(ctx.as_ref()).await?;
         // Attach lazy contexts to each child for nested lazy loading.
@@ -352,9 +348,7 @@ impl<T> HasOne<T> {
             return Ok(());
         };
         if ctx.depth() >= MAX_LAZY_DEPTH {
-            return Err(EFError::other(
-                "lazy loading recursion limit exceeded".into(),
-            ));
+            return Err(EFError::other("lazy loading recursion limit exceeded"));
         }
         let maybe_entity = load_scalar_lazy::<T>(ctx.as_ref()).await?;
         if let Some(mut entity) = maybe_entity {

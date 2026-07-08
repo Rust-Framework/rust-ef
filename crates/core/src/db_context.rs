@@ -189,7 +189,7 @@ impl DbContextOptions {
         }
         let factory = self.provider_factory.as_ref().ok_or_else(|| {
             crate::error::EFError::configuration(
-                "No provider configured. Call use_sqlite / use_postgres / use_mysql first.".into(),
+                "No provider configured. Call use_sqlite / use_postgres / use_mysql first.",
             )
         })?;
         let provider = factory(self.connection_string())?;
@@ -571,7 +571,7 @@ impl DbContext {
         }
         if metas.is_empty() {
             return Err(EFError::configuration(
-                "No entity types registered. Call ctx.discover_entities() or ctx.set::<T>() before ensure_created().".into(),
+                "No entity types registered. Call ctx.discover_entities() or ctx.set::<T>() before ensure_created().",
             ));
         }
         let dialect = self.provider.migration_dialect();
@@ -598,7 +598,7 @@ impl DbContext {
         }
         if metas.is_empty() {
             return Err(EFError::configuration(
-                "No entity types registered. Call ctx.discover_entities() or ctx.set::<T>() before ensure_deleted().".into(),
+                "No entity types registered. Call ctx.discover_entities() or ctx.set::<T>() before ensure_deleted().",
             ));
         }
         let dialect = self.provider.migration_dialect();
@@ -805,8 +805,7 @@ impl DbContext {
     {
         if self.ambient_transaction.is_some() {
             return Err(EFError::transaction(
-                "ambient transaction already active; nested use_transaction is not supported"
-                    .into(),
+                "ambient transaction already active; nested use_transaction is not supported",
             ));
         }
         let mut conn = self.provider.get_connection().await?;

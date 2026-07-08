@@ -285,7 +285,7 @@ where
     let nav = ctx.navigation();
     if nav.kind == NavigationKind::ManyToMany {
         return Err(EFError::other(
-            "load_scalar_lazy called for ManyToMany navigation".into(),
+            "load_scalar_lazy called for ManyToMany navigation",
         ));
     }
 

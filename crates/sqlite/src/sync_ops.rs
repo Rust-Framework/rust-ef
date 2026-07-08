@@ -29,7 +29,7 @@ pub(crate) fn query_sync(
         .map(|v| v as &dyn rusqlite::types::ToSql)
         .collect();
     let mut stmt = conn
-        .prepare(sql)
+        .prepare_cached(sql)
         .map_err(|e| EFError::query(format!("Prepare error: {}", e)))?;
     let cc = stmt.column_count();
     let rows = stmt

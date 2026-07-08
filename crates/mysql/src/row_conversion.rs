@@ -1,5 +1,5 @@
 use rust_ef::provider::DbValue;
-use sqlx::Row;
+use sqlx::{Column, Row};
 
 /// Converts a cell from a `sqlx::mysql::MySqlRow` into a native `DbValue`.
 ///
