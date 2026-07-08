@@ -82,14 +82,26 @@ impl SqliteProviderInner {
 
 pub struct SqliteProvider {
     inner: SqliteProviderInner,
+    #[cfg(feature = "tracing")]
+    slow_query_threshold_ms: std::sync::atomic::AtomicU64,
 }
 
 impl SqliteProvider {
     /// Creates a provider for a file-based SQLite database with a connection
     /// pool (default 8 connections). WAL mode and a 5s busy timeout are
     /// applied to every pooled connection.
+    ///
+    /// Note: `:memory:` (without URI) is special-cased to delegate to
+    /// [`new_in_memory`](Self::new_in_memory) because SQLite `:memory:`
+    /// databases are per-connection — a pool would give each connection its
+    /// own isolated database. URI-form shared in-memory DBs (e.g.
+    /// `file::memory:?cache=shared`) intentionally use `Pooled` mode.
     pub fn new(path: impl AsRef<std::path::Path>) -> EFResult<Self> {
-        let manager = SqliteConnectionManager::file(path);
+        let path_ref = path.as_ref();
+        if path_ref == std::path::Path::new(":memory:") {
+            return Self::new_in_memory();
+        }
+        let manager = SqliteConnectionManager::file(path_ref);
         let pool = r2d2::Pool::builder()
             .max_size(SQLITE_DEFAULT_POOL_SIZE)
             .connection_customizer(Box::new(SqliteConnectionCustomizer))
@@ -97,6 +109,8 @@ impl SqliteProvider {
             .map_err(|e| EFError::Connection(format!("SQLite pool creation failed: {}", e)))?;
         Ok(Self {
             inner: SqliteProviderInner::Pooled(pool),
+            #[cfg(feature = "tracing")]
+            slow_query_threshold_ms: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -116,6 +130,8 @@ impl SqliteProvider {
             .map_err(|e| EFError::Connection(format!("SQLite pragma setup failed: {}", e)))?;
         Ok(Self {
             inner: SqliteProviderInner::Single(Arc::new(Mutex::new(conn))),
+            #[cfg(feature = "tracing")]
+            slow_query_threshold_ms: std::sync::atomic::AtomicU64::new(0),
         })
     }
 }
@@ -128,7 +144,19 @@ impl IDatabaseProvider for SqliteProvider {
     }
 
     async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
-        self.inner.get_connection().await
+        let _guard = rust_ef::observability::PoolAcquireGuard::new("SQLite");
+        #[cfg_attr(not(feature = "tracing"), allow(unused_mut))]
+        let mut conn = self.inner.get_connection().await?;
+        #[cfg(feature = "tracing")]
+        {
+            let ms = self
+                .slow_query_threshold_ms
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if ms > 0 {
+                conn.set_slow_query_threshold(std::time::Duration::from_millis(ms));
+            }
+        }
+        Ok(conn)
     }
 
     async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {
@@ -141,6 +169,14 @@ impl IDatabaseProvider for SqliteProvider {
 
     fn migration_dialect(&self) -> rust_ef::migration::MigrationDialect {
         rust_ef::migration::MigrationDialect::Sqlite
+    }
+
+    #[cfg(feature = "tracing")]
+    fn set_slow_query_threshold(&self, threshold: std::time::Duration) {
+        self.slow_query_threshold_ms.store(
+            threshold.as_millis() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 }
 

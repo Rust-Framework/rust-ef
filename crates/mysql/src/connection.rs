@@ -66,17 +66,35 @@ fn cell_to_string(row: &sqlx::mysql::MySqlRow, col_idx: usize) -> String {
 
 pub struct MySqlConnection {
     conn: Option<sqlx::pool::PoolConnection<sqlx::MySql>>,
+    #[cfg(feature = "tracing")]
+    slow_query_threshold: Option<std::time::Duration>,
 }
 
 impl MySqlConnection {
     pub(crate) fn new(conn: sqlx::pool::PoolConnection<sqlx::MySql>) -> Self {
-        Self { conn: Some(conn) }
+        Self {
+            conn: Some(conn),
+            #[cfg(feature = "tracing")]
+            slow_query_threshold: None,
+        }
+    }
+
+    fn threshold(&self) -> Option<std::time::Duration> {
+        #[cfg(feature = "tracing")]
+        {
+            self.slow_query_threshold
+        }
+        #[cfg(not(feature = "tracing"))]
+        {
+            None
+        }
     }
 }
 
 #[async_trait]
 impl IAsyncConnection for MySqlConnection {
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64> {
+        let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         let conn = self
             .conn
             .as_mut()
@@ -89,6 +107,7 @@ impl IAsyncConnection for MySqlConnection {
     }
 
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>> {
+        let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         let conn = self
             .conn
             .as_mut()
@@ -157,5 +176,10 @@ impl IAsyncConnection for MySqlConnection {
             }
         );
         self.execute(&sql, &[]).await.map(|_| ())
+    }
+
+    #[cfg(feature = "tracing")]
+    fn set_slow_query_threshold(&mut self, threshold: std::time::Duration) {
+        self.slow_query_threshold = Some(threshold);
     }
 }

@@ -36,6 +36,7 @@ pub(crate) mod metadata_cache;
 pub mod migration;
 pub mod model_builder;
 pub mod navigation_loader;
+pub mod observability;
 pub mod provider;
 pub mod query;
 pub mod registration;

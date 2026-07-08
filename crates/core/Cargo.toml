@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "database", "postgresql"]
 categories = ["database"]
 
 [dependencies]
-rust-ef-macros = { version = "1.4.0", path = "../macros" }
+rust-ef-macros = { version = "1.5.0", path = "../macros" }
 rust-dix = "0.6"
 async-trait = "0.1"
 thiserror = "2"
@@ -19,6 +19,7 @@ chrono = { version = "0.4", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 rust_decimal = { version = "1", optional = true }
 inventory = { workspace = true }
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 rust-ef-sqlite = { path = "../sqlite" }
@@ -32,6 +33,7 @@ serde = ["dep:serde"]
 chrono = ["dep:chrono", "rust-ef-macros/chrono"]
 uuid = ["dep:uuid", "rust-ef-macros/uuid"]
 decimal = ["dep:rust_decimal", "rust-ef-macros/decimal"]
+tracing = ["dep:tracing"]
 
 [[bench]]
 name = "bench_insert"

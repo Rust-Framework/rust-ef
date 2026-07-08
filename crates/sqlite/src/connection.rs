@@ -19,18 +19,35 @@ enum SqliteConnectionInner {
 
 pub struct SqliteConnection {
     inner: SqliteConnectionInner,
+    #[cfg(feature = "tracing")]
+    slow_query_threshold: Option<std::time::Duration>,
 }
 
 impl SqliteConnection {
     pub(crate) fn new_pooled(conn: PooledConnection<SqliteConnectionManager>) -> Self {
         Self {
             inner: SqliteConnectionInner::Pooled(StdMutex::new(conn)),
+            #[cfg(feature = "tracing")]
+            slow_query_threshold: None,
         }
     }
 
     pub(crate) fn new_shared(conn: Arc<TokioMutex<rusqlite::Connection>>) -> Self {
         Self {
             inner: SqliteConnectionInner::Shared(conn),
+            #[cfg(feature = "tracing")]
+            slow_query_threshold: None,
+        }
+    }
+
+    fn threshold(&self) -> Option<std::time::Duration> {
+        #[cfg(feature = "tracing")]
+        {
+            self.slow_query_threshold
+        }
+        #[cfg(not(feature = "tracing"))]
+        {
+            None
         }
     }
 }
@@ -92,6 +109,7 @@ fn query_sync(
 #[async_trait]
 impl IAsyncConnection for SqliteConnection {
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64> {
+        let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         match &self.inner {
             SqliteConnectionInner::Pooled(m) => {
                 // &mut self guarantees no contention; poison is recovered
@@ -107,6 +125,7 @@ impl IAsyncConnection for SqliteConnection {
     }
 
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>> {
+        let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         match &self.inner {
             SqliteConnectionInner::Pooled(m) => {
                 let conn = m.lock().unwrap_or_else(|p| p.into_inner());
@@ -155,5 +174,10 @@ impl IAsyncConnection for SqliteConnection {
             _ => "PRAGMA read_uncommitted = OFF",
         };
         self.execute(sql, &[]).await.map(|_| ())
+    }
+
+    #[cfg(feature = "tracing")]
+    fn set_slow_query_threshold(&mut self, threshold: std::time::Duration) {
+        self.slow_query_threshold = Some(threshold);
     }
 }

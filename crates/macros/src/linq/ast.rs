@@ -53,6 +53,7 @@ pub(crate) enum ValueInput {
 }
 
 /// A single `;`-separated clause in Form B.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum LinqClause {
     /// `include b.posts then b.comments then b.author`
     Include { primary: Expr, nested: Vec<Expr> },

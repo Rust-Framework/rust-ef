@@ -2,6 +2,8 @@ use crate::sql_generator::PostgresSqlGenerator;
 use async_trait::async_trait;
 use deadpool_postgres::{Config, Pool, Runtime};
 use rust_ef::error::{EFError, EFResult};
+#[cfg(feature = "tracing")]
+use rust_ef::provider::IAsyncConnection;
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 use tokio_postgres::NoTls;
 
@@ -24,6 +26,8 @@ pub enum PgTlsMode {
 
 pub struct PostgresProvider {
     pool: Pool,
+    #[cfg(feature = "tracing")]
+    slow_query_threshold_ms: std::sync::atomic::AtomicU64,
 }
 
 impl PostgresProvider {
@@ -76,7 +80,11 @@ impl PostgresProvider {
                     .map_err(|e| EFError::Connection(format!("Failed to create pool: {}", e)))?
             }
         };
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            #[cfg(feature = "tracing")]
+            slow_query_threshold_ms: std::sync::atomic::AtomicU64::new(0),
+        })
     }
 }
 
@@ -87,12 +95,24 @@ impl IDatabaseProvider for PostgresProvider {
     }
 
     async fn get_connection(&self) -> EFResult<Box<dyn rust_ef::provider::IAsyncConnection>> {
+        let _guard = rust_ef::observability::PoolAcquireGuard::new("PostgreSQL");
         let client = self
             .pool
             .get()
             .await
             .map_err(|e| EFError::Connection(format!("Pool error: {}", e)))?;
-        Ok(Box::new(crate::connection::PostgresConnection::new(client)))
+        #[cfg_attr(not(feature = "tracing"), allow(unused_mut))]
+        let mut conn = Box::new(crate::connection::PostgresConnection::new(client));
+        #[cfg(feature = "tracing")]
+        {
+            let ms = self
+                .slow_query_threshold_ms
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if ms > 0 {
+                conn.set_slow_query_threshold(std::time::Duration::from_millis(ms));
+            }
+        }
+        Ok(conn)
     }
 
     async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {
@@ -114,6 +134,14 @@ impl IDatabaseProvider for PostgresProvider {
 
     fn migration_dialect(&self) -> rust_ef::migration::MigrationDialect {
         rust_ef::migration::MigrationDialect::Postgres
+    }
+
+    #[cfg(feature = "tracing")]
+    fn set_slow_query_threshold(&self, threshold: std::time::Duration) {
+        self.slow_query_threshold_ms.store(
+            threshold.as_millis() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 }
 

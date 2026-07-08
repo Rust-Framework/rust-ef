@@ -12,7 +12,6 @@ use crate::entity::IEntityType;
 use crate::error::EFResult;
 use crate::provider::IDatabaseProvider;
 
-use super::compile::PortablePlaceholderGenerator;
 use super::source::{parse_column, ParseFromDb};
 use super::state::QueryState;
 
@@ -157,9 +156,3 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
             .collect()
     }
 }
-
-// `PortablePlaceholderGenerator` is referenced indirectly via `state.to_sql()`
-// — silence the unused import warning when no direct call appears in this
-// module. (Import kept for explicitness about the fallback path.)
-#[allow(unused_imports)]
-use super::compile::PortablePlaceholderGenerator as _PortablePlaceholderGenerator;

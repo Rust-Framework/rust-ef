@@ -562,6 +562,14 @@ pub trait IAsyncConnection: Send + Sync {
     /// Sets the isolation level of the current transaction.
     /// Must be called after `begin_transaction` and before any query.
     async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()>;
+
+    /// Sets the slow query threshold for this connection.
+    ///
+    /// Only available when the `tracing` feature is enabled on the core
+    /// crate. Default implementation is a no-op; provider connections
+    /// override to store the threshold for `QueryGuard` comparison.
+    #[cfg(feature = "tracing")]
+    fn set_slow_query_threshold(&mut self, _threshold: std::time::Duration) {}
 }
 
 /// The database provider abstraction.
@@ -585,4 +593,12 @@ pub trait IDatabaseProvider: Send + Sync {
 
     /// Returns the migration dialect for this provider.
     fn migration_dialect(&self) -> crate::migration::MigrationDialect;
+
+    /// Sets the slow query threshold for all connections from this provider.
+    ///
+    /// Only available when the `tracing` feature is enabled on the core
+    /// crate. Default implementation is a no-op; providers override to
+    /// store the threshold and pass it to connections on acquisition.
+    #[cfg(feature = "tracing")]
+    fn set_slow_query_threshold(&self, _threshold: std::time::Duration) {}
 }

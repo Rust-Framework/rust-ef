@@ -65,7 +65,7 @@ impl ModelBuilder {
     /// Constructs a `ModelBuilder` pre-populated from a cached `BuiltMetadata`.
     ///
     /// Used by `DbContext::from_options()` to skip re-iterating `inventory::iter`
-    /// + re-running `IEntityTypeConfiguration::configure()` on every request.
+    /// and re-running `IEntityTypeConfiguration::configure()` on every request.
     /// The `build_cache` and `filter_cache` are left empty (lazy) — they will
     /// be populated on first access, same as the non-cached path.
     ///

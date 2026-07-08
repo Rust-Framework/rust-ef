@@ -9,6 +9,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] — 2026-07-08 — tracing 集成 + SemVer 严格化 + MySQL TLS 显式 API
+
+### Added — tracing 集成（慢查询 + 连接池指标）
+
+新增 `tracing` 可选 feature（core + sqlite / postgres / mysql 三个 provider），通过
+`tracing` crate 发射结构化事件。feature 关闭时全部 Guard 为 ZST no-op，编译期消除，
+零运行时开销。
+
+**3 个 Guard 类型**（`crates/core/src/observability.rs`）：
+
+- `QueryGuard` — 包裹单次 `query` / `execute` 调用；启动时发 `DEBUG` 事件，完成时发
+  `DEBUG`（正常）或 `WARN`（超过慢查询阈值）。target：`rust_ef::query`
+- `PoolAcquireGuard` — 包裹连接池 acquire；完成时发 `INFO` 事件含 acquire 耗时。
+  target：`rust_ef::pool`
+- `SaveChangesGuard` — 包裹 `save_changes` 调用；完成时发 `INFO` 事件含总耗时。
+  target：`rust_ef::save_changes`
+
+**配置 API**：
+
+```rust
+use std::time::Duration;
+use rust_ef::DbContextOptionsBuilder;
+
+let mut options = DbContextOptionsBuilder::new();
+options
+    .use_sqlite("app.db")
+    .slow_query_threshold(Duration::from_millis(500)); // 超过 500ms 的查询发 WARN
+```
+
+**trait 扩展**（cfg-gated 默认方法，非 breaking）：
+
+- `IAsyncConnection::set_slow_query_threshold(&mut self, Duration)` — 连接级阈值注入
+- `IDatabaseProvider::set_slow_query_threshold(&self, Duration)` — provider 级阈值存储
+
+**实现文件**：
+
+- `crates/core/src/observability.rs` — 3 个 Guard 的 cfg-gated 双实现
+- `crates/core/src/db_context.rs` — `DbContextOptions.slow_query_threshold` 字段 +
+  builder 方法 + `create_provider` 注入 + `save_changes` 加 `SaveChangesGuard`
+- `crates/core/src/provider.rs` — 两个 trait 的 cfg-gated 默认方法
+- `crates/{sqlite,postgres,mysql}/src/provider.rs` — `AtomicU64` 阈值存储 +
+  `PoolAcquireGuard` 在 `get_connection` + `set_slow_query_threshold` impl
+- `crates/{sqlite,postgres,mysql}/src/connection.rs` — 阈值字段 + `threshold()` helper
+  + `QueryGuard` 在 `execute` / `query` + `set_slow_query_threshold` impl
+
+**使用方式**（应用层初始化 subscriber）：
+
+```rust
+use tracing_subscriber;
+
+tracing_subscriber::fmt()
+    .with_env_filter("rust_ef::query=warn,rust_ef::pool=info,rust_ef::save_changes=info")
+    .init();
+// 之后所有 rust-ef 操作自动发射 tracing 事件
+```
+
+### Added — MySQL TLS 显式 API
+
+新增 `MySqlTlsMode` 枚举，对齐 PostgreSQL 的 `PgTlsMode` 模式，提供显式 TLS 配置：
+
+```rust
+pub enum MySqlTlsMode {
+    Disabled,        // 禁用 TLS（明文连接）
+    Required,        // 强制 TLS（服务器不支持则失败）
+    VerifyCa,        // 强制 TLS + CA 证书验证
+    VerifyIdentity,  // 强制 TLS + CA 证书 + 主机名验证
+}
+```
+
+**新增 API**：
+
+- `MySqlProvider::new_with_tls(connection_string, tls: MySqlTlsMode)` — 异步连接 + TLS
+- `MySqlProvider::new_lazy_with_tls(connection_string, tls: MySqlTlsMode)` — 延迟连接 + TLS
+- `DbContextOptionsBuilderExt::use_mysql_with_tls(connection_string, tls)` — DI 扩展
+
+**设计要点**：
+
+- 独立枚举（不 wrap sqlx 类型），不携带 `TlsConnector`（sqlx 通过 `tls-native-tls`
+  feature 内部管理 TLS）
+- 排除 `Preferred` 变体（显式 TLS API 不应含"可选"语义）
+- CA 证书通过连接串 `ssl-ca` 参数传递
+- `From<MySqlTlsMode> for sqlx::mysql::MySqlSslMode` 实现 trait 桥接
+
+**使用示例**：
+
+```rust
+use rust_ef_mysql::{DbContextOptionsBuilderExt, MySqlTlsMode};
+use rust_ef::DbContextOptionsBuilder;
+
+let mut options = DbContextOptionsBuilder::new();
+options.use_mysql_with_tls(
+    "mysql://user:pass@host/db?ssl-ca=/path/to/ca.pem",
+    MySqlTlsMode::VerifyIdentity,
+);
+```
+
+### Added — SemVer 严格化迁移指南
+
+新文档 `docs/v1.5-semver-migration-guide.md`：
+
+- v1.0–v1.4 历史 breaking change 清单与迁移路径
+- v1.5 起的 SemVer 2.0.0 严格化策略（1 minor deprecation 期）
+- `#[deprecated]` 使用规范与编译期警告示例
+- v2.0 候选项清单（Arc 元数据共享、async trait 原生语法、错误码体系、metrics API）
+
+### Changed
+
+- workspace 版本 1.4.1 → 1.5.0（6 个 crate 同步）
+- `crates/mysql/Cargo.toml`：sqlx features 增加 `tls-native-tls`
+
+### Production readiness
+
+- 可观测性维度：⚠️ → ✅（tracing 集成完成）
+- SemVer 维度：⚠️ → ✅（严格化策略落地 + 迁移指南文档化）
+- 详见 `docs/PRODUCTION_READINESS_SPEC.md` 第 4.2 节
+
+---
+
 ## [1.4.0] — 2026-07-08 — Production hardening (P0+P1) + metadata cache + rust-dix 0.6
 
 ### Fixed — P0-1 MySQL `cell_to_string` 类型分发

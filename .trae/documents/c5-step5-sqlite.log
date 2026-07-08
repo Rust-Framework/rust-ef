@@ -1,0 +1,33 @@
+﻿cargo : [1m[93mwarning[0m[1m[97m: unused import: `super::compile::PortablePlaceholderGenerator`[0m
+At line:15 char:6102
++ ... $env:CI=''; cargo test -p rust-ef --features chrono,uuid,decimal --te ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([1m[93mwarnin...rGenerator`[0m:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  [1m[96m--> [0mcrates\core\src\query\select.rs:15:5
+   [1m[96m|[0m
+[1m[96m15[0m [1m[96m|[0m use super::compile::PortablePlaceholderGenerator;
+   [1m[96m|[0m     [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m: `rust-ef` (lib) generated 1 warning (run `cargo fix --lib -p rust-ef` to apply 1 suggestion)
+[1m[92m   Compiling[0m rust-ef v1.4.0 (D:\GitCode\RF\rust-ef\crates\core)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`test` profile
+ [unoptimized + debuginfo]]8;;\ target(s) in 2.28s
+[1m[92m     Running[0m tests\sqlite_crud_tests.rs (target\debug\deps\sqlite_crud_tests-e1fa38d96167a51f.exe)
+
+running 9 tests
+test sqlite_crud::test_has_data_seed_on_ensure_created ... ok
+test sqlite_crud::test_update_and_delete ... ok
+test sqlite_crud::test_ensure_created_and_deleted ... ok
+test sqlite_crud::test_insert_and_query ... ok
+test sqlite_crud::test_aggregation_queries ... ok
+test sqlite_crud::test_filter_with_in_operator ... ok
+test sqlite_crud::test_limit_and_offset ... ok
+test sqlite_crud::test_empty_result_handling ... ok
+test sqlite_crud::test_count_and_any ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

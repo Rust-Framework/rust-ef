@@ -98,6 +98,10 @@ pub struct DbContextOptions {
     /// registration). The first `from_options()` call builds the metadata;
     /// subsequent calls `Arc::clone` it.
     pub(crate) metadata_cache: Arc<crate::metadata_cache::MetadataCache>,
+    /// Slow query threshold for tracing. When set, queries exceeding this
+    /// duration emit a `tracing::warn!` event.
+    #[cfg(feature = "tracing")]
+    pub(crate) slow_query_threshold: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for DbContextOptions {
@@ -128,7 +132,12 @@ impl DbContextOptions {
                 "No provider configured. Call use_sqlite / use_postgres / use_mysql first.".into(),
             )
         })?;
-        factory(self.connection_string())
+        let provider = factory(self.connection_string())?;
+        #[cfg(feature = "tracing")]
+        if let Some(threshold) = self.slow_query_threshold {
+            provider.set_slow_query_threshold(threshold);
+        }
+        Ok(provider)
     }
 }
 
@@ -143,6 +152,8 @@ impl Default for DbContextOptions {
             lazy_loading_enabled: false,
             context_key: None,
             metadata_cache: Arc::new(crate::metadata_cache::MetadataCache::new()),
+            #[cfg(feature = "tracing")]
+            slow_query_threshold: None,
         }
     }
 }
@@ -227,6 +238,16 @@ impl DbContextOptionsBuilder {
     /// context.
     pub fn context_key(&mut self, key: impl Into<String>) -> &mut Self {
         self.inner.context_key = Some(key.into());
+        self
+    }
+
+    /// Sets the slow query threshold. Queries exceeding this duration
+    /// emit a `tracing::warn!` event with SQL and elapsed time.
+    ///
+    /// Only available when the `tracing` feature is enabled.
+    #[cfg(feature = "tracing")]
+    pub fn slow_query_threshold(&mut self, threshold: std::time::Duration) -> &mut Self {
+        self.inner.slow_query_threshold = Some(threshold);
         self
     }
 
@@ -579,6 +600,7 @@ impl DbContext {
     /// Detects changes, runs interceptors, executes INSERT/UPDATE/DELETE in a
     /// transaction, and clears tracked entries on success.
     pub async fn save_changes(&mut self) -> EFResult<SaveChangesResult> {
+        let _save_guard = crate::observability::SaveChangesGuard::new();
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         for type_id in &type_ids {
             let set = self.sets.get_mut(type_id).unwrap();

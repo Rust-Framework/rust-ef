@@ -6,11 +6,28 @@ use tokio_postgres::types::Type as PgType;
 
 pub struct PostgresConnection {
     pub(crate) client: deadpool_postgres::Client,
+    #[cfg(feature = "tracing")]
+    slow_query_threshold: Option<std::time::Duration>,
 }
 
 impl PostgresConnection {
     pub(crate) fn new(client: deadpool_postgres::Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            #[cfg(feature = "tracing")]
+            slow_query_threshold: None,
+        }
+    }
+
+    fn threshold(&self) -> Option<std::time::Duration> {
+        #[cfg(feature = "tracing")]
+        {
+            self.slow_query_threshold
+        }
+        #[cfg(not(feature = "tracing"))]
+        {
+            None
+        }
     }
 }
 
@@ -71,6 +88,7 @@ fn cell_to_string(row: &tokio_postgres::Row, col_idx: usize, pg_type: &PgType) -
 #[async_trait]
 impl IAsyncConnection for PostgresConnection {
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64> {
+        let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         let pgp = crate::type_conversion::db_values_to_pg_params(params);
         let refs: Vec<&(dyn ToSql + Sync)> = pgp
             .iter()
@@ -83,6 +101,7 @@ impl IAsyncConnection for PostgresConnection {
     }
 
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>> {
+        let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         let pgp = crate::type_conversion::db_values_to_pg_params(params);
         let refs: Vec<&(dyn ToSql + Sync)> = pgp
             .iter()
@@ -174,5 +193,10 @@ impl IAsyncConnection for PostgresConnection {
             .await
             .map_err(|e| EFError::Transaction(format!("SET ISOLATION failed: {}", e)))?;
         Ok(())
+    }
+
+    #[cfg(feature = "tracing")]
+    fn set_slow_query_threshold(&mut self, threshold: std::time::Duration) {
+        self.slow_query_threshold = Some(threshold);
     }
 }
