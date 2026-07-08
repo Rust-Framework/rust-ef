@@ -15,17 +15,27 @@ pub struct PostgresProvider {
 }
 
 impl PostgresProvider {
-    /// Creates a provider with `NoTls` (backward compatible with v1.3).
+    /// Creates a provider with TLS required (secure-by-default, v1.6+).
     ///
-    /// For production deployments requiring encrypted connections, use
-    /// [`PostgresProvider::new_with_tls`] with [`PgTlsMode::Require`].
+    /// Uses a `native_tls::TlsConnector` built from the platform's default
+    /// root certificate store. For plaintext connections (local dev only),
+    /// use [`PostgresProvider::new_insecure`]. For custom CA certificates,
+    /// use [`PostgresProvider::new_with_tls`].
     pub fn new(connection_string: &str, pool_size: usize) -> EFResult<Self> {
+        let connector = native_tls::TlsConnector::builder()
+            .build()
+            .map_err(|e| EFError::Connection(format!("TLS connector init failed: {}", e)))?;
+        Self::new_with_tls(connection_string, pool_size, PgTlsMode::Require(connector))
+    }
+
+    /// Creates a provider with TLS disabled (plaintext, local dev only).
+    pub fn new_insecure(connection_string: &str, pool_size: usize) -> EFResult<Self> {
         Self::new_with_tls(connection_string, pool_size, PgTlsMode::Disable)
     }
 
     /// Creates a provider with configurable TLS.
     ///
-    /// `PgTlsMode::Disable` is equivalent to [`PostgresProvider::new`].
+    /// `PgTlsMode::Disable` is equivalent to [`PostgresProvider::new_insecure`].
     /// `PgTlsMode::Require(connector)` enforces TLS for all pooled connections.
     ///
     /// The TLS connector type is erased inside `deadpool_postgres::Manager`

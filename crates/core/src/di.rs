@@ -154,7 +154,14 @@ impl DbContextServiceCollectionExt for ::rust_dix::ServiceCollection {
         let mut builder = DbContextOptionsBuilder::new();
         configure(&mut builder);
         let options = Arc::new(builder.build());
-
+        // Eagerly build the provider (and its connection pool) at registration
+        // time so a misconfigured connection string / TLS setup fails fast at
+        // startup instead of panicking on the first request. The built provider
+        // is cached in `DbContextOptions::provider_cache`, so the per-request
+        // scoped factory below reuses it via `Arc::clone`.
+        options
+            .create_provider()
+            .expect("DbContext provider initialization failed at startup");
         self.scoped(move |_| {
             let ctx = DbContext::from_options(&options).expect("Failed to create DbContext");
             Arc::new(ctx) as Arc<DbContext>
@@ -170,7 +177,9 @@ impl DbContextServiceCollectionExt for ::rust_dix::ServiceCollection {
         configure(&mut builder);
         builder.context_key(key);
         let options = Arc::new(builder.build());
-
+        options
+            .create_provider()
+            .expect("DbContext provider initialization failed at startup");
         self.keyed_scoped(key, move |_| {
             let ctx = DbContext::from_options(&options).expect("Failed to create DbContext");
             Arc::new(ctx) as Arc<DbContext>

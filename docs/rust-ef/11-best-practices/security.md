@@ -37,7 +37,7 @@ SQL 中的表名、列名均来自 **编译期实体元数据**（`#[derive(Enti
 
 ### `BoolExpr::Raw` 的安全边界
 
-`BoolExpr::Raw(sql)` 分支直接输出原始 SQL 片段，但框架内部仅使用硬编码默认值 `"1=1"`（无条件查询的占位）。**用户 API 不暴露 `Raw` 构造入口**，无法通过 `linq!` 或 `QueryBuilder` 注入原始 SQL。
+`BoolExpr::Raw` 变体使用 `pub(crate) struct RawSql` 包装原始 SQL，外部代码无法命名该类型、无法构造 `Raw` 变体。`BoolExpr::raw()` 构造器同样为 `pub(crate)`。框架内部仅使用硬编码默认值 `"1=1"`（无条件查询的占位）。`linq!` 宏与 `QueryBuilder` 公开 API 均无法注入原始 SQL。
 
 ---
 
@@ -83,15 +83,19 @@ builder.connection_string(&user_supplied_url);  // 绝不要这样做
 
 ### TLS / 传输加密
 
-PostgreSQL Provider 自 v1.4 起支持可配置 TLS：
+自 v1.6 起，PostgreSQL 与 MySQL Provider 均采用 **secure-by-default** 策略——`new()` 默认强制 TLS，`new_insecure()` 为本地开发逃生舱。
 
 ```rust
 use rust_ef_postgres::{PostgresProvider, PgTlsMode};
 
-// 方式 1: 显式 NoTls（向后兼容 v1.3，仅用于本地开发）
+// 方式 1: secure-by-default（v1.6+，生产推荐）
+// 使用平台默认根证书库构建 TlsConnector
 let provider = PostgresProvider::new(&url, 5)?;
 
-// 方式 2: 强制 TLS（生产推荐）
+// 方式 2: 明文连接（仅本地开发）
+let provider = PostgresProvider::new_insecure(&url, 5)?;
+
+// 方式 3: 自定义 CA 证书
 let connector = native_tls::TlsConnector::builder()
     .add_root_certificate(/* 加载 CA 证书 */)
     .build()?;
@@ -100,9 +104,23 @@ let provider = PostgresProvider::new_with_tls(
 )?;
 ```
 
+```rust
+use rust_ef_mysql::{MySqlProvider, MySqlTlsMode};
+
+// secure-by-default（v1.6+）
+let provider = MySqlProvider::new(&url).await?;          // 强制 Required
+let provider = MySqlProvider::new_lazy(&url)?;           // 强制 Required（延迟连接）
+
+// 明文连接（仅本地开发）
+let provider = MySqlProvider::new_insecure(&url).await?;
+let provider = MySqlProvider::new_lazy_insecure(&url)?;
+```
+
 `PgTlsMode::Require` 使用平台原生 TLS 实现（Windows SChannel / Linux OpenSSL / macOS Secure Transport）。TLS 类型在 `deadpool_postgres::Manager` 内部通过 `Box<dyn Connect>` 擦除，因此 `Pool` 与 `PostgresConnection` 保持非泛型 API — TLS 是构造期决策，非类型参数。
 
-> **MySQL/SQLite**：MySQL 经 sqlx 已支持 `mysql://...?tls=true` 连接串参数；SQLite 为进程内数据库，无需 TLS。生产部署若跨不可信网络，仍建议结合 SSH 隧道或 VPN。
+> **SQLite**：进程内数据库，无需 TLS。生产部署若跨不可信网络，仍建议结合 SSH 隧道或 VPN。
+>
+> **DI 扩展**：`use_postgres` / `use_mysql` 委托 `new()` / `new_lazy()`，自动 secure-by-default。逃生舱为 `use_postgres_with_tls(cs, pool, PgTlsMode::Disable)` / `use_mysql_with_tls(cs, MySqlTlsMode::Disabled)`。
 
 ---
 
@@ -186,7 +204,7 @@ builder.has_query_filter(linq!(filter |b: Blog| b.tenant_id == current_tenant_id
 - 标识符来源：编译期实体元数据，不接受运行时输入
 - 连接字符串：部署配置层，非运行时用户输入
 - 迁移脚本：开发者受信代码，设计行为
-- 已知限制：PostgreSQL 默认 `NoTls`（v1.4 起可通过 `PgTlsMode::Require` 启用 TLS，见上文）
+- 已知限制：无（v1.6 起 `new()` 默认强制 TLS，`new_insecure()` 为本地开发逃生舱）
 
 ---
 

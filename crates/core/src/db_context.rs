@@ -84,6 +84,13 @@ pub struct DbContextOptions {
     #[allow(clippy::type_complexity)]
     pub(crate) provider_factory:
         Option<Arc<dyn Fn(&str) -> EFResult<Arc<dyn IDatabaseProvider>> + Send + Sync>>,
+    /// Process-level cache of the built provider (which owns the connection
+    /// pool). Built once on the first `create_provider()` call and shared
+    /// across every `DbContext` created from the same `Arc<DbContextOptions>`
+    /// (i.e. the same `add_dbcontext` registration). Keeping the provider
+    /// alive for the application lifetime means the connection pool is reused
+    /// across requests instead of being recreated per request.
+    pub(crate) provider_cache: Arc<std::sync::Mutex<Option<Arc<dyn IDatabaseProvider>>>>,
     pub(crate) interceptors: Vec<Arc<dyn crate::interceptor::ISaveChangesInterceptor>>,
     /// When `true`, `QueryBuilder::to_list()` attaches `LazyContext` to every
     /// navigation container on materialized entities, enabling on-demand
@@ -107,10 +114,53 @@ pub struct DbContextOptions {
 impl std::fmt::Debug for DbContextOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbContextOptions")
-            .field("connection_string", &self.connection_string)
+            .field(
+                "connection_string",
+                &redact_connection_string(&self.connection_string),
+            )
             .field("provider_tag", &self.provider_tag)
             .finish()
     }
+}
+
+/// Redacts credentials from a connection string so `Debug` output never leaks
+/// passwords. Handles URL form (`scheme://user:pass@host`) and key=value form
+/// (`...;Password=...;...`). SQLite file paths and other credential-free
+/// strings are returned unchanged for debuggability.
+fn redact_connection_string(cs: &str) -> String {
+    // URL form: scheme://[user[:pass]@]host...
+    if let Some(scheme_end) = cs.find("://") {
+        let (scheme, rest) = cs.split_at(scheme_end + 3);
+        if let Some(at) = rest.find('@') {
+            let (userinfo, host_and_rest) = rest.split_at(at);
+            let redacted_user = match userinfo.find(':') {
+                Some(colon) => &userinfo[..colon],
+                None => userinfo,
+            };
+            return format!("{}{}***@{}", scheme, redacted_user, &host_and_rest[1..]);
+        }
+        return cs.to_string();
+    }
+    // Key=value form: redact any token whose key mentions password/pwd.
+    if cs.contains('=') {
+        return cs
+            .split(';')
+            .map(|pair| {
+                let eq = match pair.find('=') {
+                    Some(e) => e,
+                    None => return pair.to_string(),
+                };
+                let key = pair[..eq].trim().to_lowercase();
+                if key.contains("password") || key.contains("pwd") {
+                    format!("{}=***", &pair[..eq])
+                } else {
+                    pair.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+    }
+    cs.to_string()
 }
 
 impl DbContextOptions {
@@ -127,6 +177,16 @@ impl DbContextOptions {
         self.context_key.as_deref()
     }
     pub fn create_provider(&self) -> EFResult<Arc<dyn IDatabaseProvider>> {
+        // Recover from a poisoned lock rather than panicking (consistent with
+        // `MetadataCache`): if a previous build panicked, `into_inner()` yields
+        // the still-`None` cache and we retry the build below.
+        let mut guard = self
+            .provider_cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(provider) = guard.as_ref() {
+            return Ok(Arc::clone(provider));
+        }
         let factory = self.provider_factory.as_ref().ok_or_else(|| {
             crate::error::EFError::Configuration(
                 "No provider configured. Call use_sqlite / use_postgres / use_mysql first.".into(),
@@ -137,6 +197,7 @@ impl DbContextOptions {
         if let Some(threshold) = self.slow_query_threshold {
             provider.set_slow_query_threshold(threshold);
         }
+        *guard = Some(Arc::clone(&provider));
         Ok(provider)
     }
 }
@@ -148,6 +209,7 @@ impl Default for DbContextOptions {
             connection_string: String::new(),
             provider_tag: None,
             provider_factory: None,
+            provider_cache: Arc::new(std::sync::Mutex::new(None)),
             interceptors: Vec::new(),
             lazy_loading_enabled: false,
             context_key: None,

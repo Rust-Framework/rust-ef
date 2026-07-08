@@ -330,24 +330,27 @@ async fn cmd_scaffold_dbcontext(
         other => other,
     };
     let tables: Vec<scaffold::ScaffoldTable> = match kind {
-        ProviderArg::Postgres => rust_ef_postgres::introspection::introspect_postgres(connection)
-            .await?
-            .into_iter()
-            .map(|t| scaffold::ScaffoldTable {
-                name: t.name,
-                columns: t
-                    .columns
-                    .into_iter()
-                    .map(|c| scaffold::ScaffoldColumn {
-                        name: c.name,
-                        data_type: c.data_type,
-                        is_nullable: c.is_nullable,
-                        is_primary_key: c.is_primary_key,
-                        max_length: c.max_length,
-                    })
-                    .collect(),
-            })
-            .collect(),
+        ProviderArg::Postgres => rust_ef_postgres::introspection::introspect_postgres(
+            connection,
+            rust_ef_postgres::PgTlsMode::Disable,
+        )
+        .await?
+        .into_iter()
+        .map(|t| scaffold::ScaffoldTable {
+            name: t.name,
+            columns: t
+                .columns
+                .into_iter()
+                .map(|c| scaffold::ScaffoldColumn {
+                    name: c.name,
+                    data_type: c.data_type,
+                    is_nullable: c.is_nullable,
+                    is_primary_key: c.is_primary_key,
+                    max_length: c.max_length,
+                })
+                .collect(),
+        })
+        .collect(),
         ProviderArg::Mysql => rust_ef_mysql::introspection::introspect_mysql(connection)
             .await?
             .into_iter()
@@ -403,11 +406,11 @@ fn create_provider(
         }
         ProviderArg::Postgres => {
             use rust_ef_postgres::PostgresProvider;
-            Ok(Arc::new(PostgresProvider::new(connection, 5)?))
+            Ok(Arc::new(PostgresProvider::new_insecure(connection, 5)?))
         }
         ProviderArg::Mysql => {
             use rust_ef_mysql::MySqlProvider;
-            Ok(Arc::new(MySqlProvider::new_lazy(connection)?))
+            Ok(Arc::new(MySqlProvider::new_lazy_insecure(connection)?))
         }
         ProviderArg::Auto => unreachable!(),
     }

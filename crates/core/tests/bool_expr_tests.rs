@@ -60,14 +60,6 @@ mod bool_expr_tests {
     }
 
     #[test]
-    fn test_raw_filter_no_params() {
-        let mut state = QueryState::new("blogs");
-        state.where_expr = Some(BoolExpr::Raw("is_deleted = 0".to_string()));
-        let sql = state.to_sql();
-        assert!(sql.contains("is_deleted = 0"));
-    }
-
-    #[test]
     fn test_complex_or_and_pattern() {
         let mut state = QueryState::new("posts");
         state.parameters.push(DbValue::I32(3));

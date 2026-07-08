@@ -92,13 +92,26 @@ impl FilterCondition {
     }
 }
 
+/// Wrapper for raw SQL fragments inside `BoolExpr::Raw`.
+///
+/// The type is `pub` (so the `BoolExpr::Raw` variant field doesn't trigger
+/// `private_interfaces`), but the inner `String` field is `pub(crate)`.
+/// External code can name `RawSql` but cannot construct it (field
+/// inaccessible) and cannot read the SQL string — closing the raw SQL
+/// injection hatch at the type level. Internal callers use
+/// `BoolExpr::raw()` (`pub(crate)`).
+#[derive(Debug, Clone)]
+pub struct RawSql(pub(crate) String);
+
 /// Boolean expression AST for WHERE clauses.
 #[derive(Debug, Clone)]
 pub enum BoolExpr {
     /// A single parameterized filter condition.
     Filter(FilterCondition),
     /// Raw SQL fragment (no parameters), e.g. global query filters.
-    Raw(String),
+    /// Payload is `RawSql` (`pub(crate)`) so the variant cannot be
+    /// constructed by external code.
+    Raw(RawSql),
     /// AND combination.
     And(Box<BoolExpr>, Box<BoolExpr>),
     /// OR combination.
@@ -201,8 +214,8 @@ impl BoolExpr {
         BoolExpr::Filter(FilterCondition::new(column, operator, param_count))
     }
 
-    pub fn raw(sql: impl Into<String>) -> Self {
-        BoolExpr::Raw(sql.into())
+    pub(crate) fn raw(sql: impl Into<String>) -> Self {
+        BoolExpr::Raw(RawSql(sql.into()))
     }
 
     pub fn and(self, other: BoolExpr) -> Self {

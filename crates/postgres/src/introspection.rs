@@ -1,5 +1,6 @@
 //! Database introspection  - ?reads schema from PostgreSQL information_schema.
 
+use crate::tls::PgTlsMode;
 use rust_ef::error::EFResult;
 use tokio_postgres::NoTls;
 
@@ -21,21 +22,43 @@ pub struct DbTable {
 }
 
 /// Reads all tables and their columns from a PostgreSQL database.
-pub async fn introspect_postgres(connection_string: &str) -> EFResult<Vec<DbTable>> {
+///
+/// The `tls` parameter controls transport encryption. For local dev
+/// (plaintext), pass [`PgTlsMode::Disable`]; for production, use
+/// [`PgTlsMode::Require`] with a configured `TlsConnector`.
+pub async fn introspect_postgres(
+    connection_string: &str,
+    tls: PgTlsMode,
+) -> EFResult<Vec<DbTable>> {
     let config: tokio_postgres::Config = connection_string.parse().map_err(|e| {
         rust_ef::error::EFError::Connection(format!("Invalid connection string: {}", e))
     })?;
 
-    let (client, connection) = config
-        .connect(NoTls)
-        .await
-        .map_err(|e| rust_ef::error::EFError::Connection(format!("Connection failed: {}", e)))?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("PostgreSQL connection error: {}", e);
+    let client = match tls {
+        PgTlsMode::Disable => {
+            let (client, connection) = config.connect(NoTls).await.map_err(|e| {
+                rust_ef::error::EFError::Connection(format!("Connection failed: {}", e))
+            })?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    eprintln!("PostgreSQL connection error: {}", e);
+                }
+            });
+            client
         }
-    });
+        PgTlsMode::Require(connector) => {
+            let tls_connector = postgres_native_tls::MakeTlsConnector::new(connector);
+            let (client, connection) = config.connect(tls_connector).await.map_err(|e| {
+                rust_ef::error::EFError::Connection(format!("Connection failed: {}", e))
+            })?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    eprintln!("PostgreSQL connection error: {}", e);
+                }
+            });
+            client
+        }
+    };
 
     // Query for tables
     let table_rows = client

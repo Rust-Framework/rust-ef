@@ -113,7 +113,7 @@ pub(crate) fn compile_bool_expr(
             *param_idx += f.param_count();
             f.to_sql(&placeholders)
         }
-        BoolExpr::Raw(sql) => sql.clone(),
+        BoolExpr::Raw(raw) => raw.0.clone(),
         BoolExpr::And(a, b) => format!(
             "({}) AND ({})",
             compile_bool_expr(a, gen, param_idx),
@@ -297,7 +297,7 @@ pub(crate) fn filters_to_and_expr(filters: &[FilterCondition]) -> BoolExpr {
         .cloned()
         .map(BoolExpr::Filter)
         .reduce(|acc, f| BoolExpr::And(Box::new(acc), Box::new(f)))
-        .unwrap_or(BoolExpr::Raw("1=1".to_string()))
+        .unwrap_or(BoolExpr::raw("1=1"))
 }
 
 /// Builds a WHERE clause from `FilterCondition`s starting at `param_idx = 1`.
@@ -331,4 +331,29 @@ pub(crate) fn build_where_clause_with_offset(
         })
         .collect();
     clauses.join(" AND ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_sql_fragment_compiles_unchanged() {
+        let expr = BoolExpr::raw("is_deleted = 0");
+        let gen = PortablePlaceholderGenerator;
+        let mut idx = 1;
+        let sql = compile_bool_expr(&expr, &gen, &mut idx);
+        assert_eq!(sql, "is_deleted = 0");
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn filters_to_and_expr_empty_falls_back_to_1eq1() {
+        let filters: Vec<FilterCondition> = vec![];
+        let expr = filters_to_and_expr(&filters);
+        let gen = PortablePlaceholderGenerator;
+        let mut idx = 1;
+        let sql = compile_bool_expr(&expr, &gen, &mut idx);
+        assert_eq!(sql, "1=1");
+    }
 }

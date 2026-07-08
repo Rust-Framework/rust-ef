@@ -25,7 +25,7 @@ async fn test_mysql_crud_lifecycle() {
         return;
     };
 
-    let provider = match MySqlProvider::new(&url).await {
+    let provider = match MySqlProvider::new_insecure(&url).await {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         Err(e) => {
             eprintln!("skip test_mysql_crud_lifecycle: {e}");
@@ -44,7 +44,7 @@ async fn test_mysql_filter_with_in_operator() {
         eprintln!("skip test_mysql_filter_with_in_operator: RUST_EF_MYSQL_URL not set");
         return;
     };
-    let provider = match MySqlProvider::new(&url).await {
+    let provider = match MySqlProvider::new_insecure(&url).await {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         Err(e) => {
             eprintln!("skip test_mysql_filter_with_in_operator: {e}");
@@ -62,7 +62,7 @@ async fn test_mysql_limit_and_offset() {
         eprintln!("skip test_mysql_limit_and_offset: RUST_EF_MYSQL_URL not set");
         return;
     };
-    let provider = match MySqlProvider::new(&url).await {
+    let provider = match MySqlProvider::new_insecure(&url).await {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         Err(e) => {
             eprintln!("skip test_mysql_limit_and_offset: {e}");
@@ -80,7 +80,7 @@ async fn test_mysql_count_and_any() {
         eprintln!("skip test_mysql_count_and_any: RUST_EF_MYSQL_URL not set");
         return;
     };
-    let provider = match MySqlProvider::new(&url).await {
+    let provider = match MySqlProvider::new_insecure(&url).await {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         Err(e) => {
             eprintln!("skip test_mysql_count_and_any: {e}");
@@ -98,7 +98,7 @@ async fn test_mysql_aggregation_queries() {
         eprintln!("skip test_mysql_aggregation_queries: RUST_EF_MYSQL_URL not set");
         return;
     };
-    let provider = match MySqlProvider::new(&url).await {
+    let provider = match MySqlProvider::new_insecure(&url).await {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         Err(e) => {
             eprintln!("skip test_mysql_aggregation_queries: {e}");
@@ -116,7 +116,7 @@ async fn test_mysql_empty_result_handling() {
         eprintln!("skip test_mysql_empty_result_handling: RUST_EF_MYSQL_URL not set");
         return;
     };
-    let provider = match MySqlProvider::new(&url).await {
+    let provider = match MySqlProvider::new_insecure(&url).await {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         Err(e) => {
             eprintln!("skip test_mysql_empty_result_handling: {e}");
@@ -134,7 +134,7 @@ async fn test_mysql_ensure_created_and_deleted() {
         eprintln!("skip test_mysql_ensure_created_and_deleted: RUST_EF_MYSQL_URL not set");
         return;
     };
-    let provider = match MySqlProvider::new(&url).await {
+    let provider = match MySqlProvider::new_insecure(&url).await {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         Err(e) => {
             eprintln!("skip test_mysql_ensure_created_and_deleted: {e}");
@@ -152,7 +152,7 @@ async fn test_mysql_has_data_seed() {
         eprintln!("skip test_mysql_has_data_seed: RUST_EF_MYSQL_URL not set");
         return;
     };
-    let provider = match MySqlProvider::new(&url).await {
+    let provider = match MySqlProvider::new_insecure(&url).await {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
         Err(e) => {
             eprintln!("skip test_mysql_has_data_seed: {e}");

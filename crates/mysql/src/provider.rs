@@ -13,15 +13,17 @@ pub struct MySqlProvider {
 }
 
 impl MySqlProvider {
+    /// Creates a provider with TLS required (secure-by-default, v1.6+).
+    ///
+    /// Overrides any `ssl-mode` in the connection string. For plaintext
+    /// connections (local dev only), use [`MySqlProvider::new_insecure`].
     pub async fn new(connection_string: &str) -> EFResult<Self> {
-        let pool = sqlx::MySqlPool::connect(connection_string)
-            .await
-            .map_err(|e| EFError::Connection(format!("MySQL connection failed: {}", e)))?;
-        Ok(Self {
-            pool,
-            #[cfg(feature = "tracing")]
-            slow_query_threshold_ms: std::sync::atomic::AtomicU64::new(0),
-        })
+        Self::new_with_tls(connection_string, MySqlTlsMode::Required).await
+    }
+
+    /// Creates a provider with TLS disabled (plaintext, local dev only).
+    pub async fn new_insecure(connection_string: &str) -> EFResult<Self> {
+        Self::new_with_tls(connection_string, MySqlTlsMode::Disabled).await
     }
 
     pub fn from_pool(pool: sqlx::MySqlPool) -> Self {
@@ -32,14 +34,14 @@ impl MySqlProvider {
         }
     }
 
+    /// Creates a lazy provider with TLS required (secure-by-default, v1.6+).
     pub fn new_lazy(connection_string: &str) -> EFResult<Self> {
-        let pool = sqlx::MySqlPool::connect_lazy(connection_string)
-            .map_err(|e| EFError::Connection(format!("MySQL pool failed: {}", e)))?;
-        Ok(Self {
-            pool,
-            #[cfg(feature = "tracing")]
-            slow_query_threshold_ms: std::sync::atomic::AtomicU64::new(0),
-        })
+        Self::new_lazy_with_tls(connection_string, MySqlTlsMode::Required)
+    }
+
+    /// Creates a lazy provider with TLS disabled (plaintext, local dev only).
+    pub fn new_lazy_insecure(connection_string: &str) -> EFResult<Self> {
+        Self::new_lazy_with_tls(connection_string, MySqlTlsMode::Disabled)
     }
 
     /// Creates a provider with explicit TLS configuration.
@@ -49,8 +51,9 @@ impl MySqlProvider {
     /// provide the CA certificate via the connection string's `ssl-ca`
     /// parameter.
     ///
-    /// For backward-compatible behavior (respecting the connection string's
-    /// `ssl-mode`), use [`MySqlProvider::new`] instead.
+    /// For the secure-by-default convenience constructor, use
+    /// [`MySqlProvider::new`]. For plaintext (local dev), use
+    /// [`MySqlProvider::new_insecure`].
     pub async fn new_with_tls(connection_string: &str, tls: MySqlTlsMode) -> EFResult<Self> {
         let mut options: sqlx::mysql::MySqlConnectOptions = connection_string
             .parse()
