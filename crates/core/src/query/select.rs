@@ -2,17 +2,16 @@
 //!
 //! Produced by `QueryBuilder::select_internal` when the user projects to
 //! named columns. Executes the projection query and returns either raw
-//! `Vec<Vec<String>>` rows or strongly-typed tuples via `to_list_typed_n`
-//! methods (parsing each column via `ParseFromDb`).
+//! `Vec<Vec<DbValue>>` rows or strongly-typed tuples via `to_list_typed_n`
+//! methods (converting each column via `TryFrom<DbValue>`).
 
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::entity::IEntityType;
 use crate::error::EFResult;
-use crate::provider::IDatabaseProvider;
+use crate::provider::{DbValue, DbValueConvertError, IDatabaseProvider};
 
-use super::source::{parse_column, ParseFromDb};
 use super::state::QueryState;
 
 /// A query builder for projected column results.
@@ -35,7 +34,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     }
 
     /// Executes the projection query and returns raw column values per row.
-    pub async fn to_list(self) -> EFResult<Vec<Vec<String>>> {
+    pub async fn to_list(self) -> EFResult<Vec<Vec<DbValue>>> {
         let provider = self.provider.as_ref().ok_or_else(|| {
             crate::error::EFError::Configuration(
                 "No provider attached to SelectQueryBuilder.".to_string(),
@@ -52,25 +51,26 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     // G3: Strongly-typed projection terminal methods.
     //
     // Each `to_list_typed_n::<V0, ...>` method executes the projection
-    // query, then parses each column value via `ParseFromDb` into the
+    // query, then converts each column value via `TryFrom<DbValue>` into the
     // corresponding type parameter, returning `Vec<(V0, ...)>`.
     // -------------------------------------------------------------------
 
-    async fn fetch_rows(self) -> EFResult<Vec<Vec<String>>> {
+    async fn fetch_rows(self) -> EFResult<Vec<Vec<DbValue>>> {
         self.to_list().await
     }
 
     /// Single-column typed projection → `Vec<V0>`.
     pub async fn to_list_typed_1<V0>(self) -> EFResult<Vec<V0>>
     where
-        V0: ParseFromDb,
+        V0: TryFrom<DbValue, Error = DbValueConvertError>,
     {
         let rows = self.fetch_rows().await?;
         rows.into_iter()
             .map(|row| {
-                parse_column::<V0>(row.first().ok_or_else(|| {
+                let cell = row.first().ok_or_else(|| {
                     crate::error::EFError::Query("projection row has no columns".into())
-                })?)
+                })?;
+                V0::try_from(cell.clone()).map_err(crate::error::EFError::from)
             })
             .collect()
     }
@@ -78,8 +78,8 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     /// Two-column typed projection → `Vec<(V0, V1)>`.
     pub async fn to_list_typed_2<V0, V1>(self) -> EFResult<Vec<(V0, V1)>>
     where
-        V0: ParseFromDb,
-        V1: ParseFromDb,
+        V0: TryFrom<DbValue, Error = DbValueConvertError>,
+        V1: TryFrom<DbValue, Error = DbValueConvertError>,
     {
         let rows = self.fetch_rows().await?;
         rows.into_iter()
@@ -90,7 +90,10 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
                 let c1 = row.get(1).ok_or_else(|| {
                     crate::error::EFError::Query("projection row missing column 1".into())
                 })?;
-                Ok((parse_column::<V0>(c0)?, parse_column::<V1>(c1)?))
+                Ok((
+                    V0::try_from(c0.clone()).map_err(crate::error::EFError::from)?,
+                    V1::try_from(c1.clone()).map_err(crate::error::EFError::from)?,
+                ))
             })
             .collect()
     }
@@ -98,9 +101,9 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     /// Three-column typed projection → `Vec<(V0, V1, V2)>`.
     pub async fn to_list_typed_3<V0, V1, V2>(self) -> EFResult<Vec<(V0, V1, V2)>>
     where
-        V0: ParseFromDb,
-        V1: ParseFromDb,
-        V2: ParseFromDb,
+        V0: TryFrom<DbValue, Error = DbValueConvertError>,
+        V1: TryFrom<DbValue, Error = DbValueConvertError>,
+        V2: TryFrom<DbValue, Error = DbValueConvertError>,
     {
         let rows = self.fetch_rows().await?;
         rows.into_iter()
@@ -115,9 +118,9 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
                     crate::error::EFError::Query("projection row missing column 2".into())
                 })?;
                 Ok((
-                    parse_column::<V0>(c0)?,
-                    parse_column::<V1>(c1)?,
-                    parse_column::<V2>(c2)?,
+                    V0::try_from(c0.clone()).map_err(crate::error::EFError::from)?,
+                    V1::try_from(c1.clone()).map_err(crate::error::EFError::from)?,
+                    V2::try_from(c2.clone()).map_err(crate::error::EFError::from)?,
                 ))
             })
             .collect()
@@ -126,10 +129,10 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     /// Four-column typed projection → `Vec<(V0, V1, V2, V3)>`.
     pub async fn to_list_typed_4<V0, V1, V2, V3>(self) -> EFResult<Vec<(V0, V1, V2, V3)>>
     where
-        V0: ParseFromDb,
-        V1: ParseFromDb,
-        V2: ParseFromDb,
-        V3: ParseFromDb,
+        V0: TryFrom<DbValue, Error = DbValueConvertError>,
+        V1: TryFrom<DbValue, Error = DbValueConvertError>,
+        V2: TryFrom<DbValue, Error = DbValueConvertError>,
+        V3: TryFrom<DbValue, Error = DbValueConvertError>,
     {
         let rows = self.fetch_rows().await?;
         rows.into_iter()
@@ -147,10 +150,10 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
                     crate::error::EFError::Query("projection row missing column 3".into())
                 })?;
                 Ok((
-                    parse_column::<V0>(c0)?,
-                    parse_column::<V1>(c1)?,
-                    parse_column::<V2>(c2)?,
-                    parse_column::<V3>(c3)?,
+                    V0::try_from(c0.clone()).map_err(crate::error::EFError::from)?,
+                    V1::try_from(c1.clone()).map_err(crate::error::EFError::from)?,
+                    V2::try_from(c2.clone()).map_err(crate::error::EFError::from)?,
+                    V3::try_from(c3.clone()).map_err(crate::error::EFError::from)?,
                 ))
             })
             .collect()

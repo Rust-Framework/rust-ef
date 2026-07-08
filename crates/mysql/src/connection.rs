@@ -45,7 +45,7 @@ impl IAsyncConnection for MySqlConnection {
         Ok(result.rows_affected())
     }
 
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>> {
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<DbValue>>> {
         let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         let conn = self
             .conn
@@ -66,7 +66,7 @@ impl IAsyncConnection for MySqlConnection {
                 row.columns()
                     .iter()
                     .enumerate()
-                    .map(|(i, _)| crate::row_conversion::cell_to_string(row, i))
+                    .map(|(i, _)| crate::row_conversion::cell_to_db_value(row, i))
                     .collect()
             })
             .collect();

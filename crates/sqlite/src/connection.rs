@@ -72,7 +72,7 @@ impl IAsyncConnection for SqliteConnection {
         }
     }
 
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>> {
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<DbValue>>> {
         let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         match &self.inner {
             SqliteConnectionInner::Pooled(m) => {

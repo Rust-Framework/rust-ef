@@ -861,7 +861,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
-            first.trim().parse::<f64>().map_err(|_| {
+            f64::try_from(first.clone()).map_err(|_| {
                 crate::error::EFError::TypeConversion("SUM result is not f64".to_string())
             })
         } else {
@@ -887,7 +887,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
-            first.trim().parse::<f64>().map_err(|_| {
+            f64::try_from(first.clone()).map_err(|_| {
                 crate::error::EFError::TypeConversion("AVG result is not f64".to_string())
             })
         } else {
@@ -1083,10 +1083,13 @@ impl<T: IEntityType> QueryBuilder<T> {
         let rows = conn.query(&sql, &params).await?;
         if let Some(first_row) = rows.first() {
             if let Some(first_val) = first_row.first() {
-                return first_val.trim().parse::<i64>().map_err(|e| {
+                if matches!(first_val, crate::provider::DbValue::Null) {
+                    return Ok(0);
+                }
+                return i64::try_from(first_val.clone()).map_err(|e| {
                     crate::error::EFError::TypeConversion(format!(
-                        "COUNT result '{}' is not i64: {}",
-                        first_val, e
+                        "COUNT result is not i64: {}",
+                        e
                     ))
                 });
             }

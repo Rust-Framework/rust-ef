@@ -74,20 +74,17 @@ impl crate::provider::ISqlGenerator for PortablePlaceholderGenerator {
 /// Converts the first cell of the first row of an aggregation query result
 /// into the target type `V`. Returns `None` when no rows, no cells, or a SQL
 /// NULL was returned (e.g. `MIN`/`MAX` over an empty input set). The driver
-/// returns `String` cells, so the value is wrapped in `DbValue::String`
-/// before `TryFrom` conversion.
-pub(crate) fn convert_aggregate_cell<V>(rows: Vec<Vec<String>>) -> EFResult<Option<V>>
+/// returns native `DbValue` cells, so `TryFrom` conversion is applied
+/// directly.
+pub(crate) fn convert_aggregate_cell<V>(rows: Vec<Vec<DbValue>>) -> EFResult<Option<V>>
 where
     V: TryFrom<DbValue, Error = DbValueConvertError>,
 {
     match rows.first().and_then(|r| r.first()) {
-        Some(s) if s.eq_ignore_ascii_case("NULL") => Ok(None),
-        Some(s) => {
-            let db_val = DbValue::String(s.clone());
-            V::try_from(db_val)
-                .map(Some)
-                .map_err(crate::error::EFError::from)
-        }
+        Some(DbValue::Null) => Ok(None),
+        Some(cell) => V::try_from(cell.clone())
+            .map(Some)
+            .map_err(crate::error::EFError::from),
         None => Ok(None),
     }
 }

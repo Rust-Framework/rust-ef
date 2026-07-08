@@ -22,7 +22,7 @@ pub(crate) fn query_sync(
     conn: &rusqlite::Connection,
     sql: &str,
     params: &[DbValue],
-) -> EFResult<Vec<Vec<String>>> {
+) -> EFResult<Vec<Vec<DbValue>>> {
     let rp = crate::type_conversion::to_rusqlite_params(params);
     let refs: Vec<&dyn rusqlite::types::ToSql> = rp
         .iter()
@@ -36,12 +36,17 @@ pub(crate) fn query_sync(
         .query_map(refs.as_slice(), |row| {
             let mut vals = Vec::with_capacity(cc);
             for i in 0..cc {
-                vals.push(
-                    row.get::<_, String>(i)
-                        .or_else(|_| row.get::<_, i64>(i).map(|n| n.to_string()))
-                        .or_else(|_| row.get::<_, f64>(i).map(|n| n.to_string()))
-                        .unwrap_or_else(|_| "NULL".to_string()),
-                );
+                let val = match row.get_ref(i) {
+                    Ok(rusqlite::types::ValueRef::Null) => DbValue::Null,
+                    Ok(rusqlite::types::ValueRef::Integer(n)) => DbValue::I64(n),
+                    Ok(rusqlite::types::ValueRef::Real(x)) => DbValue::F64(x),
+                    Ok(rusqlite::types::ValueRef::Text(bytes)) => {
+                        DbValue::String(String::from_utf8_lossy(bytes).into_owned())
+                    }
+                    Ok(rusqlite::types::ValueRef::Blob(bytes)) => DbValue::Bytes(bytes.to_vec()),
+                    Err(_) => DbValue::Null,
+                };
+                vals.push(val);
             }
             Ok(vals)
         })

@@ -87,8 +87,14 @@ impl MigrationEngine {
         Ok(rows
             .into_iter()
             .map(|row| MigrationHistoryEntry {
-                migration_id: row.first().cloned().unwrap_or_default(),
-                product_version: row.get(1).cloned().unwrap_or_default(),
+                migration_id: row
+                    .first()
+                    .and_then(|v| String::try_from(v.clone()).ok())
+                    .unwrap_or_default(),
+                product_version: row
+                    .get(1)
+                    .and_then(|v| String::try_from(v.clone()).ok())
+                    .unwrap_or_default(),
             })
             .collect())
     }

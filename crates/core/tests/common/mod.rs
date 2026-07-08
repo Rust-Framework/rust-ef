@@ -82,11 +82,11 @@ impl IEntityType for TestItem {
 }
 
 impl IFromRow for TestItem {
-    fn from_row(values: &[String]) -> EFResult<Self> {
+    fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(TestItem {
-            id: values.first().and_then(|s| s.parse().ok()).unwrap_or(0),
-            name: values.get(1).cloned().unwrap_or_default(),
-            value: values.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+            name: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
+            value: values.get(2).and_then(|v| v.clone().try_into().ok()).unwrap_or(0.0),
         })
     }
 }

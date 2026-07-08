@@ -30,7 +30,9 @@ async fn test_sqlite_wal_mode_enabled() {
             .await
             .expect("pragma");
         assert!(!rows.is_empty(), "PRAGMA journal_mode should return a row");
-        rows[0][0].to_lowercase()
+        String::try_from(rows[0][0].clone())
+            .unwrap()
+            .to_lowercase()
     }; // conn + provider dropped here so the file is released.
 
     assert_eq!(
@@ -59,9 +61,7 @@ async fn test_sqlite_busy_timeout_set() {
             .await
             .expect("pragma");
         assert!(!rows.is_empty(), "PRAGMA busy_timeout should return a row");
-        rows[0][0]
-            .parse::<i64>()
-            .expect("busy_timeout should be numeric")
+        i64::try_from(rows[0][0].clone()).expect("busy_timeout should be numeric")
     };
 
     assert!(

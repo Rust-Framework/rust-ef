@@ -5,7 +5,6 @@ use crate::error::EFResult;
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
 use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
 use crate::query::{compile_bool_expr, CompiledFilter, IncludePath};
-use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 /// Appends a query filter (e.g. tenant_id = ?) to a navigation SQL statement.
@@ -268,35 +267,18 @@ where
         nav.through_related_fk_index,
     );
 
-    let pk_type_id = nav
-        .related_entity_meta
-        .and_then(|meta_fn| {
-            meta_fn()
-                .properties
-                .iter()
-                .find(|p| p.is_primary_key)
-                .map(|p| p.type_id)
-        })
-        .unwrap_or_else(TypeId::of::<i32>);
-
     // Collect unique related keys using a HashSet for O(1) dedup
     // (previously O(N²) linear scan per join row).
     let mut seen: HashSet<String> = HashSet::new();
-    let related_keys: Vec<String> = join_rows
+    let related_ids: Vec<DbValue> = join_rows
         .iter()
-        .filter_map(|row| row.get(nav.through_related_fk_index))
-        .filter(|v| seen.insert((*v).clone()))
-        .cloned()
+        .filter_map(|row| row.get(nav.through_related_fk_index).cloned())
+        .filter(|v| seen.insert(db_value_key(v)))
         .collect();
 
-    if related_keys.is_empty() {
+    if related_ids.is_empty() {
         return Ok(());
     }
-
-    let related_ids: Vec<DbValue> = related_keys
-        .iter()
-        .map(|s| cell_to_db_value(s, pk_type_id))
-        .collect();
 
     let related_pk = nav.referenced_key_column.as_deref().unwrap_or("id");
     let rel_placeholders: Vec<String> = (0..related_ids.len())
@@ -343,66 +325,38 @@ fn db_value_key(v: &DbValue) -> String {
     format!("{}", v)
 }
 
-fn group_rows(rows: &[Vec<String>], fk_index: usize) -> HashMap<String, Vec<Vec<String>>> {
-    let mut map: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+fn group_rows(rows: &[Vec<DbValue>], fk_index: usize) -> HashMap<String, Vec<Vec<DbValue>>> {
+    let mut map: HashMap<String, Vec<Vec<DbValue>>> = HashMap::new();
     for row in rows {
         if let Some(fk_val) = row.get(fk_index) {
-            map.entry(fk_val.clone()).or_default().push(row.clone());
+            map.entry(db_value_key(fk_val)).or_default().push(row.clone());
         }
     }
     map
 }
 
 fn group_join_rows(
-    rows: &[Vec<String>],
+    rows: &[Vec<DbValue>],
     parent_index: usize,
     related_index: usize,
-) -> HashMap<String, Vec<String>> {
-    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+) -> HashMap<String, Vec<DbValue>> {
+    let mut map: HashMap<String, Vec<DbValue>> = HashMap::new();
     for row in rows {
         if let (Some(parent), Some(related)) = (row.get(parent_index), row.get(related_index)) {
-            map.entry(parent.clone()).or_default().push(related.clone());
+            map.entry(db_value_key(parent))
+                .or_default()
+                .push(related.clone());
         }
     }
     map
 }
 
-fn index_rows(rows: &[Vec<String>], pk_index: usize) -> HashMap<String, Vec<String>> {
+fn index_rows(rows: &[Vec<DbValue>], pk_index: usize) -> HashMap<String, Vec<DbValue>> {
     let mut map = HashMap::new();
     for row in rows {
         if let Some(pk) = row.get(pk_index) {
-            map.insert(pk.clone(), row.clone());
+            map.insert(db_value_key(pk), row.clone());
         }
     }
     map
-}
-
-fn cell_to_db_value(raw: &str, type_id: TypeId) -> DbValue {
-    if type_id == TypeId::of::<i32>() {
-        raw.parse::<i32>()
-            .map(DbValue::I32)
-            .unwrap_or_else(|_| DbValue::String(raw.to_string()))
-    } else if type_id == TypeId::of::<i64>() {
-        raw.parse::<i64>()
-            .map(DbValue::I64)
-            .unwrap_or_else(|_| DbValue::String(raw.to_string()))
-    } else if type_id == TypeId::of::<i16>() {
-        raw.parse::<i16>()
-            .map(DbValue::I16)
-            .unwrap_or_else(|_| DbValue::String(raw.to_string()))
-    } else if type_id == TypeId::of::<f64>() {
-        raw.parse::<f64>()
-            .map(DbValue::F64)
-            .unwrap_or_else(|_| DbValue::String(raw.to_string()))
-    } else if type_id == TypeId::of::<f32>() {
-        raw.parse::<f32>()
-            .map(DbValue::F32)
-            .unwrap_or_else(|_| DbValue::String(raw.to_string()))
-    } else if type_id == TypeId::of::<bool>() {
-        raw.parse::<bool>()
-            .map(DbValue::Bool)
-            .unwrap_or_else(|_| DbValue::String(raw.to_string()))
-    } else {
-        DbValue::String(raw.to_string())
-    }
 }

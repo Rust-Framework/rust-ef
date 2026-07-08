@@ -65,10 +65,10 @@ impl IEntityType for Item {
 }
 
 impl rust_ef::entity::IFromRow for Item {
-    fn from_row(values: &[String]) -> EFResult<Self> {
+    fn from_row(values: &[rust_ef::provider::DbValue]) -> EFResult<Self> {
         Ok(Item {
-            id: values.first().and_then(|s| s.parse().ok()).unwrap_or(0),
-            name: values.get(1).cloned().unwrap_or_default(),
+            id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+            name: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
         })
     }
 }

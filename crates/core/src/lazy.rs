@@ -384,11 +384,10 @@ where
     // Collect unique related IDs from join rows.
     let related_fk_index = nav.through_related_fk_index;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let related_ids: Vec<String> = join_rows
+    let related_ids: Vec<DbValue> = join_rows
         .iter()
-        .filter_map(|row| row.get(related_fk_index))
-        .filter(|v| seen.insert((*v).clone()))
-        .cloned()
+        .filter_map(|row| row.get(related_fk_index).cloned())
+        .filter(|v| seen.insert(format!("{}", v)))
         .collect();
 
     if related_ids.is_empty() {
@@ -417,10 +416,7 @@ where
         ref_pk_col,
         placeholders.join(", ")
     );
-    let mut params: Vec<DbValue> = related_ids
-        .iter()
-        .map(|s| DbValue::String(s.clone()))
-        .collect();
+    let mut params: Vec<DbValue> = related_ids;
     apply_filter(&mut sql, &mut params, &related_table, ctx.filter_map(), gen);
 
     let rows = conn.query(&sql, &params).await?;

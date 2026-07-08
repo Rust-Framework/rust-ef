@@ -96,10 +96,10 @@ impl IEntityType for PerfParent {
 }
 
 impl IFromRow for PerfParent {
-    fn from_row(values: &[String]) -> EFResult<Self> {
+    fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(PerfParent {
-            id: values.first().and_then(|s| s.parse().ok()).unwrap_or(0),
-            name: values.get(1).cloned().unwrap_or_default(),
+            id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+            name: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
             children: HasMany::new(),
         })
     }
@@ -123,7 +123,7 @@ impl IEntitySnapshot for PerfParent {
 }
 
 impl INavigationSetter for PerfParent {
-    fn apply_has_many(&mut self, field: &str, rows: &[Vec<String>]) -> EFResult<()> {
+    fn apply_has_many(&mut self, field: &str, rows: &[Vec<DbValue>]) -> EFResult<()> {
         if field == "children" {
             let items: EFResult<Vec<PerfChild>> = rows
                 .iter()
@@ -221,11 +221,11 @@ impl IEntityType for PerfChild {
 }
 
 impl IFromRow for PerfChild {
-    fn from_row(values: &[String]) -> EFResult<Self> {
+    fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(PerfChild {
-            id: values.first().and_then(|s| s.parse().ok()).unwrap_or(0),
-            parent_id: values.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
-            label: values.get(2).cloned().unwrap_or_default(),
+            id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+            parent_id: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+            label: values.get(2).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
         })
     }
 }

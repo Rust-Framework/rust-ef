@@ -509,7 +509,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         }
 
         impl rust_ef::entity::IFromRow for #struct_name {
-            fn from_row(values: &[String]) -> rust_ef::error::EFResult<Self> {
+            fn from_row(values: &[rust_ef::provider::DbValue]) -> rust_ef::error::EFResult<Self> {
                 if values.len() < #field_count {
                     return Err(rust_ef::error::EFError::TypeConversion(
                         format!("Expected {} columns, got {}", #field_count, values.len())
@@ -526,7 +526,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             fn apply_has_many(
                 &mut self,
                 field: &str,
-                rows: &[Vec<String>],
+                rows: &[Vec<rust_ef::provider::DbValue>],
             ) -> rust_ef::error::EFResult<()> {
                 #( #has_many_setter_arms )*
                 Ok(())
@@ -535,7 +535,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             fn apply_reference(
                 &mut self,
                 field: &str,
-                row: &[String],
+                row: &[rust_ef::provider::DbValue],
             ) -> rust_ef::error::EFResult<()> {
                 #( #reference_setter_arms )*
                 Ok(())
@@ -791,7 +791,7 @@ fn generate_parse_expr(ty: &Type, type_str: &str, idx: syn::Index) -> proc_macro
                         return quote! {
                             {
                                 let v = &values[#idx];
-                                if v.is_empty() || v == "NULL" {
+                                if matches!(v, rust_ef::provider::DbValue::Null) {
                                     None
                                 } else {
                                     Some(#inner_parse)
@@ -814,66 +814,59 @@ fn generate_parse_expr(ty: &Type, type_str: &str, idx: syn::Index) -> proc_macro
 fn generate_scalar_parse(type_str: &str, _ty: &Type, idx: syn::Index) -> proc_macro2::TokenStream {
     match type_str {
         "i32" | "i 32" => quote! {
-            values[#idx].parse::<i32>().unwrap_or(0)
+            values[#idx].clone().try_into().unwrap_or(0i32)
         },
         "i64" | "i 64" => quote! {
-            values[#idx].parse::<i64>().unwrap_or(0)
+            values[#idx].clone().try_into().unwrap_or(0i64)
         },
         "i16" | "i 16" => quote! {
-            values[#idx].parse::<i16>().unwrap_or(0)
+            values[#idx].clone().try_into().unwrap_or(0i16)
         },
         "i8" | "i 8" => quote! {
-            values[#idx].parse::<i8>().unwrap_or(0)
+            values[#idx].clone().try_into().unwrap_or(0i8)
         },
         "u32" | "u 32" => quote! {
-            values[#idx].parse::<u32>().unwrap_or(0)
+            values[#idx].clone().try_into().unwrap_or(0u32)
         },
         "u64" | "u 64" => quote! {
-            values[#idx].parse::<u64>().unwrap_or(0)
+            values[#idx].clone().try_into().unwrap_or(0u64)
         },
         "f64" | "f 64" => quote! {
-            values[#idx].parse::<f64>().unwrap_or(0.0)
+            values[#idx].clone().try_into().unwrap_or(0.0f64)
         },
         "f32" | "f 32" => quote! {
-            values[#idx].parse::<f32>().unwrap_or(0.0)
+            values[#idx].clone().try_into().unwrap_or(0.0f32)
         },
         "bool" => quote! {
-            match values[#idx].as_str() {
-                "true" | "1" => true,
-                _ => false,
-            }
+            values[#idx].clone().try_into().unwrap_or(false)
         },
         "String" => quote! {
-            values[#idx].clone()
+            values[#idx].clone().try_into().unwrap_or_default()
         },
         "Vec < u8 >" | "Vec<u8>" => quote! {
-            values[#idx].as_bytes().to_vec()
+            values[#idx].clone().try_into().unwrap_or_default()
         },
         // chrono types — order matters: NaiveDateTime before DateTime, NaiveDate before Date
         _ if cfg!(feature = "chrono") && type_str.contains("NaiveDateTime") => quote! {
-            ::chrono::NaiveDateTime::parse_from_str(&values[#idx], "%Y-%m-%d %H:%M:%S%.f")
-                .unwrap_or_default()
+            values[#idx].clone().try_into().unwrap_or_default()
         },
         _ if cfg!(feature = "chrono") && type_str.contains("NaiveDate") => quote! {
-            values[#idx].parse::<::chrono::NaiveDate>().unwrap_or_default()
+            values[#idx].clone().try_into().unwrap_or_default()
         },
         _ if cfg!(feature = "chrono") && type_str.contains("DateTime") => quote! {
-            ::chrono::DateTime::parse_from_rfc3339(&values[#idx])
-                .map(|dt| dt.with_timezone(&::chrono::Utc))
-                .unwrap_or_default()
+            values[#idx].clone().try_into().unwrap_or_default()
         },
         // uuid::Uuid
         _ if cfg!(feature = "uuid") && type_str.contains("Uuid") => quote! {
-            values[#idx].parse::<::uuid::Uuid>().unwrap_or_default()
+            values[#idx].clone().try_into().unwrap_or_default()
         },
         // rust_decimal::Decimal
         _ if cfg!(feature = "decimal") && type_str.contains("Decimal") => quote! {
-            values[#idx].parse::<::rust_decimal::Decimal>().unwrap_or_default()
+            values[#idx].clone().try_into().unwrap_or_default()
         },
         _ => {
-            // Default to String for unknown types
             quote! {
-                values[#idx].clone()
+                values[#idx].clone().try_into().unwrap_or_default()
             }
         }
     }

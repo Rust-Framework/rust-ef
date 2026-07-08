@@ -76,8 +76,7 @@ pub mod prelude {
     pub use crate::provider::IDatabaseProvider;
     pub use crate::provider::IsolationLevel;
     pub use crate::query::{
-        BoolExpr, CteSpec, LinqSource, ParseFromDb, SetOpSpec, SetOperator, WindowFuncKind,
-        WindowSpec,
+        BoolExpr, CteSpec, LinqSource, SetOpSpec, SetOperator, WindowFuncKind, WindowSpec,
     };
     pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};

@@ -45,7 +45,7 @@ impl IAsyncConnection for PostgresConnection {
             .map_err(|e| EFError::Query(format!("Execution error: {}", e)))
     }
 
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>> {
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<DbValue>>> {
         let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
         let pgp = crate::type_conversion::db_values_to_pg_params(params);
         let refs: Vec<&(dyn ToSql + Sync)> = pgp
@@ -68,7 +68,7 @@ impl IAsyncConnection for PostgresConnection {
                 columns
                     .iter()
                     .enumerate()
-                    .map(|(i, col)| crate::row_conversion::cell_to_string(row, i, col.type_()))
+                    .map(|(i, col)| crate::row_conversion::cell_to_db_value(row, i, col.type_()))
                     .collect()
             })
             .collect();

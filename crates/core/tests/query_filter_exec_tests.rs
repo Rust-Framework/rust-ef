@@ -82,11 +82,11 @@ impl IEntityType for TenantItem {
 }
 
 impl rust_ef::entity::IFromRow for TenantItem {
-    fn from_row(values: &[String]) -> rust_ef::error::EFResult<Self> {
+    fn from_row(values: &[DbValue]) -> rust_ef::error::EFResult<Self> {
         Ok(TenantItem {
-            id: values.first().and_then(|s| s.parse().ok()).unwrap_or(0),
-            tenant_id: values.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
-            name: values.get(2).cloned().unwrap_or_default(),
+            id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+            tenant_id: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+            name: values.get(2).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
         })
     }
 }

@@ -395,6 +395,90 @@ impl TryFrom<DbValue> for i16 {
     }
 }
 
+impl TryFrom<DbValue> for i8 {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::I16(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I16(n),
+                target_type: "i8",
+            }),
+            DbValue::I32(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I32(n),
+                target_type: "i8",
+            }),
+            DbValue::I64(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I64(n),
+                target_type: "i8",
+            }),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "i8",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "i8",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for u32 {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::I16(n) => (n as i32).try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I16(n),
+                target_type: "u32",
+            }),
+            DbValue::I32(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I32(n),
+                target_type: "u32",
+            }),
+            DbValue::I64(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I64(n),
+                target_type: "u32",
+            }),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "u32",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "u32",
+            }),
+        }
+    }
+}
+
+impl TryFrom<DbValue> for u64 {
+    type Error = DbValueConvertError;
+    fn try_from(v: DbValue) -> Result<Self, Self::Error> {
+        match v {
+            DbValue::I16(n) => (n as i64).try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I16(n),
+                target_type: "u64",
+            }),
+            DbValue::I32(n) => (n as i64).try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I32(n),
+                target_type: "u64",
+            }),
+            DbValue::I64(n) => n.try_into().map_err(|_| DbValueConvertError {
+                source: DbValue::I64(n),
+                target_type: "u64",
+            }),
+            DbValue::String(s) => s.parse().map_err(|_| DbValueConvertError {
+                source: DbValue::String(s),
+                target_type: "u64",
+            }),
+            other => Err(DbValueConvertError {
+                source: other,
+                target_type: "u64",
+            }),
+        }
+    }
+}
+
 // --- Feature-gated TryFrom impls for native chrono / uuid / decimal types ---
 
 #[cfg(feature = "chrono")]
@@ -546,7 +630,7 @@ pub trait IAsyncConnection: Send + Sync {
     /// Executes a query with parameters and returns the number of affected rows.
     async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64>;
     /// Executes a query with parameters and returns rows.
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>>;
+    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<DbValue>>>;
     /// Begins a transaction.
     async fn begin_transaction(&mut self) -> EFResult<()>;
     /// Commits the current transaction.
