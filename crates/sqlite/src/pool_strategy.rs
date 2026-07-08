@@ -49,7 +49,7 @@ impl SqliteProviderInner {
         match self {
             SqliteProviderInner::Pooled(pool) => {
                 let conn = pool.get().map_err(|e| {
-                    EFError::Connection(format!("SQLite pool acquire failed: {}", e))
+                    EFError::connection(format!("SQLite pool acquire failed: {}", e))
                 })?;
                 Ok(Box::new(crate::connection::SqliteConnection::new_pooled(
                     conn,
@@ -65,17 +65,17 @@ impl SqliteProviderInner {
         match self {
             SqliteProviderInner::Pooled(pool) => {
                 let conn = pool.get().map_err(|e| {
-                    EFError::Connection(format!("SQLite pool acquire failed: {}", e))
+                    EFError::connection(format!("SQLite pool acquire failed: {}", e))
                 })?;
                 conn.execute_batch(sql).map_err(|e| {
-                    EFError::Migration(format!("Migration execution failed: {}", e))
+                    EFError::migration(format!("Migration execution failed: {}", e))
                 })?;
                 Ok(())
             }
             SqliteProviderInner::Single(conn) => {
                 let guard = conn.lock().await;
                 guard.execute_batch(sql).map_err(|e| {
-                    EFError::Migration(format!("Migration execution failed: {}", e))
+                    EFError::migration(format!("Migration execution failed: {}", e))
                 })?;
                 Ok(())
             }

@@ -99,9 +99,18 @@ mod production_tests {
     impl IFromRow for VersionedItem {
         fn from_row(values: &[DbValue]) -> rust_ef::error::EFResult<Self> {
             Ok(Self {
-                id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
-                name: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
-                row_version: values.get(2).and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+                id: values
+                    .first()
+                    .and_then(|v| v.clone().try_into().ok())
+                    .unwrap_or(0),
+                name: values
+                    .get(1)
+                    .and_then(|v| v.clone().try_into().ok())
+                    .unwrap_or_default(),
+                row_version: values
+                    .get(2)
+                    .and_then(|v| v.clone().try_into().ok())
+                    .unwrap_or(0),
             })
         }
     }
@@ -177,7 +186,7 @@ mod production_tests {
 
         ctx.set::<VersionedItem>().detect_changes();
         let result = ctx.save_changes().await;
-        assert!(matches!(result, Err(EFError::ConcurrencyConflict(_))));
+        assert!(matches!(result, Err(EFError::ConcurrencyConflict(..))));
     }
 
     #[tokio::test]
@@ -224,7 +233,7 @@ mod production_tests {
         .unwrap();
 
         let err = ctx.save_changes().await;
-        assert!(matches!(err, Err(EFError::ConcurrencyConflict(_))));
+        assert!(matches!(err, Err(EFError::ConcurrencyConflict(..))));
 
         let row = ctx
             .set::<VersionedItem>()
@@ -348,9 +357,18 @@ mod production_tests {
         impl IFromRow for UserRole {
             fn from_row(values: &[DbValue]) -> rust_ef::error::EFResult<Self> {
                 Ok(Self {
-                    user_id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
-                    role_id: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
-                    label: values.get(2).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
+                    user_id: values
+                        .first()
+                        .and_then(|v| v.clone().try_into().ok())
+                        .unwrap_or(0),
+                    role_id: values
+                        .get(1)
+                        .and_then(|v| v.clone().try_into().ok())
+                        .unwrap_or(0),
+                    label: values
+                        .get(2)
+                        .and_then(|v| v.clone().try_into().ok())
+                        .unwrap_or_default(),
                 })
             }
         }

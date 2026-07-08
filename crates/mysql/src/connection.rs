@@ -37,11 +37,11 @@ impl IAsyncConnection for MySqlConnection {
         let conn = self
             .conn
             .as_mut()
-            .ok_or_else(|| EFError::Connection("Connection already closed".to_string()))?;
+            .ok_or_else(|| EFError::connection("Connection already closed".to_string()))?;
         let result = crate::type_conversion::build_mysql_query(sql, params)
             .execute(&mut **conn)
             .await
-            .map_err(|e| EFError::Query(format!("Execution error: {}", e)))?;
+            .map_err(|e| EFError::query(format!("Execution error: {}", e)))?;
         Ok(result.rows_affected())
     }
 
@@ -50,11 +50,11 @@ impl IAsyncConnection for MySqlConnection {
         let conn = self
             .conn
             .as_mut()
-            .ok_or_else(|| EFError::Connection("Connection already closed".to_string()))?;
+            .ok_or_else(|| EFError::connection("Connection already closed".to_string()))?;
         let rows = crate::type_conversion::build_mysql_query(sql, params)
             .fetch_all(&mut **conn)
             .await
-            .map_err(|e| EFError::Query(format!("Query error: {}", e)))?;
+            .map_err(|e| EFError::query(format!("Query error: {}", e)))?;
 
         if rows.is_empty() {
             return Ok(Vec::new());

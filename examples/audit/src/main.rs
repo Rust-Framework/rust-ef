@@ -333,10 +333,22 @@ async fn main() -> EFResult<()> {
         )
         .await?;
     for row in &rows {
-        let id = row.first().map(|s| s.as_str()).unwrap_or("?");
-        let et = row.get(1).map(|s| s.as_str()).unwrap_or("?");
-        let act = row.get(2).map(|s| s.as_str()).unwrap_or("?");
-        let aff = row.get(3).map(|s| s.as_str()).unwrap_or("?");
+        let id = row
+            .first()
+            .map(|s| format!("{}", s))
+            .unwrap_or_else(|| "?".into());
+        let et = row
+            .get(1)
+            .map(|s| format!("{}", s))
+            .unwrap_or_else(|| "?".into());
+        let act = row
+            .get(2)
+            .map(|s| format!("{}", s))
+            .unwrap_or_else(|| "?".into());
+        let aff = row
+            .get(3)
+            .map(|s| format!("{}", s))
+            .unwrap_or_else(|| "?".into());
         println!(
             "      DB: id={}, entity='{}', action='{}', affected={}",
             id, et, act, aff

@@ -307,7 +307,7 @@ where
             if let Some(related_keys) = parent_to_related.get(&parent_key) {
                 let mut child_rows = Vec::new();
                 for rk in related_keys {
-                    if let Some(row) = related_by_pk.get(rk) {
+                    if let Some(row) = related_by_pk.get(&db_value_key(rk)) {
                         child_rows.push(row.clone());
                     }
                 }
@@ -329,7 +329,9 @@ fn group_rows(rows: &[Vec<DbValue>], fk_index: usize) -> HashMap<String, Vec<Vec
     let mut map: HashMap<String, Vec<Vec<DbValue>>> = HashMap::new();
     for row in rows {
         if let Some(fk_val) = row.get(fk_index) {
-            map.entry(db_value_key(fk_val)).or_default().push(row.clone());
+            map.entry(db_value_key(fk_val))
+                .or_default()
+                .push(row.clone());
         }
     }
     map

@@ -214,7 +214,7 @@ impl std::error::Error for DbValueConvertError {}
 
 impl From<DbValueConvertError> for crate::error::EFError {
     fn from(e: DbValueConvertError) -> Self {
-        crate::error::EFError::TypeConversion(e.to_string())
+        crate::error::EFError::type_conversion(e.to_string())
     }
 }
 

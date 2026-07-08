@@ -14,7 +14,7 @@ pub(crate) fn execute_sync(
         .collect();
     conn.execute(sql, refs.as_slice())
         .map(|c| c as u64)
-        .map_err(|e| EFError::Query(format!("Execution error: {}", e)))
+        .map_err(|e| EFError::query(format!("Execution error: {}", e)))
 }
 
 /// Synchronous query logic shared by both connection modes (pooled / shared).
@@ -30,7 +30,7 @@ pub(crate) fn query_sync(
         .collect();
     let mut stmt = conn
         .prepare(sql)
-        .map_err(|e| EFError::Query(format!("Prepare error: {}", e)))?;
+        .map_err(|e| EFError::query(format!("Prepare error: {}", e)))?;
     let cc = stmt.column_count();
     let rows = stmt
         .query_map(refs.as_slice(), |row| {
@@ -50,10 +50,10 @@ pub(crate) fn query_sync(
             }
             Ok(vals)
         })
-        .map_err(|e| EFError::Query(format!("Query error: {}", e)))?;
+        .map_err(|e| EFError::query(format!("Query error: {}", e)))?;
     let mut result = Vec::new();
     for row in rows {
-        result.push(row.map_err(|e| EFError::Query(format!("Row read error: {}", e)))?);
+        result.push(row.map_err(|e| EFError::query(format!("Row read error: {}", e)))?);
     }
     Ok(result)
 }

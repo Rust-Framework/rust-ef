@@ -180,7 +180,7 @@ impl ChangeExecutor {
 
             let rows = conn.execute(&sql, &params).await?;
             if rows == 0 {
-                return Err(EFError::ConcurrencyConflict(format!(
+                return Err(EFError::concurrency_conflict(format!(
                     "update affected 0 rows on {} (row may have been modified or deleted)",
                     meta.table_name
                 )));
@@ -275,7 +275,7 @@ impl ChangeExecutor {
             let sql = gen.delete(meta.table_name.as_ref(), &where_clause);
             let rows = conn.execute(&sql, &params).await?;
             if rows == 0 && pk_count > 0 {
-                return Err(EFError::ConcurrencyConflict(format!(
+                return Err(EFError::concurrency_conflict(format!(
                     "batch delete affected 0 rows on {} (rows may have been modified or deleted)",
                     meta.table_name
                 )));
@@ -325,7 +325,7 @@ impl ChangeExecutor {
             let sql = gen.delete(meta.table_name.as_ref(), &where_clause);
             let rows = conn.execute(&sql, &where_params).await?;
             if rows == 0 {
-                return Err(EFError::ConcurrencyConflict(format!(
+                return Err(EFError::concurrency_conflict(format!(
                     "delete affected 0 rows on {} (row may have been modified or deleted)",
                     meta.table_name
                 )));
@@ -367,7 +367,7 @@ fn build_where_with_concurrency(
         let original_val = original
             .and_then(|o| o.get(token.field_name.as_ref()))
             .ok_or_else(|| {
-                EFError::ChangeTracking(format!(
+                EFError::change_tracking(format!(
                     "missing original concurrency token for '{}'",
                     token.field_name
                 ))

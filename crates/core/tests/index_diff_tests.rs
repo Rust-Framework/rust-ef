@@ -414,6 +414,7 @@ async fn test_apply_migration_creates_index_in_db() {
     let index_names: Vec<String> = rows
         .into_iter()
         .filter_map(|row| row.into_iter().next())
+        .filter_map(|v| String::try_from(v).ok())
         .collect();
 
     assert!(

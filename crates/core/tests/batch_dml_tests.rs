@@ -105,10 +105,22 @@ impl IEntityType for BatchItem {
 impl IFromRow for BatchItem {
     fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(BatchItem {
-            id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
-            name: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
-            value: values.get(2).and_then(|v| v.clone().try_into().ok()).unwrap_or(0.0),
-            tenant_id: values.get(3).and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
+            id: values
+                .first()
+                .and_then(|v| v.clone().try_into().ok())
+                .unwrap_or(0),
+            name: values
+                .get(1)
+                .and_then(|v| v.clone().try_into().ok())
+                .unwrap_or_default(),
+            value: values
+                .get(2)
+                .and_then(|v| v.clone().try_into().ok())
+                .unwrap_or(0.0),
+            tenant_id: values
+                .get(3)
+                .and_then(|v| v.clone().try_into().ok())
+                .unwrap_or(0),
         })
     }
 }

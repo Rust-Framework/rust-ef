@@ -24,7 +24,7 @@ impl PostgresProvider {
     pub fn new(connection_string: &str, pool_size: usize) -> EFResult<Self> {
         let connector = native_tls::TlsConnector::builder()
             .build()
-            .map_err(|e| EFError::Connection(format!("TLS connector init failed: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("TLS connector init failed: {}", e)))?;
         Self::new_with_tls(connection_string, pool_size, PgTlsMode::Require(connector))
     }
 
@@ -49,7 +49,7 @@ impl PostgresProvider {
     ) -> EFResult<Self> {
         let config: tokio_postgres::Config = connection_string
             .parse()
-            .map_err(|e| EFError::Connection(format!("Invalid connection string: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("Invalid connection string: {}", e)))?;
         let mut cfg = Config::new();
         if let Some(tokio_postgres::config::Host::Tcp(h)) = config.get_hosts().first() {
             cfg.host = Some(h.clone());
@@ -67,11 +67,11 @@ impl PostgresProvider {
         let pool = match tls {
             PgTlsMode::Disable => cfg
                 .create_pool(Some(Runtime::Tokio1), NoTls)
-                .map_err(|e| EFError::Connection(format!("Failed to create pool: {}", e)))?,
+                .map_err(|e| EFError::connection(format!("Failed to create pool: {}", e)))?,
             PgTlsMode::Require(connector) => {
                 let tls = postgres_native_tls::MakeTlsConnector::new(connector);
                 cfg.create_pool(Some(Runtime::Tokio1), tls)
-                    .map_err(|e| EFError::Connection(format!("Failed to create pool: {}", e)))?
+                    .map_err(|e| EFError::connection(format!("Failed to create pool: {}", e)))?
             }
         };
         Ok(Self {
@@ -94,7 +94,7 @@ impl IDatabaseProvider for PostgresProvider {
             .pool
             .get()
             .await
-            .map_err(|e| EFError::Connection(format!("Pool error: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("Pool error: {}", e)))?;
         #[cfg_attr(not(feature = "tracing"), allow(unused_mut))]
         let mut conn = Box::new(crate::connection::PostgresConnection::new(client));
         #[cfg(feature = "tracing")]
@@ -114,11 +114,11 @@ impl IDatabaseProvider for PostgresProvider {
             .pool
             .get()
             .await
-            .map_err(|e| EFError::Connection(format!("Pool error: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("Pool error: {}", e)))?;
         client
             .batch_execute(sql)
             .await
-            .map_err(|e| EFError::Migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| EFError::migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
 

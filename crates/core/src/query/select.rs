@@ -36,7 +36,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     /// Executes the projection query and returns raw column values per row.
     pub async fn to_list(self) -> EFResult<Vec<Vec<DbValue>>> {
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to SelectQueryBuilder.".to_string(),
             )
         })?;
@@ -68,7 +68,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         rows.into_iter()
             .map(|row| {
                 let cell = row.first().ok_or_else(|| {
-                    crate::error::EFError::Query("projection row has no columns".into())
+                    crate::error::EFError::query("projection row has no columns".into())
                 })?;
                 V0::try_from(cell.clone()).map_err(crate::error::EFError::from)
             })
@@ -85,10 +85,10 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         rows.into_iter()
             .map(|row| {
                 let c0 = row.first().ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 0".into())
+                    crate::error::EFError::query("projection row missing column 0".into())
                 })?;
                 let c1 = row.get(1).ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 1".into())
+                    crate::error::EFError::query("projection row missing column 1".into())
                 })?;
                 Ok((
                     V0::try_from(c0.clone()).map_err(crate::error::EFError::from)?,
@@ -109,13 +109,13 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         rows.into_iter()
             .map(|row| {
                 let c0 = row.first().ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 0".into())
+                    crate::error::EFError::query("projection row missing column 0".into())
                 })?;
                 let c1 = row.get(1).ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 1".into())
+                    crate::error::EFError::query("projection row missing column 1".into())
                 })?;
                 let c2 = row.get(2).ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 2".into())
+                    crate::error::EFError::query("projection row missing column 2".into())
                 })?;
                 Ok((
                     V0::try_from(c0.clone()).map_err(crate::error::EFError::from)?,
@@ -138,16 +138,16 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         rows.into_iter()
             .map(|row| {
                 let c0 = row.first().ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 0".into())
+                    crate::error::EFError::query("projection row missing column 0".into())
                 })?;
                 let c1 = row.get(1).ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 1".into())
+                    crate::error::EFError::query("projection row missing column 1".into())
                 })?;
                 let c2 = row.get(2).ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 2".into())
+                    crate::error::EFError::query("projection row missing column 2".into())
                 })?;
                 let c3 = row.get(3).ok_or_else(|| {
-                    crate::error::EFError::Query("projection row missing column 3".into())
+                    crate::error::EFError::query("projection row missing column 3".into())
                 })?;
                 Ok((
                     V0::try_from(c0.clone()).map_err(crate::error::EFError::from)?,

@@ -102,7 +102,7 @@ impl<T> BelongsTo<T> {
             return Ok(());
         };
         if ctx.depth() >= MAX_LAZY_DEPTH {
-            return Err(EFError::Other(
+            return Err(EFError::other(
                 "lazy loading recursion limit exceeded".into(),
             ));
         }
@@ -240,7 +240,7 @@ impl<T, Join> HasMany<T, Join> {
             return Ok(());
         };
         if ctx.depth() >= MAX_LAZY_DEPTH {
-            return Err(EFError::Other(
+            return Err(EFError::other(
                 "lazy loading recursion limit exceeded".into(),
             ));
         }
@@ -352,7 +352,7 @@ impl<T> HasOne<T> {
             return Ok(());
         };
         if ctx.depth() >= MAX_LAZY_DEPTH {
-            return Err(EFError::Other(
+            return Err(EFError::other(
                 "lazy loading recursion limit exceeded".into(),
             ));
         }

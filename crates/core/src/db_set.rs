@@ -324,7 +324,7 @@ impl<T: IEntityType + IEntitySnapshot> IDbSet<T> for DbSet<T> {
             entry.state = EntityState::Deleted;
             Ok(())
         } else {
-            Err(crate::error::EFError::NotFound(
+            Err(crate::error::EFError::not_found(
                 "Entity not found at the given index".to_string(),
             ))
         }

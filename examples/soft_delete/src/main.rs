@@ -234,9 +234,18 @@ async fn main() -> EFResult<()> {
         )
         .await?;
     for row in &rows {
-        let id = row.first().map(|s| s.as_str()).unwrap_or("?");
-        let title = row.get(1).map(|s| s.as_str()).unwrap_or("?");
-        let is_del = row.get(2).map(|s| s.as_str()).unwrap_or("?");
+        let id = row
+            .first()
+            .map(|s| format!("{}", s))
+            .unwrap_or_else(|| "?".into());
+        let title = row
+            .get(1)
+            .map(|s| format!("{}", s))
+            .unwrap_or_else(|| "?".into());
+        let is_del = row
+            .get(2)
+            .map(|s| format!("{}", s))
+            .unwrap_or_else(|| "?".into());
         println!(
             "      DB row: id={}, title='{}', is_deleted={}",
             id, title, is_del

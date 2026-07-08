@@ -38,17 +38,14 @@ pub(crate) fn cell_to_db_value(row: &sqlx::mysql::MySqlRow, col_idx: usize) -> D
         return v.map(DbValue::F64).unwrap_or(DbValue::Null);
     }
     // NaiveDateTime (DATETIME, TIMESTAMP)
-    #[cfg(feature = "chrono")]
     if let Ok(v) = row.try_get::<Option<chrono::NaiveDateTime>, _>(col_idx) {
         return v.map(DbValue::NaiveDateTime).unwrap_or(DbValue::Null);
     }
     // NaiveDate (DATE)
-    #[cfg(feature = "chrono")]
     if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col_idx) {
         return v.map(DbValue::NaiveDate).unwrap_or(DbValue::Null);
     }
     // Uuid (CHAR(36))
-    #[cfg(feature = "uuid")]
     if let Ok(v) = row.try_get::<Option<uuid::Uuid>, _>(col_idx) {
         return v.map(DbValue::Uuid).unwrap_or(DbValue::Null);
     }
@@ -61,7 +58,21 @@ pub(crate) fn cell_to_db_value(row: &sqlx::mysql::MySqlRow, col_idx: usize) -> D
     if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col_idx) {
         return v.map(DbValue::Bytes).unwrap_or(DbValue::Null);
     }
-    // Unknown / unsupported type — last resort.
-    // M3.1 will add a tracing::warn! here (tracing feature gated).
+    // Unknown / unsupported type — last resort. Emit a tracing warning so
+    // production users can diagnose silent NULLs from unrecognized column
+    // types (e.g. GEOMETRY, JSON when not auto-detected as String).
+    #[cfg(feature = "tracing")]
+    {
+        let col_name = row
+            .columns()
+            .get(col_idx)
+            .map(|c| c.name())
+            .unwrap_or("unknown");
+        tracing::warn!(
+            column = col_name,
+            index = col_idx,
+            "MySQL column type unrecognized, returning NULL"
+        );
+    }
     DbValue::Null
 }

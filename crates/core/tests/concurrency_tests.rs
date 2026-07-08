@@ -96,7 +96,7 @@ async fn test_update_conflict_stale_token() {
     ctx.set::<ConcItem>().detect_changes();
     let result = ctx.save_changes().await;
     assert!(
-        matches!(result, Err(EFError::ConcurrencyConflict(_))),
+        matches!(result, Err(EFError::ConcurrencyConflict(..))),
         "expected ConcurrencyConflict, got {result:?}"
     );
 }
@@ -117,7 +117,7 @@ async fn test_delete_conflict_stale_token() {
 
     let result = ctx.save_changes().await;
     assert!(
-        matches!(result, Err(EFError::ConcurrencyConflict(_))),
+        matches!(result, Err(EFError::ConcurrencyConflict(..))),
         "expected ConcurrencyConflict on delete, got {result:?}"
     );
 }
@@ -182,7 +182,7 @@ async fn test_update_after_token_refresh() {
 
     ctx.set::<ConcItem>().detect_changes();
     let result = ctx.save_changes().await;
-    assert!(matches!(result, Err(EFError::ConcurrencyConflict(_))));
+    assert!(matches!(result, Err(EFError::ConcurrencyConflict(..))));
 
     // Re-load with fresh token and retry.
     ctx.set::<ConcItem>().clear_entries();

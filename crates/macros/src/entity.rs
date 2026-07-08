@@ -511,7 +511,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         impl rust_ef::entity::IFromRow for #struct_name {
             fn from_row(values: &[rust_ef::provider::DbValue]) -> rust_ef::error::EFResult<Self> {
                 if values.len() < #field_count {
-                    return Err(rust_ef::error::EFError::TypeConversion(
+                    return Err(rust_ef::error::EFError::type_conversion(
                         format!("Expected {} columns, got {}", #field_count, values.len())
                     ));
                 }

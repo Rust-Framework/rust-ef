@@ -30,9 +30,7 @@ async fn test_sqlite_wal_mode_enabled() {
             .await
             .expect("pragma");
         assert!(!rows.is_empty(), "PRAGMA journal_mode should return a row");
-        String::try_from(rows[0][0].clone())
-            .unwrap()
-            .to_lowercase()
+        String::try_from(rows[0][0].clone()).unwrap().to_lowercase()
     }; // conn + provider dropped here so the file is released.
 
     assert_eq!(

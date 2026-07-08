@@ -57,11 +57,11 @@ impl MySqlProvider {
     pub async fn new_with_tls(connection_string: &str, tls: MySqlTlsMode) -> EFResult<Self> {
         let mut options: sqlx::mysql::MySqlConnectOptions = connection_string
             .parse()
-            .map_err(|e| EFError::Connection(format!("MySQL URL parse: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("MySQL URL parse: {}", e)))?;
         options = options.ssl_mode(tls.into());
         let pool = sqlx::MySqlPool::connect_with(options)
             .await
-            .map_err(|e| EFError::Connection(format!("MySQL connection failed: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("MySQL connection failed: {}", e)))?;
         Ok(Self {
             pool,
             #[cfg(feature = "tracing")]
@@ -75,7 +75,7 @@ impl MySqlProvider {
     pub fn new_lazy_with_tls(connection_string: &str, tls: MySqlTlsMode) -> EFResult<Self> {
         let mut options: sqlx::mysql::MySqlConnectOptions = connection_string
             .parse()
-            .map_err(|e| EFError::Connection(format!("MySQL URL parse: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("MySQL URL parse: {}", e)))?;
         options = options.ssl_mode(tls.into());
         let pool = sqlx::MySqlPool::connect_lazy_with(options);
         Ok(Self {
@@ -98,7 +98,7 @@ impl IDatabaseProvider for MySqlProvider {
             .pool
             .acquire()
             .await
-            .map_err(|e| EFError::Connection(format!("Pool acquire failed: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("Pool acquire failed: {}", e)))?;
         #[cfg_attr(not(feature = "tracing"), allow(unused_mut))]
         let mut conn = Box::new(crate::connection::MySqlConnection::new(conn));
         #[cfg(feature = "tracing")]
@@ -117,7 +117,7 @@ impl IDatabaseProvider for MySqlProvider {
         sqlx::query(sql)
             .execute(&self.pool)
             .await
-            .map_err(|e| EFError::Migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| EFError::migration(format!("Migration execution failed: {}", e)))?;
         Ok(())
     }
 

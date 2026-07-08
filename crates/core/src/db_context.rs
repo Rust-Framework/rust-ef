@@ -188,7 +188,7 @@ impl DbContextOptions {
             return Ok(Arc::clone(provider));
         }
         let factory = self.provider_factory.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider configured. Call use_sqlite / use_postgres / use_mysql first.".into(),
             )
         })?;
@@ -570,7 +570,7 @@ impl DbContext {
             metas = self.entity_metas.values().cloned().collect();
         }
         if metas.is_empty() {
-            return Err(EFError::Configuration(
+            return Err(EFError::configuration(
                 "No entity types registered. Call ctx.discover_entities() or ctx.set::<T>() before ensure_created().".into(),
             ));
         }
@@ -597,7 +597,7 @@ impl DbContext {
             metas = self.entity_metas.values().cloned().collect();
         }
         if metas.is_empty() {
-            return Err(EFError::Configuration(
+            return Err(EFError::configuration(
                 "No entity types registered. Call ctx.discover_entities() or ctx.set::<T>() before ensure_deleted().".into(),
             ));
         }
@@ -804,7 +804,7 @@ impl DbContext {
         R: Send + 'static,
     {
         if self.ambient_transaction.is_some() {
-            return Err(EFError::Transaction(
+            return Err(EFError::transaction(
                 "ambient transaction already active; nested use_transaction is not supported"
                     .into(),
             ));

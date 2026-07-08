@@ -341,7 +341,7 @@ impl<T: IEntityType> QueryBuilder<T> {
                     .map(|p| p.column_name.as_ref())
             })
             .ok_or_else(|| {
-                crate::error::EFError::Query(format!(
+                crate::error::EFError::query(format!(
                     "entity {} has no primary key defined",
                     std::any::type_name::<T>()
                 ))
@@ -382,7 +382,7 @@ impl<T: IEntityType> QueryBuilder<T> {
                     .map(|p| p.column_name.as_ref())
             })
             .ok_or_else(|| {
-                crate::error::EFError::Query(format!(
+                crate::error::EFError::query(format!(
                     "entity {} has no primary key defined",
                     std::any::type_name::<T>()
                 ))
@@ -852,7 +852,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         state.aggregate = Some("SUM".to_string());
         state.aggregate_column = Some(column.to_string());
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -862,7 +862,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
             f64::try_from(first.clone()).map_err(|_| {
-                crate::error::EFError::TypeConversion("SUM result is not f64".to_string())
+                crate::error::EFError::type_conversion("SUM result is not f64".to_string())
             })
         } else {
             Ok(0.0)
@@ -878,7 +878,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         state.aggregate = Some("AVG".to_string());
         state.aggregate_column = Some(column.to_string());
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -888,7 +888,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let rows = conn.query(&sql, &params).await?;
         if let Some(first) = rows.first().and_then(|r| r.first()) {
             f64::try_from(first.clone()).map_err(|_| {
-                crate::error::EFError::TypeConversion("AVG result is not f64".to_string())
+                crate::error::EFError::type_conversion("AVG result is not f64".to_string())
             })
         } else {
             Ok(0.0)
@@ -908,7 +908,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         state.aggregate = Some("MIN".to_string());
         state.aggregate_column = Some(column.to_string());
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -932,7 +932,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         state.aggregate = Some("MAX".to_string());
         state.aggregate_column = Some(column.to_string());
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -1009,7 +1009,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let lazy_loading = self.lazy_loading_enabled;
         let (sql, params) = self.compile_sql();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder. Use DbSet::query() or attach a provider."
                     .to_string(),
             )
@@ -1056,7 +1056,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let mut results = self.take(1).to_list().await?;
         results
             .pop()
-            .ok_or_else(|| crate::error::EFError::NotFound("Entity not found".to_string()))
+            .ok_or_else(|| crate::error::EFError::not_found("Entity not found".to_string()))
     }
 
     /// Executes the query and returns the first matching entity or None.
@@ -1073,7 +1073,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let mut state = self.state.clone();
         state.is_count = true;
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -1087,10 +1087,7 @@ impl<T: IEntityType> QueryBuilder<T> {
                     return Ok(0);
                 }
                 return i64::try_from(first_val.clone()).map_err(|e| {
-                    crate::error::EFError::TypeConversion(format!(
-                        "COUNT result is not i64: {}",
-                        e
-                    ))
+                    crate::error::EFError::type_conversion(format!("COUNT result is not i64: {}", e))
                 });
             }
         }
@@ -1103,7 +1100,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         state.is_exists = true;
         state.limit = Some(1);
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
@@ -1127,7 +1124,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let mut results = self.last_or_default().await?;
         results
             .take()
-            .ok_or_else(|| crate::error::EFError::NotFound("Entity not found".to_string()))
+            .ok_or_else(|| crate::error::EFError::not_found("Entity not found".to_string()))
     }
 
     /// Executes the query and returns the last matching entity or `None`.
@@ -1155,7 +1152,7 @@ impl<T: IEntityType> QueryBuilder<T> {
                         .map(|p| p.column_name.as_ref())
                 })
                 .ok_or_else(|| {
-                    crate::error::EFError::Query(format!(
+                    crate::error::EFError::query(format!(
                         "last_or_default requires a primary key on {} when no explicit ordering is set",
                         std::any::type_name::<T>()
                     ))
@@ -1184,12 +1181,12 @@ impl<T: IEntityType> QueryBuilder<T> {
     {
         let mut results = self.take(2).to_list().await?;
         if results.len() > 1 {
-            return Err(crate::error::EFError::Query(
+            return Err(crate::error::EFError::query(
                 "Sequence contains more than one element".to_string(),
             ));
         }
         results.pop().ok_or_else(|| {
-            crate::error::EFError::NotFound("Sequence contains no elements".to_string())
+            crate::error::EFError::not_found("Sequence contains no elements".to_string())
         })
     }
 
@@ -1201,7 +1198,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     {
         let mut results = self.take(2).to_list().await?;
         if results.len() > 1 {
-            return Err(crate::error::EFError::Query(
+            return Err(crate::error::EFError::query(
                 "Sequence contains more than one element".to_string(),
             ));
         }
@@ -1273,7 +1270,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Executes a bulk delete operation.
     pub async fn execute_delete(self) -> EFResult<u64> {
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;

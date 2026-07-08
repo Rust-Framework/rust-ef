@@ -148,7 +148,7 @@ fn map_rust_type(col: &ScaffoldColumn) -> String {
 }
 
 fn io_err(e: std::io::Error) -> rust_ef::error::EFError {
-    rust_ef::error::EFError::Configuration(e.to_string())
+    rust_ef::error::EFError::configuration(e.to_string())
 }
 
 #[cfg(test)]

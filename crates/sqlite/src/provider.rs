@@ -35,7 +35,7 @@ impl SqliteProvider {
             .max_size(SQLITE_DEFAULT_POOL_SIZE)
             .connection_customizer(Box::new(SqliteConnectionCustomizer))
             .build(manager)
-            .map_err(|e| EFError::Connection(format!("SQLite pool creation failed: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("SQLite pool creation failed: {}", e)))?;
         Ok(Self {
             inner: SqliteProviderInner::Pooled(pool),
             #[cfg(feature = "tracing")]
@@ -52,11 +52,11 @@ impl SqliteProvider {
     /// independent database with full test isolation.
     pub fn new_in_memory() -> EFResult<Self> {
         let conn = rusqlite::Connection::open_in_memory()
-            .map_err(|e| EFError::Connection(format!("SQLite in-memory open failed: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("SQLite in-memory open failed: {}", e)))?;
         // WAL isn't supported for in-memory databases (SQLite silently
         // ignores the PRAGMA), but busy_timeout still applies.
         conn.execute_batch("PRAGMA busy_timeout=5000;")
-            .map_err(|e| EFError::Connection(format!("SQLite pragma setup failed: {}", e)))?;
+            .map_err(|e| EFError::connection(format!("SQLite pragma setup failed: {}", e)))?;
         Ok(Self {
             inner: SqliteProviderInner::Single(Arc::new(Mutex::new(conn))),
             #[cfg(feature = "tracing")]

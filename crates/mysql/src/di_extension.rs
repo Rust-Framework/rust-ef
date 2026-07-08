@@ -62,7 +62,7 @@ impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder
                 let mut options = MySqlPoolOptions::new();
                 configure(&mut options);
                 let connect_opts: MySqlConnectOptions = cs.parse().map_err(|e| {
-                    rust_ef::error::EFError::Connection(format!("MySQL URL parse: {}", e))
+                    rust_ef::error::EFError::connection(format!("MySQL URL parse: {}", e))
                 })?;
                 let pool = options.connect_lazy_with(connect_opts);
                 Ok(Arc::new(crate::provider::MySqlProvider::from_pool(pool))

@@ -980,7 +980,7 @@ impl MigrationEngine {
         migration: &Migration,
     ) -> EFResult<()> {
         if !self.is_applied(provider, &migration.id).await? {
-            return Err(crate::error::EFError::Migration(format!(
+            return Err(crate::error::EFError::migration(format!(
                 "migration '{}' is not applied",
                 migration.id
             )));
@@ -1071,7 +1071,7 @@ impl MigrationEngine {
             return Ok(None);
         };
         let migration = migrations.iter().find(|m| m.id == last_id).ok_or_else(|| {
-            crate::error::EFError::Migration(format!(
+            crate::error::EFError::migration(format!(
                 "applied migration '{}' not found in local migration set",
                 last_id
             ))
@@ -1098,7 +1098,7 @@ impl MigrationEngine {
         let to_revert: Vec<String> = match target {
             Some(t) => {
                 let idx = applied_ids.iter().position(|id| *id == t).ok_or_else(|| {
-                    crate::error::EFError::Migration(format!(
+                    crate::error::EFError::migration(format!(
                         "target migration '{t}' is not applied"
                     ))
                 })?;
@@ -1113,7 +1113,7 @@ impl MigrationEngine {
         let mut reverted = Vec::with_capacity(to_revert.len());
         for id in to_revert.iter().rev() {
             let migration = migrations.iter().find(|m| m.id == *id).ok_or_else(|| {
-                crate::error::EFError::Migration(format!(
+                crate::error::EFError::migration(format!(
                     "applied migration '{id}' not found in local migration set"
                 ))
             })?;
@@ -1143,7 +1143,7 @@ impl MigrationEngine {
         // to=None means "after last migration" (migrations.len() - 1).
         let from_idx: i64 = match from {
             Some(f) => migrations.iter().position(|m| m.id == f).ok_or_else(|| {
-                crate::error::EFError::Migration(format!(
+                crate::error::EFError::migration(format!(
                     "from migration '{f}' not found in local set"
                 ))
             })? as i64,
@@ -1151,7 +1151,7 @@ impl MigrationEngine {
         };
         let to_idx: i64 = match to {
             Some(t) => migrations.iter().position(|m| m.id == t).ok_or_else(|| {
-                crate::error::EFError::Migration(format!(
+                crate::error::EFError::migration(format!(
                     "to migration '{t}' not found in local set"
                 ))
             })? as i64,
@@ -1434,7 +1434,7 @@ pub fn parse_model_snapshot_json(text: &str) -> EFResult<Option<ModelSnapshot>> 
 }
 
 fn migration_io_err(e: std::io::Error) -> crate::error::EFError {
-    crate::error::EFError::Migration(e.to_string())
+    crate::error::EFError::migration(e.to_string())
 }
 
 fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {

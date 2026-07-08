@@ -82,7 +82,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
         let sql = self.to_sql();
         let params = self.params();
         let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::Configuration(
+            crate::error::EFError::configuration(
                 "No provider attached to ExecuteUpdateBuilder.".to_string(),
             )
         })?;

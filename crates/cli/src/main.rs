@@ -206,9 +206,9 @@ fn cmd_add(
     dialect: DialectArg,
 ) -> EFResult<()> {
     let text =
-        std::fs::read_to_string(snapshot_path).map_err(|e| EFError::Migration(e.to_string()))?;
+        std::fs::read_to_string(snapshot_path).map_err(|e| EFError::migration(e.to_string()))?;
     let target_snapshot = parse_model_snapshot_json(&text)?.ok_or_else(|| {
-        EFError::Migration("snapshot must describe at least one entity type".into())
+        EFError::migration("snapshot must describe at least one entity type".into())
     })?;
     let store = MigrationStore::new(dir);
     let previous = store.load_snapshot()?;
@@ -370,7 +370,7 @@ async fn cmd_scaffold_dbcontext(
             })
             .collect(),
         ProviderArg::Sqlite => {
-            return Err(EFError::Configuration(
+            return Err(EFError::configuration(
                 "SQLite scaffold is not supported yet; use PostgreSQL or MySQL".into(),
             ));
         }

@@ -300,7 +300,7 @@ async fn test_having_nested_and_or() {
 #[tokio::test]
 async fn test_select_clause_returns_raw_rows() {
     let mut ctx = seed().await;
-    let rows: Vec<Vec<String>> =
+    let rows: Vec<Vec<DbValue>> =
         linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.published; select (b.blog_id, b.title))
             .to_list()
             .await

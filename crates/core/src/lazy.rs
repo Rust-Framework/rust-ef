@@ -10,7 +10,7 @@
 //! A `tokio::task_local!` depth counter prevents infinite lazy-loading
 //! chains (e.g. `Blog → Posts → Blog → ...`). The maximum depth is
 //! [`MAX_LAZY_DEPTH`]; exceeding it yields
-//! `EFError::Other("lazy loading recursion limit exceeded")`.
+//! `EFError::other("lazy loading recursion limit exceeded")`.
 
 use crate::entity::IEntityType;
 use crate::error::{EFError, EFResult};
@@ -284,7 +284,7 @@ where
 {
     let nav = ctx.navigation();
     if nav.kind == NavigationKind::ManyToMany {
-        return Err(EFError::Other(
+        return Err(EFError::other(
             "load_scalar_lazy called for ManyToMany navigation".into(),
         ));
     }

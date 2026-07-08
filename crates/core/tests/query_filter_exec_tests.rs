@@ -84,9 +84,18 @@ impl IEntityType for TenantItem {
 impl rust_ef::entity::IFromRow for TenantItem {
     fn from_row(values: &[DbValue]) -> rust_ef::error::EFResult<Self> {
         Ok(TenantItem {
-            id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
-            tenant_id: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
-            name: values.get(2).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
+            id: values
+                .first()
+                .and_then(|v| v.clone().try_into().ok())
+                .unwrap_or(0),
+            tenant_id: values
+                .get(1)
+                .and_then(|v| v.clone().try_into().ok())
+                .unwrap_or(0),
+            name: values
+                .get(2)
+                .and_then(|v| v.clone().try_into().ok())
+                .unwrap_or_default(),
         })
     }
 }
@@ -166,7 +175,7 @@ async fn update_across_tenant_filtered_out() {
     });
     let err = ctx.save_changes().await.unwrap_err();
     match err {
-        EFError::ConcurrencyConflict(msg) => {
+        EFError::ConcurrencyConflict(msg, _) => {
             assert!(msg.contains("tenant_items"), "msg: {msg}");
         }
         other => panic!("expected ConcurrencyConflict, got {other:?}"),
@@ -186,7 +195,7 @@ async fn delete_across_tenant_filtered_out() {
     ctx.set::<TenantItem>().remove_at(0).expect("mark deleted");
     let err = ctx.save_changes().await.unwrap_err();
     match err {
-        EFError::ConcurrencyConflict(msg) => {
+        EFError::ConcurrencyConflict(msg, _) => {
             assert!(msg.contains("tenant_items"), "msg: {msg}");
         }
         other => panic!("expected ConcurrencyConflict, got {other:?}"),

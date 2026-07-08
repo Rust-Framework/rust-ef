@@ -55,7 +55,7 @@ async fn soft_delete_article(
 ) -> Result<(), EFError> {
     // Load entity into tracker
     let mut article = ctx.set::<Article>().query().find(id).await?
-        .ok_or(EFError::NotFound("Article not found"))?;
+        .ok_or(EFError::not_found("Article not found"))?;
 
     // Mark as deleted
     article.is_deleted = true;

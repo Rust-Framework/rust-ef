@@ -31,13 +31,13 @@ pub async fn introspect_postgres(
     tls: PgTlsMode,
 ) -> EFResult<Vec<DbTable>> {
     let config: tokio_postgres::Config = connection_string.parse().map_err(|e| {
-        rust_ef::error::EFError::Connection(format!("Invalid connection string: {}", e))
+        rust_ef::error::EFError::connection(format!("Invalid connection string: {}", e))
     })?;
 
     let client = match tls {
         PgTlsMode::Disable => {
             let (client, connection) = config.connect(NoTls).await.map_err(|e| {
-                rust_ef::error::EFError::Connection(format!("Connection failed: {}", e))
+                rust_ef::error::EFError::connection(format!("Connection failed: {}", e))
             })?;
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
@@ -49,7 +49,7 @@ pub async fn introspect_postgres(
         PgTlsMode::Require(connector) => {
             let tls_connector = postgres_native_tls::MakeTlsConnector::new(connector);
             let (client, connection) = config.connect(tls_connector).await.map_err(|e| {
-                rust_ef::error::EFError::Connection(format!("Connection failed: {}", e))
+                rust_ef::error::EFError::connection(format!("Connection failed: {}", e))
             })?;
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
@@ -70,7 +70,7 @@ pub async fn introspect_postgres(
             &[],
         )
         .await
-        .map_err(|e| rust_ef::error::EFError::Query(format!("Table query error: {}", e)))?;
+        .map_err(|e| rust_ef::error::EFError::query(format!("Table query error: {}", e)))?;
 
     let mut tables = Vec::new();
     for table_row in &table_rows {
@@ -94,7 +94,7 @@ pub async fn introspect_postgres(
                 &[&table_name],
             )
             .await
-            .map_err(|e| rust_ef::error::EFError::Query(format!("Column query error: {}", e)))?;
+            .map_err(|e| rust_ef::error::EFError::query(format!("Column query error: {}", e)))?;
 
         let mut columns = Vec::new();
         for col_row in &col_rows {

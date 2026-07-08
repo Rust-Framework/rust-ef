@@ -42,7 +42,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .execute(sql, &refs)
             .await
-            .map_err(|e| EFError::Query(format!("Execution error: {}", e)))
+            .map_err(|e| EFError::query(format!("Execution error: {}", e)))
     }
 
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<DbValue>>> {
@@ -56,7 +56,7 @@ impl IAsyncConnection for PostgresConnection {
             .client
             .query(sql, &refs)
             .await
-            .map_err(|e| EFError::Query(format!("Query error: {}", e)))?;
+            .map_err(|e| EFError::query(format!("Query error: {}", e)))?;
         let columns: Vec<&tokio_postgres::Column> = if !rows.is_empty() {
             rows[0].columns().iter().collect()
         } else {
@@ -79,7 +79,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query("BEGIN")
             .await
-            .map_err(|e| EFError::Transaction(format!("BEGIN failed: {}", e)))?;
+            .map_err(|e| EFError::transaction(format!("BEGIN failed: {}", e)))?;
         Ok(())
     }
 
@@ -87,7 +87,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query("COMMIT")
             .await
-            .map_err(|e| EFError::Transaction(format!("COMMIT failed: {}", e)))?;
+            .map_err(|e| EFError::transaction(format!("COMMIT failed: {}", e)))?;
         Ok(())
     }
 
@@ -95,7 +95,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query("ROLLBACK")
             .await
-            .map_err(|e| EFError::Transaction(format!("ROLLBACK failed: {}", e)))?;
+            .map_err(|e| EFError::transaction(format!("ROLLBACK failed: {}", e)))?;
         Ok(())
     }
 
@@ -103,7 +103,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query(&format!("SAVEPOINT {}", name))
             .await
-            .map_err(|e| EFError::Transaction(format!("SAVEPOINT failed: {}", e)))?;
+            .map_err(|e| EFError::transaction(format!("SAVEPOINT failed: {}", e)))?;
         Ok(())
     }
 
@@ -111,7 +111,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query(&format!("RELEASE SAVEPOINT {}", name))
             .await
-            .map_err(|e| EFError::Transaction(format!("RELEASE failed: {}", e)))?;
+            .map_err(|e| EFError::transaction(format!("RELEASE failed: {}", e)))?;
         Ok(())
     }
 
@@ -119,7 +119,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query(&format!("ROLLBACK TO SAVEPOINT {}", name))
             .await
-            .map_err(|e| EFError::Transaction(format!("ROLLBACK TO failed: {}", e)))?;
+            .map_err(|e| EFError::transaction(format!("ROLLBACK TO failed: {}", e)))?;
         Ok(())
     }
 
@@ -136,7 +136,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query(&sql)
             .await
-            .map_err(|e| EFError::Transaction(format!("SET ISOLATION failed: {}", e)))?;
+            .map_err(|e| EFError::transaction(format!("SET ISOLATION failed: {}", e)))?;
         Ok(())
     }
 

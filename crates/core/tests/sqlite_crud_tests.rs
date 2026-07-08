@@ -94,9 +94,18 @@ mod sqlite_crud {
     impl IFromRow for TestItem {
         fn from_row(values: &[DbValue]) -> EFResult<Self> {
             Ok(TestItem {
-                id: values.first().and_then(|v| v.clone().try_into().ok()).unwrap_or(0),
-                name: values.get(1).and_then(|v| v.clone().try_into().ok()).unwrap_or_default(),
-                value: values.get(2).and_then(|v| v.clone().try_into().ok()).unwrap_or(0.0),
+                id: values
+                    .first()
+                    .and_then(|v| v.clone().try_into().ok())
+                    .unwrap_or(0),
+                name: values
+                    .get(1)
+                    .and_then(|v| v.clone().try_into().ok())
+                    .unwrap_or_default(),
+                value: values
+                    .get(2)
+                    .and_then(|v| v.clone().try_into().ok())
+                    .unwrap_or(0.0),
             })
         }
     }
