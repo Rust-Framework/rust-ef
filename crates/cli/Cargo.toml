@@ -13,9 +13,9 @@ name = "rust-ef"
 path = "src/main.rs"
 
 [dependencies]
-rust-ef = { version = "1.5.1", path = "../core" }
-rust-ef-sqlite = { version = "1.5.1", path = "../sqlite" }
-rust-ef-postgres = { version = "1.5.1", path = "../postgres" }
-rust-ef-mysql = { version = "1.5.1", path = "../mysql" }
+rust-ef = { version = "1.7.0", path = "../core" }
+rust-ef-sqlite = { version = "1.7.0", path = "../sqlite" }
+rust-ef-postgres = { version = "1.7.0", path = "../postgres" }
+rust-ef-mysql = { version = "1.7.0", path = "../mysql" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
