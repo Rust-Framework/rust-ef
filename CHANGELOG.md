@@ -9,6 +9,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.0] — 2026-07-09 — 级联删除 + FK ON DELETE DDL
+
+### Summary
+
+v1.7.0 新增应用级与数据库级联删除能力。从宏属性解析、元数据存储、应用级级联
+执行到迁移 DDL 的 `ON DELETE` 子句生成，形成全链路一致的删除策略。新增
+`#[on_delete]` 宏属性，支持 `Cascade` / `Restrict` / `SetNull` / `NoAction`
+四种行为。
+
+### Added — 应用级级联删除
+
+新增 `#[on_delete]` 宏属性，在 `BelongsTo` 导航上配置删除行为：
+
+```rust
+#[derive(Debug, Clone, EntityType)]
+struct Post {
+    #[primary_key] #[auto_increment] id: i32,
+    #[foreign_key(Blog)]
+    #[on_delete(SetNull)]
+    blog_id: Option<i32>,
+    #[navigation] blog: BelongsTo<Blog>,
+}
+```
+
+**应用级级联执行逻辑**（`crates/core/src/db_context.rs`）：
+- 已加载子实体：标记为 `Deleted`，由 `save_changes` 统一提交
+- 未加载子实体：直接执行批量 `DELETE` SQL
+- `SetNull` 指令在 PK-based DELETE 之前执行，`Cascade` DELETE 在之后执行
+- 多对多关联表自动级联清理
+
+**默认行为推断**（`resolve_delete_behavior`，改为 `pub(crate)` 供迁移模块复用）：
+- 多对多关系 → `Cascade`
+- 非空外键（`i32`）→ `Cascade`
+- 可空外键（`Option<T>`）→ `Restrict`
+
+### Added — FK ON DELETE DDL 生成
+
+迁移系统在生成外键约束时自动附加 `ON DELETE` 子句，确保数据库级约束与应用级
+级联行为一致：
+
+```sql
+ALTER TABLE posts ADD CONSTRAINT fk_posts_blog_id_blogs
+    FOREIGN KEY (blog_id) REFERENCES blogs (id) ON DELETE CASCADE;
+```
+
+**实现要点**（`crates/core/src/migration.rs`）：
+- `DeleteBehavior::to_sql_clause()` 方法映射到 SQL 关键字
+  （`CASCADE` / `RESTRICT` / `SET NULL` / `NO ACTION`）
+- `fk_reference_for_property` 通过交叉引用 principal 的 `HasMany` 导航解析
+  ON DELETE 子句（BelongsTo → `related_entity_meta()` → principal meta →
+  匹配 `related_type_id` 的 HasMany → `resolve_delete_behavior`）
+- `SchemaChange::AddForeignKey` 新增 `on_delete: Option<String>` 字段
+- `SnapshotColumn` 新增 `fk_on_delete` 字段，支持 JSON 快照序列化往返
+- `diff_foreign_keys` 检测 ON DELETE 子句变更并触发 FK 重建
+
+### Fixed — 预存 bug：`foreign_key_field` 始终为 `None`
+
+宏的 `extract_foreign_key_field_name`（`crates/macros/src/entity.rs` L857-859）
+历史上始终返回 `None`，导致 `fk_reference_for_property` 无法匹配 BelongsTo
+导航，FK 约束从未在 DDL 中生成。改为按 `fk_column`（列名）匹配后，FK 约束
+可正常生成。
+
+### Tests
+
+- `cascade_save_tests.rs` — 12 个级联保存/删除测试（含自引用、多对多、
+  反向排序、空 HasMany no-op、SetNull、未跟踪子实体）
+- `fk_on_delete_tests.rs` — 6 个 ON DELETE DDL 测试：
+  1. 必填 FK（`i32`）默认生成 `CASCADE`
+  2. 可选 FK（`Option<i32>`）默认生成 `RESTRICT`
+  3. 显式 `#[on_delete(SetNull)]` 生成 `SET NULL`
+  4. 显式 `#[on_delete(NoAction)]` 生成 `NO ACTION`
+  5. ON DELETE 子句变更触发 FK 重建（diff 检测）
+  6. `fk_on_delete` 字段 JSON 序列化往返
+- 全量回归：265 测试通过，0 回归（仅 8 个 PostgreSQL 测试因无服务器跳过）
+
+### Changed
+
+- `crates/core/src/relations.rs`：`DeleteBehavior` 新增 `to_sql_clause()` 方法
+- `crates/core/src/db_context.rs`：`resolve_delete_behavior` 改为 `pub(crate)`
+- `crates/core/src/metadata.rs`：`NavigationMeta` 新增 `delete_behavior` 字段
+- `crates/macros/src/entity.rs`：BelongsTo 导航元数据生成支持 `#[on_delete]`
+  属性解析（`extract_on_delete` 函数）
+- `crates/core/src/migration.rs`：`fk_reference_for_property` 改为 3-tuple
+  返回值，按 `fk_column` 匹配；新增 `resolve_fk_on_delete_clause` 函数
+
+---
+
 ## [1.6.0] — 2026-07-09 — Production Hardening（4 P0 + 12 P1）
 
 ### Summary
