@@ -52,6 +52,10 @@ struct TrackerEntry {
     state: EntityState,
     /// Original property values captured when the entity was first tracked.
     snapshot: HashMap<String, PropertySnapshot>,
+    /// Property names (field_name) that differ from the snapshot, populated
+    /// by `detect_changes_with_properties`. Empty when no detection has run
+    /// or when the entity was directly marked Modified without detection.
+    modified_properties: Vec<String>,
 }
 
 /// A stored snapshot of a single property.
@@ -103,6 +107,7 @@ impl ChangeTracker {
                 .into_iter()
                 .map(|(k, v)| (k, PropertySnapshot { serialized: v }))
                 .collect(),
+            modified_properties: Vec::new(),
         });
 
         id
@@ -120,8 +125,10 @@ impl ChangeTracker {
     }
 
     /// Compares current property values (provided by the caller) against the
-    /// stored snapshots. Any property whose value differs is marked as modified,
-    /// and the entity transitions to `EntityState::Modified`.
+    /// stored snapshots. Any property whose value differs is recorded in the
+    /// entry's `modified_properties`, and the entity transitions to
+    /// `EntityState::Modified`. When no differences are found,
+    /// `modified_properties` is cleared.
     pub fn detect_changes_with_properties(
         &mut self,
         current_properties: &[(u64, HashMap<String, String>)],
@@ -139,6 +146,7 @@ impl ChangeTracker {
             }
 
             if let Some(current) = current_map.get(&entry.id) {
+                let mut changed_props: Vec<String> = Vec::new();
                 for (prop_name, snapshot) in &entry.snapshot {
                     let changed = match current.get(prop_name) {
                         Some(current_val) => current_val != &snapshot.serialized,
@@ -146,9 +154,15 @@ impl ChangeTracker {
                     };
 
                     if changed {
-                        entry.state = EntityState::Modified;
-                        break; // One changed property is enough
+                        changed_props.push(prop_name.clone());
                     }
+                }
+
+                if !changed_props.is_empty() {
+                    entry.state = EntityState::Modified;
+                    entry.modified_properties = changed_props;
+                } else {
+                    entry.modified_properties.clear();
                 }
             }
         }
@@ -189,7 +203,7 @@ impl ChangeTracker {
                 type_id: e.type_id,
                 type_name: e.type_name.clone(),
                 state: e.state,
-                modified_properties: Vec::new(),
+                modified_properties: e.modified_properties.clone(),
             })
             .collect()
     }
@@ -216,6 +230,7 @@ impl ChangeTracker {
         for entry in &mut self.entries {
             if entry.state == EntityState::Added || entry.state == EntityState::Modified {
                 entry.state = EntityState::Unchanged;
+                entry.modified_properties.clear();
             }
         }
     }
@@ -226,6 +241,7 @@ impl ChangeTracker {
         for entry in &mut self.entries {
             if entry.state == EntityState::Modified || entry.state == EntityState::Deleted {
                 entry.state = EntityState::Unchanged;
+                entry.modified_properties.clear();
             }
         }
     }

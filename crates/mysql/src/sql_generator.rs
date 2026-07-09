@@ -55,6 +55,45 @@ impl ISqlGenerator for MySqlSqlGenerator {
         )
     }
 
+    fn upsert_batch(
+        &self,
+        table: &str,
+        columns: &[&str],
+        conflict_cols: &[&str],
+        row_count: usize,
+    ) -> String {
+        let cols = columns
+            .iter()
+            .map(|c| self.quote_identifier(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let row = format!("({})", vec!["?"; columns.len()].join(", "));
+        let all_rows = vec![row; row_count].join(", ");
+        let update_cols: Vec<&str> = columns
+            .iter()
+            .filter(|c| !conflict_cols.contains(c))
+            .copied()
+            .collect();
+        let sets = update_cols
+            .iter()
+            .map(|c| {
+                format!(
+                    "{} = VALUES({})",
+                    self.quote_identifier(c),
+                    self.quote_identifier(c)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "INSERT INTO {} ({}) VALUES {} ON DUPLICATE KEY UPDATE {}",
+            self.quote_identifier(table),
+            cols,
+            all_rows,
+            sets,
+        )
+    }
+
     fn update(&self, table: &str, set_columns: &[&str], where_clause: &str) -> String {
         let sets: Vec<String> = set_columns
             .iter()
@@ -111,5 +150,17 @@ impl ISqlGenerator for MySqlSqlGenerator {
 
     fn auto_increment_syntax(&self) -> &'static str {
         "AUTO_INCREMENT"
+    }
+
+    fn supports_returning(&self) -> bool {
+        false
+    }
+
+    fn last_insert_id_sql(&self) -> Option<&'static str> {
+        Some("SELECT LAST_INSERT_ID()")
+    }
+
+    fn last_insert_id_returns_first(&self) -> bool {
+        true
     }
 }

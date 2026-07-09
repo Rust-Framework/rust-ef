@@ -23,9 +23,12 @@ impl ChangeExecutor {
     /// conservative ceiling that also fits MySQL/PG). Auto-increment columns
     /// are excluded from the column list (the DB assigns them).
     ///
-    /// `on_key_backfill` is invoked once per inserted row. In batch mode the
-    /// per-row generated key is not available, so `0` is passed as the key
-    /// (the callback is currently a no-op in the framework).
+    /// `on_key_backfill` is invoked once per inserted row with the
+    /// database-generated auto-increment PK (when present). For PostgreSQL the
+    /// PKs are read from the `RETURNING *` result set; for SQLite/MySQL a
+    /// follow-up `last_insert_rowid()` / `LAST_INSERT_ID()` query retrieves
+    /// the first/last ID and the remaining batch keys are computed by
+    /// sequential increment.
     pub async fn execute_inserts<E, F>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
@@ -54,6 +57,11 @@ impl ChangeExecutor {
             return Ok(0);
         }
 
+        // Identify the auto-increment PK column (if any) for key backfill.
+        let auto_inc_pk = scalar_props
+            .iter()
+            .find(|p| p.is_auto_increment && p.is_primary_key);
+
         // Conservative per-statement parameter ceiling (SQLite limit 999).
         const MAX_PARAMS: usize = 900;
         let batch_size = (MAX_PARAMS / insert_cols.len()).max(1);
@@ -80,52 +88,357 @@ impl ChangeExecutor {
                 }
             }
 
-            let rows = conn.execute(&sql, &params).await?;
-            let affected = (rows as usize).min(row_count);
-            for i in 0..affected {
-                on_key_backfill(start + i, 0);
+            if let Some(_pk_prop) = auto_inc_pk {
+                if gen.supports_returning() {
+                    // PostgreSQL: INSERT ... RETURNING * returns all generated
+                    // rows. Extract the PK column from each returned row.
+                    let rows = conn.query(&sql, &params).await?;
+                    let affected = rows.len().min(row_count);
+                    for (i, row) in rows.iter().enumerate().take(affected) {
+                        if let Some(pk_val) = row.first() {
+                            if let Ok(key) = pk_val.clone().try_into() {
+                                on_key_backfill(start + i, key);
+                            }
+                        }
+                    }
+                    inserted += affected;
+                } else if let Some(last_id_sql) = gen.last_insert_id_sql() {
+                    // SQLite/MySQL: execute INSERT, then query for the
+                    // generated ID and compute the batch key sequence.
+                    conn.execute(&sql, &params).await?;
+                    let id_rows = conn.query(last_id_sql, &[]).await?;
+                    if let Some(id_row) = id_rows.first() {
+                        if let Some(id_val) = id_row.first() {
+                            let raw_id: i64 = id_val.clone().try_into().unwrap_or(0);
+                            let first_id = if gen.last_insert_id_returns_first() {
+                                raw_id
+                            } else {
+                                raw_id - row_count as i64 + 1
+                            };
+                            for i in 0..row_count {
+                                on_key_backfill(start + i, first_id + i as i64);
+                            }
+                        }
+                    }
+                    inserted += row_count;
+                } else {
+                    // No RETURNING and no last_insert_id — cannot backfill.
+                    let rows = conn.execute(&sql, &params).await?;
+                    let affected = (rows as usize).min(row_count);
+                    for i in 0..affected {
+                        on_key_backfill(start + i, 0);
+                    }
+                    inserted += affected;
+                }
+            } else {
+                // No auto-increment PK — entity already has its key.
+                let rows = conn.execute(&sql, &params).await?;
+                let affected = (rows as usize).min(row_count);
+                for i in 0..affected {
+                    on_key_backfill(start + i, 0);
+                }
+                inserted += affected;
             }
-            inserted += affected;
+
             start = end;
         }
 
         Ok(inserted)
     }
 
-    /// Executes UPDATE statements for all modified entities.
-    /// Uses original snapshots for optimistic concurrency tokens in the WHERE clause.
+    /// Executes UPSERT statements (INSERT ... ON CONFLICT DO UPDATE) for
+    /// entities marked via `DbSet::upsert`.
     ///
-    /// When `query_filter` is `Some`, the filter (e.g. a tenant-id predicate)
-    /// is AND-ed into the WHERE clause so updates cannot cross the filter
-    /// boundary (multi-tenant / soft-delete isolation).
+    /// Unlike `execute_inserts`, ALL mapped columns (including auto-increment
+    /// PKs) are included in the INSERT column list so the caller-provided PK
+    /// value participates in the conflict check. The conflict target is the PK
+    /// column(s). The UPDATE SET clause covers all non-PK columns.
+    /// No PK backfill is performed — upsert callers are expected to know the key.
+    pub async fn execute_upserts<E>(
+        conn: &mut dyn IAsyncConnection,
+        provider: &dyn IDatabaseProvider,
+        entities: &[(&E, &EntityTypeMeta)],
+    ) -> EFResult<usize>
+    where
+        E: IEntityType + IEntitySnapshot + IGetKeyValues,
+    {
+        if entities.is_empty() {
+            return Ok(0);
+        }
+        let gen = provider.sql_generator();
+        let meta = entities[0].1;
+        let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+        if scalar_props.is_empty() {
+            return Ok(0);
+        }
+        // For upsert, include ALL mapped columns (including auto-increment PK)
+        // so the caller's key value is part of the INSERT and can trigger the
+        // ON CONFLICT path.
+        let insert_cols: Vec<&str> = scalar_props
+            .iter()
+            .map(|p| p.column_name.as_ref())
+            .collect();
+        if insert_cols.is_empty() {
+            return Ok(0);
+        }
+
+        // Conflict target: PK column names.
+        let conflict_cols: Vec<&str> = scalar_props
+            .iter()
+            .filter(|p| p.is_primary_key)
+            .map(|p| p.column_name.as_ref())
+            .collect();
+        if conflict_cols.is_empty() {
+            return Err(EFError::configuration(
+                "Upsert requires at least one primary key column as conflict target.",
+            ));
+        }
+
+        const MAX_PARAMS: usize = 900;
+        let batch_size = (MAX_PARAMS / insert_cols.len()).max(1);
+
+        let mut upserted = 0usize;
+        let mut start = 0usize;
+        while start < entities.len() {
+            let end = (start + batch_size).min(entities.len());
+            let batch = &entities[start..end];
+            let row_count = batch.len();
+
+            let sql = gen.upsert_batch(
+                meta.table_name.as_ref(),
+                &insert_cols,
+                &conflict_cols,
+                row_count,
+            );
+            let mut params: Vec<DbValue> = Vec::with_capacity(row_count * insert_cols.len());
+            for (entity, _) in batch {
+                let snap = entity.snapshot();
+                for p in &scalar_props {
+                    params.push(
+                        snap.get(p.field_name.as_ref())
+                            .cloned()
+                            .unwrap_or(DbValue::Null),
+                    );
+                }
+            }
+
+            let affected = conn.execute(&sql, &params).await?;
+            upserted += (affected as usize).min(row_count);
+
+            start = end;
+        }
+
+        Ok(upserted)
+    }
+
+    /// Executes UPDATE statements for all modified entities.
+    ///
+    /// When no concurrency tokens are present and the entity has a single-column
+    /// primary key, rows are batched into a single `UPDATE ... SET col = CASE
+    /// pk WHEN ? THEN ? ... END WHERE pk IN (...)` statement (≤900 params per
+    /// batch) to minimize round trips. Otherwise (concurrency tokens, composite
+    /// PK), falls back to per-row UPDATE so optimistic-concurrency checks run
+    /// on each row.
+    ///
+    /// When `modified_properties` is populated (via `detect_changes`), only the
+    /// dirty columns are SET. When empty (entity marked Modified via `update()`
+    /// without detection), all non-PK columns are SET (backward compatible).
+    ///
+    /// When `query_filter` is `Some`, the filter is AND-ed into the WHERE
+    /// clause so updates cannot cross the filter boundary (multi-tenant /
+    /// soft-delete isolation).
     #[allow(clippy::type_complexity)]
     pub async fn execute_updates<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
-        entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
+        entities: &[(
+            &E,
+            &EntityTypeMeta,
+            Option<&HashMap<String, DbValue>>,
+            &[String],
+        )],
         query_filter: Option<&BoolExpr>,
     ) -> EFResult<usize>
     where
         E: IEntityType + IEntitySnapshot + IGetKeyValues,
     {
+        if entities.is_empty() {
+            return Ok(0);
+        }
         let gen = provider.sql_generator();
+        let meta = entities[0].1;
+        let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+        let pk_props: Vec<_> = scalar_props.iter().filter(|p| p.is_primary_key).collect();
+        let has_concurrency_tokens = scalar_props.iter().any(|p| p.is_concurrency_token);
+
+        // Compute the union of modified field names across all entities. When
+        // non-empty, only those columns are SET (partial update). When empty
+        // (no change detection ran), all non-PK columns are SET.
+        let modified_fields: std::collections::HashSet<&str> = entities
+            .iter()
+            .flat_map(|(_, _, _, mods)| mods.iter().map(|s| s.as_str()))
+            .collect();
+        let set_props: Vec<&PropertyMeta> = if modified_fields.is_empty() {
+            scalar_props
+                .iter()
+                .copied()
+                .filter(|p| !p.is_primary_key)
+                .collect()
+        } else {
+            scalar_props
+                .iter()
+                .copied()
+                .filter(|p| !p.is_primary_key && modified_fields.contains(p.field_name.as_ref()))
+                .collect()
+        };
+        let set_cols: Vec<&str> = set_props.iter().map(|p| p.column_name.as_ref()).collect();
+
+        // Fall back to per-row UPDATE when optimistic concurrency tokens are
+        // present (each row needs its own WHERE to check the token) or when
+        // the PK is composite (CASE WHEN only works with a single column).
+        if has_concurrency_tokens || pk_props.len() != 1 || set_cols.is_empty() {
+            return Self::execute_updates_per_row(conn, gen, entities, query_filter).await;
+        }
+
+        let pk_col = pk_props[0].column_name.as_ref();
+        let pk_field = pk_props[0].field_name.as_ref();
+
+        // Pre-compute snapshots and keys to avoid re-hashing per batch.
+        let entity_data: Vec<(HashMap<String, DbValue>, HashMap<String, DbValue>)> = entities
+            .iter()
+            .map(|(e, _, _, _)| (e.snapshot(), e.key_values()))
+            .collect();
+
+        // Filter params are constant across batches.
+        let filter_params: Vec<DbValue> = match query_filter {
+            Some(filter) => collect_bool_expr_values(filter),
+            None => Vec::new(),
+        };
+
+        // Each row consumes 2 * set_cols params (CASE WHEN pk/value pairs)
+        // plus 1 param in the WHERE IN-list.
+        const MAX_PARAMS: usize = 900;
+        let params_per_row = 2 * set_cols.len() + 1;
+        let batch_size =
+            ((MAX_PARAMS.saturating_sub(filter_params.len())) / params_per_row.max(1)).max(1);
+
+        let mut updated = 0usize;
+        let mut start = 0usize;
+        while start < entity_data.len() {
+            let end = (start + batch_size).min(entity_data.len());
+            let row_count = end - start;
+
+            // SET clause consumes 2 * set_cols * row_count placeholders.
+            let set_param_count = 2 * set_cols.len() * row_count;
+            let mut idx = set_param_count + 1;
+
+            // Build WHERE clause: pk_col IN (?, ...) [AND (filter)]
+            let pk_placeholders: Vec<String> = (0..row_count)
+                .map(|_| {
+                    let ph = gen.parameter_placeholder(idx);
+                    idx += 1;
+                    ph
+                })
+                .collect();
+            let mut where_clause = format!(
+                "{} IN ({})",
+                gen.quote_identifier(pk_col),
+                pk_placeholders.join(", ")
+            );
+
+            // CASE WHEN params: for each col, for each entity: [pk_value, col_value]
+            let mut params: Vec<DbValue> = Vec::with_capacity(set_param_count + row_count);
+            for col_prop in &set_props {
+                for (snap, keys) in entity_data[start..end].iter() {
+                    let pk_val = keys.get(pk_field).cloned().unwrap_or(DbValue::Null);
+                    let col_val = snap
+                        .get(col_prop.field_name.as_ref())
+                        .cloned()
+                        .unwrap_or(DbValue::Null);
+                    params.push(pk_val);
+                    params.push(col_val);
+                }
+            }
+            // WHERE IN params: pk values
+            for (_, keys) in entity_data[start..end].iter() {
+                let pk_val = keys.get(pk_field).cloned().unwrap_or(DbValue::Null);
+                params.push(pk_val);
+            }
+
+            // Append filter to WHERE clause.
+            if let Some(filter) = query_filter {
+                let filter_sql = compile_bool_expr(filter, gen, &mut idx);
+                params.extend(filter_params.iter().cloned());
+                where_clause = format!("({}) AND ({})", where_clause, filter_sql);
+            }
+
+            let sql = gen.update_batch(
+                meta.table_name.as_ref(),
+                &set_cols,
+                pk_col,
+                row_count,
+                &where_clause,
+            );
+            let rows = conn.execute(&sql, &params).await?;
+            if rows == 0 && row_count > 0 {
+                return Err(EFError::concurrency_conflict(format!(
+                    "batch update affected 0 rows on {} (rows may have been modified or deleted)",
+                    meta.table_name
+                )));
+            }
+            updated += (rows as usize).min(row_count);
+            start = end;
+        }
+
+        Ok(updated)
+    }
+
+    /// Per-row UPDATE fallback used when concurrency tokens or composite PKs
+    /// prevent batching. Each row gets its own `UPDATE ... SET ... WHERE
+    /// pk = ? AND ...`. When `modified_properties` is non-empty for an entity,
+    /// only those columns are SET (partial update); otherwise all non-PK
+    /// columns are SET (backward compatible).
+    #[allow(clippy::type_complexity)]
+    async fn execute_updates_per_row<E>(
+        conn: &mut dyn IAsyncConnection,
+        gen: &'static dyn crate::provider::ISqlGenerator,
+        entities: &[(
+            &E,
+            &EntityTypeMeta,
+            Option<&HashMap<String, DbValue>>,
+            &[String],
+        )],
+        query_filter: Option<&BoolExpr>,
+    ) -> EFResult<usize>
+    where
+        E: IEntityType + IEntitySnapshot + IGetKeyValues,
+    {
         let mut updated = 0;
-        // Cache of `(table, set_cols, where_clause) -> UPDATE SQL template`.
-        // For N rows of the same entity type the SQL string is identical (only
-        // the bound parameter values differ), so this avoids N-1 redundant
-        // `format!` calls. Scoped to this call (DbContext lifetime).
         let mut sql_cache: HashMap<(String, Vec<String>, String), String> = HashMap::new();
 
-        for (entity, meta, original) in entities {
+        for (entity, meta, original, modified_props) in entities {
             let snap = entity.snapshot();
             let keys = entity.key_values();
             let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
 
-            let set_cols: Vec<&str> = scalar_props
-                .iter()
-                .filter(|p| !p.is_primary_key)
-                .map(|p| p.column_name.as_ref())
-                .collect();
+            // When modified_properties is populated, SET only those columns
+            // (partial update). When empty, SET all non-PK columns.
+            let set_props: Vec<&PropertyMeta> = if modified_props.is_empty() {
+                scalar_props
+                    .iter()
+                    .copied()
+                    .filter(|p| !p.is_primary_key)
+                    .collect()
+            } else {
+                let modified_set: std::collections::HashSet<&str> =
+                    modified_props.iter().map(|s| s.as_str()).collect();
+                scalar_props
+                    .iter()
+                    .copied()
+                    .filter(|p| !p.is_primary_key && modified_set.contains(p.field_name.as_ref()))
+                    .collect()
+            };
+            let set_cols: Vec<&str> = set_props.iter().map(|p| p.column_name.as_ref()).collect();
 
             if set_cols.is_empty() || keys.is_empty() {
                 continue;
@@ -145,8 +458,6 @@ impl ChangeExecutor {
                 set_cols.len() + 1,
             )?;
 
-            // Append the query filter (e.g. tenant_id = ?) to the WHERE clause.
-            // Filter param placeholders are indexed after SET cols + existing WHERE params.
             if let Some(filter) = query_filter {
                 let mut idx = set_cols.len() + where_params.len() + 1;
                 let filter_sql = compile_bool_expr(filter, gen, &mut idx);
@@ -163,17 +474,12 @@ impl ChangeExecutor {
                 .or_insert_with(|| gen.update(meta.table_name.as_ref(), &set_cols, &where_clause))
                 .clone();
 
-            let mut params: Vec<DbValue> = set_cols
+            let mut params: Vec<DbValue> = set_props
                 .iter()
-                .map(|col| {
-                    let prop = scalar_props.iter().find(|p| p.column_name.as_ref() == *col);
-                    match prop {
-                        Some(p) => snap
-                            .get(p.field_name.as_ref())
-                            .cloned()
-                            .unwrap_or(DbValue::Null),
-                        None => DbValue::Null,
-                    }
+                .map(|p| {
+                    snap.get(p.field_name.as_ref())
+                        .cloned()
+                        .unwrap_or(DbValue::Null)
                 })
                 .collect();
             params.extend(where_params);

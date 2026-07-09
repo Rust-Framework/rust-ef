@@ -338,7 +338,11 @@ trait ErasedSetOps: Send + Sync {
         meta: &EntityTypeMeta,
     ) -> EFResult<(usize, usize, usize)>;
     fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync));
-    fn clear(&self, raw_set: &mut (dyn Any + Send + Sync + 'static));
+    /// Accepts all pending changes in the set: Added/Modified → Unchanged
+    /// (with refreshed snapshots), Deleted entries removed. Called after a
+    /// successful `save_changes` commit so tracked entities retain their
+    /// DB-generated PKs and can be compared against future modifications.
+    fn accept_all_changes(&self, raw_set: &mut (dyn Any + Send + Sync + 'static));
     /// Collects type-erased views of all pending entries in the set, used to
     /// build `SaveChangesContext` from the real save data source (`DbSet.entries`)
     /// rather than the legacy (empty) `change_tracker`.
@@ -385,9 +389,9 @@ where
             db_set.detect_changes();
         }
     }
-    fn clear(&self, raw_set: &mut (dyn Any + Send + Sync + 'static)) {
+    fn accept_all_changes(&self, raw_set: &mut (dyn Any + Send + Sync + 'static)) {
         if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
-            db_set.clear_entries();
+            db_set.accept_all_changes();
         }
     }
     fn collect_entries(&self, raw_set: &(dyn Any + Send + Sync)) -> Vec<EntityEntryView> {
@@ -628,6 +632,28 @@ impl DbContext {
         &mut self.change_tracker
     }
 
+    /// Executes a raw SQL query and materializes the result rows into entities.
+    ///
+    /// This is the escape hatch for complex queries (multi-table JOINs, CTEs,
+    /// window functions) that are hard to express via LINQ. The caller is
+    /// responsible for SQL correctness and parameterization.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let blogs: Vec<Blog> = ctx
+    ///     .sql_query("SELECT * FROM blogs WHERE id = ?", &[DbValue::I32(1)])
+    ///     .await?;
+    /// ```
+    pub async fn sql_query<T: IFromRow + IEntityType>(
+        &self,
+        sql: &str,
+        params: &[DbValue],
+    ) -> EFResult<Vec<T>> {
+        let mut conn = self.provider.get_connection().await?;
+        let rows = conn.query(sql, params).await?;
+        crate::entity::materialize_entities(&rows)
+    }
+
     /// Returns a mutable reference to the ambient transaction handle, if one
     /// is active (registered by `use_transaction()`).
     ///
@@ -758,7 +784,7 @@ impl DbContext {
         for type_id in &type_ids {
             let saver = self.savers.get(type_id).unwrap();
             let set = self.sets.get_mut(type_id).unwrap();
-            saver.clear(set.as_mut());
+            saver.accept_all_changes(set.as_mut());
         }
 
         // --- Interceptor: on_saved (post-commit) ---
@@ -843,35 +869,80 @@ pub async fn save_one_set<E>(
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow,
 {
-    let query_filter = db_set.query_filter();
+    // Clone the filter so the immutable borrow on `db_set` is released before
+    // `backfill_added_keys` (mutable borrow) below. `BoolExpr` is `Clone` and
+    // typically small; the clone is cheap relative to the SQL round-trip.
+    let query_filter = db_set.query_filter().cloned();
 
-    let added: Vec<(&E, &EntityTypeMeta)> = db_set
-        .tracked_by_state(crate::entity::EntityState::Added)
-        .into_iter()
-        .map(|(e, _)| (e, meta))
-        .collect();
-    let modified: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
-        .tracked_by_state(crate::entity::EntityState::Modified)
-        .into_iter()
-        .map(|(e, orig)| (e, meta, orig))
-        .collect();
-    let deleted: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
-        .tracked_by_state(crate::entity::EntityState::Deleted)
-        .into_iter()
-        .map(|(e, orig)| (e, meta, orig))
-        .collect();
     let mut ac = 0usize;
     let mut uc = 0usize;
     let mut dc = 0usize;
-    if !added.is_empty() {
-        ac = ChangeExecutor::execute_inserts(conn, provider, &added, |_, _| {}).await?;
+
+    // Phase 1a: INSERT Added entities (non-upsert), then backfill generated PKs.
+    {
+        let added: Vec<(&E, &EntityTypeMeta)> = db_set
+            .tracked_by_state(crate::entity::EntityState::Added)
+            .into_iter()
+            .filter(|(_, _, _, is_upsert)| !*is_upsert)
+            .map(|(e, _, _, _)| (e, meta))
+            .collect();
+        if !added.is_empty() {
+            let added_count = added.len();
+            let mut generated_keys: Vec<i64> = vec![0; added_count];
+            ac = ChangeExecutor::execute_inserts(conn, provider, &added, |idx, key| {
+                if idx < generated_keys.len() {
+                    generated_keys[idx] = key;
+                }
+            })
+            .await?;
+            db_set.backfill_added_keys(&generated_keys);
+        }
     }
-    if !modified.is_empty() {
-        uc = ChangeExecutor::execute_updates(conn, provider, &modified, query_filter).await?;
+
+    // Phase 1b: UPSERT Added entities (is_upsert = true).
+    {
+        let upserts: Vec<(&E, &EntityTypeMeta)> = db_set
+            .tracked_by_state(crate::entity::EntityState::Added)
+            .into_iter()
+            .filter(|(_, _, _, is_upsert)| *is_upsert)
+            .map(|(e, _, _, _)| (e, meta))
+            .collect();
+        if !upserts.is_empty() {
+            ac += ChangeExecutor::execute_upserts(conn, provider, &upserts).await?;
+        }
     }
-    if !deleted.is_empty() {
-        dc = ChangeExecutor::execute_deletes(conn, provider, &deleted, query_filter).await?;
+
+    // Phase 2: UPDATE Modified entities (partial update via modified_properties).
+    {
+        let modified: Vec<(
+            &E,
+            &EntityTypeMeta,
+            Option<&HashMap<String, DbValue>>,
+            &[String],
+        )> = db_set
+            .tracked_by_state(crate::entity::EntityState::Modified)
+            .into_iter()
+            .map(|(e, orig, mods, _)| (e, meta, orig, mods))
+            .collect();
+        if !modified.is_empty() {
+            uc = ChangeExecutor::execute_updates(conn, provider, &modified, query_filter.as_ref())
+                .await?;
+        }
     }
+
+    // Phase 3: DELETE Deleted entities.
+    {
+        let deleted: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
+            .tracked_by_state(crate::entity::EntityState::Deleted)
+            .into_iter()
+            .map(|(e, orig, _, _)| (e, meta, orig))
+            .collect();
+        if !deleted.is_empty() {
+            dc = ChangeExecutor::execute_deletes(conn, provider, &deleted, query_filter.as_ref())
+                .await?;
+        }
+    }
+
     Ok((ac, uc, dc))
 }
 

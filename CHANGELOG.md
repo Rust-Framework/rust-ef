@@ -9,6 +9,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.6.0] — 2026-07-09 — Production Hardening（4 P0 + 12 P1）
+
+### Summary
+
+v1.6.0 是生产硬化迭代，修复 4 个 P0 阻塞项和 12 个 P1 改进项。涵盖连接管理、安全
+默认值、类型系统物化、性能批量化、完整性 API 五大领域。**含破坏性变更**——详见
+`docs/v1.5-semver-migration-guide.md` 的 v1.6 章节。
+
+### P0 — 阻塞项修复
+
+#### M1.1 连接池单例化
+
+`DbContextOptions.provider_cache` 进程级缓存 provider（含连接池），所有同源
+`DbContext` 复用同一连接池。避免每请求重建池导致的连接泄漏。
+
+#### M1.2 Debug 脱敏
+
+`DbContextOptions` 的 `Debug` 实现脱敏连接串中的凭据（URL 形式 `user:pass@host`
+和 key=value 形式 `Password=...`），防止日志泄漏。
+
+#### M1.3 BoolExpr::raw 收窄
+
+`BoolExpr::raw()` 从 `pub` 收窄为 `pub(crate)`，外部代码无法构造 `RawSql` 变体，
+从类型层面消除 SQL 注入风险。
+
+#### M1.4 TLS 安全优先
+
+PostgreSQL TLS 默认从 `Disable` 改为 `Require`；MySQL TLS 默认从 `Disabled` 改为
+`Required`。`Disable`/`Disabled` 仍可通过显式 `*_with_tls` API 选用（逃生舱）。
+
+### P1 — 改进项
+
+#### M2 De-String 物化管道
+
+`IFromRow::from_row` 签名从 `&[String]` 改为 `&[DbValue]`，消除全链路 String 物化。
+新增 `TryFrom<DbValue>` for `i8/u32/u64`，provider 层 `cell_to_db_value` 替代
+`cell_to_string`。**破坏性变更**。
+
+#### M3 P1 稳定性
+
+- 字符串 PK include 测试覆盖
+- Layer 8（consumer 层）全量验证
+
+#### M4 P1 性能
+
+- C1: 批量 UPDATE 用 `CASE pk WHEN ? THEN ?` 减少 N 次往返为 1 次
+- C2: 批量 INCLUDE 用 UNION 策略减少 N 次查询为 1 次
+- C3: 连接池 acquire 指标 tracing
+- C4: 批量 INSERT 参数布局优化
+
+#### M5 P1 完整性
+
+**D1: 属性级变更追踪 + 部分 UPDATE**
+
+`detect_changes` 收集所有变更字段名到 `modified_properties: Vec<String>`。
+`execute_updates` 仅 SET 脏列（批量 CASE WHEN 用并集，逐行用各实体自己的列表）。
+`modified_properties` 为空时回退到全列 SET（向后兼容）。并发令牌安全：令牌递增后
+出现在 `modified_properties` 中并被 SET，WHERE 始终检查原始令牌值。
+
+**D2: 批量 INSERT 主键回填**
+
+- PostgreSQL: `INSERT ... RETURNING *` 直接读取生成的主键
+- SQLite: `SELECT last_insert_rowid()`（返回最后 rowid，计算 `last-N+1..last`）
+- MySQL: `SELECT LAST_INSERT_ID()`（返回首个 ID，计算 `first..first+N-1`）
+
+新增 `ISqlGenerator::supports_returning()` / `last_insert_id_sql()` /
+`last_insert_id_returns_first()` 默认方法。新增 `IGetKeyValues::set_auto_increment_key`
+trait 方法（默认 no-op，宏为 `#[auto_increment] #[primary_key]` 字段生成覆盖）。
+
+`save_changes` 后行为变更：Added/Modified → Unchanged（带刷新快照），Deleted 移除。
+`accept_all_changes` 替代 `clear_entries`，保留已保存实体（含回填主键）可查询。
+
+**D3: Upsert API**
+
+新增 `DbSet::upsert(&mut self, entity: T)` — 标记 Added + `is_upsert: true`。
+`save_changes` 将 upsert 条目路由到 `execute_upserts`，生成：
+
+- SQLite/PostgreSQL: `INSERT ... ON CONFLICT(pk) DO UPDATE SET col = EXCLUDED.col`
+- MySQL: `INSERT ... ON DUPLICATE KEY UPDATE col = VALUES(col)`
+
+冲突目标为主键列。INSERT 包含所有列（含自增主键）以确保用户提供的键值参与冲突检查。
+不做主键回填——upsert 调用者需自行管理键。
+
+新增 `ISqlGenerator::upsert_batch()` 默认方法，三 provider 实现。
+
+**D4: Raw SQL → 实体映射**
+
+新增 `DbContext::sql_query<T: IFromRow + IEntityType>(&self, sql: &str, params: &[DbValue])` —
+复杂查询（多表 JOIN、CTE、窗口函数）的逃生舱。复用 M2 后的 `IFromRow`（已支持
+`&[DbValue]`），无需新 trait。
+
+### 破坏性变更摘要
+
+| 变更 | 影响 | 迁移方式 |
+|------|------|----------|
+| `IFromRow::from_row` 签名 `&[String]` → `&[DbValue]` | 自定义实体需重写 `from_row` | 用 `TryFrom<DbValue>` |
+| `ParseFromDb` trait 移除 | 使用该 trait 的代码需迁移 | 改用 `TryFrom<DbValue>` |
+| TLS 默认值变更（PG `Require`、MySQL `Required`） | 明文连接需显式声明 | 用 `*_with_tls(Disable)` |
+| `BoolExpr::raw` 收窄为 `pub(crate)` | 外部无法构造 `RawSql` | 用参数化查询 |
+| `save_changes` 后保留实体（不 clear） | 依赖 clear 行为的代码需手动 `clear_entries` | 调用 `db_set.clear_entries()` |
+| `DbValue` 新增 `TryFrom` for i8/u32/u64 | 无破坏（additive） | — |
+
+---
+
 ## [1.5.0] — 2026-07-08 — tracing 集成 + SemVer 严格化 + MySQL TLS 显式 API
 
 ### Added — tracing 集成（慢查询 + 连接池指标）

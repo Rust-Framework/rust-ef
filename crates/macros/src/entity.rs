@@ -53,6 +53,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
     let mut fk_target_arms = Vec::new();
     let mut pk_column_name_lit = quote! { "id" };
     let mut pk_column_index_lit = quote! { 0usize };
+    let mut auto_inc_pk_ident: Option<&syn::Ident> = None;
 
     for field in fields {
         let field_name = field.ident.as_ref().unwrap();
@@ -76,6 +77,9 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             pk_field_idents.push(field_name);
             pk_column_names.push(column_name.clone());
             pk_column_name_lit = quote! { #column_name };
+            if is_auto_increment {
+                auto_inc_pk_ident = Some(field_name);
+            }
         }
 
         if is_navigation {
@@ -206,14 +210,32 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                     });
                     nested_loader_arms.push(quote! {
                         if parent_navigation == #field_name_str && !nested.is_empty() {
-                            let children = self.#field_name.items_mut();
-                            rust_ef::navigation_loader::load_includes(children, nested, provider, filter_map).await?;
-                            for path in nested {
-                                if !path.nested.is_empty() {
-                                    for child in children.iter_mut() {
-                                        child.load_nested_includes(&path.navigation, &path.nested, provider, filter_map).await?;
+                            let mut counts: Vec<usize> = Vec::with_capacity(entities.len());
+                            let mut all_children: Vec<#inner_type> = Vec::new();
+                            for entity in entities.iter_mut() {
+                                let items = std::mem::take(entity.#field_name.items_mut());
+                                counts.push(items.len());
+                                all_children.extend(items);
+                            }
+                            if !all_children.is_empty() {
+                                rust_ef::navigation_loader::load_includes(
+                                    &mut all_children, nested, provider, filter_map,
+                                ).await?;
+                                for path in nested {
+                                    if !path.nested.is_empty() {
+                                        <#inner_type as rust_ef::entity::INavigationSetter>::load_nested_includes(
+                                            &mut all_children,
+                                            &path.navigation,
+                                            &path.nested,
+                                            provider,
+                                            filter_map,
+                                        ).await?;
                                     }
                                 }
+                            }
+                            for (entity, &count) in entities.iter_mut().zip(&counts) {
+                                let items: Vec<#inner_type> = all_children.drain(..count).collect();
+                                *entity.#field_name.items_mut() = items;
                             }
                             return Ok(());
                         }
@@ -230,17 +252,39 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                     });
                     nested_loader_arms.push(quote! {
                         if parent_navigation == #field_name_str && !nested.is_empty() {
-                            if let Some(related) = self.#field_name.get_mut() {
+                            let mut slots: Vec<Option<#inner_type>> = entities.iter_mut()
+                                .map(|e| e.#field_name.take())
+                                .collect();
+                            let mut all_related: Vec<#inner_type> = Vec::new();
+                            let mut positions: Vec<Option<usize>> = Vec::with_capacity(slots.len());
+                            for slot in slots.iter_mut() {
+                                if let Some(entity) = slot.take() {
+                                    positions.push(Some(all_related.len()));
+                                    all_related.push(entity);
+                                } else {
+                                    positions.push(None);
+                                }
+                            }
+                            if !all_related.is_empty() {
                                 rust_ef::navigation_loader::load_includes(
-                                    std::slice::from_mut(related),
-                                    nested,
-                                    provider,
-                                    filter_map,
+                                    &mut all_related, nested, provider, filter_map,
                                 ).await?;
                                 for path in nested {
                                     if !path.nested.is_empty() {
-                                        related.load_nested_includes(&path.navigation, &path.nested, provider, filter_map).await?;
+                                        <#inner_type as rust_ef::entity::INavigationSetter>::load_nested_includes(
+                                            &mut all_related,
+                                            &path.navigation,
+                                            &path.nested,
+                                            provider,
+                                            filter_map,
+                                        ).await?;
                                     }
+                                }
+                            }
+                            let mut iter = all_related.into_iter();
+                            for (entity, pos) in entities.iter_mut().zip(positions) {
+                                if pos.is_some() {
+                                    entity.#field_name = rust_ef::relations::BelongsTo::with(iter.next().unwrap());
                                 }
                             }
                             return Ok(());
@@ -258,17 +302,39 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                     });
                     nested_loader_arms.push(quote! {
                         if parent_navigation == #field_name_str && !nested.is_empty() {
-                            if let Some(related) = self.#field_name.get_mut() {
+                            let mut slots: Vec<Option<#inner_type>> = entities.iter_mut()
+                                .map(|e| e.#field_name.take())
+                                .collect();
+                            let mut all_related: Vec<#inner_type> = Vec::new();
+                            let mut positions: Vec<Option<usize>> = Vec::with_capacity(slots.len());
+                            for slot in slots.iter_mut() {
+                                if let Some(entity) = slot.take() {
+                                    positions.push(Some(all_related.len()));
+                                    all_related.push(entity);
+                                } else {
+                                    positions.push(None);
+                                }
+                            }
+                            if !all_related.is_empty() {
                                 rust_ef::navigation_loader::load_includes(
-                                    std::slice::from_mut(related),
-                                    nested,
-                                    provider,
-                                    filter_map,
+                                    &mut all_related, nested, provider, filter_map,
                                 ).await?;
                                 for path in nested {
                                     if !path.nested.is_empty() {
-                                        related.load_nested_includes(&path.navigation, &path.nested, provider, filter_map).await?;
+                                        <#inner_type as rust_ef::entity::INavigationSetter>::load_nested_includes(
+                                            &mut all_related,
+                                            &path.navigation,
+                                            &path.nested,
+                                            provider,
+                                            filter_map,
+                                        ).await?;
                                     }
+                                }
+                            }
+                            let mut iter = all_related.into_iter();
+                            for (entity, pos) in entities.iter_mut().zip(positions) {
+                                if pos.is_some() {
+                                    entity.#field_name = rust_ef::relations::HasOne::with(iter.next().unwrap());
                                 }
                             }
                             return Ok(());
@@ -437,6 +503,13 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         });
     }
 
+    // Generate the `set_auto_increment_key` body: assign the key to the
+    // auto-increment PK field when present, no-op otherwise.
+    let set_auto_inc_key_impl = match auto_inc_pk_ident {
+        Some(ident) => quote! { self.#ident = key as _; },
+        None => quote! { let _ = key; },
+    };
+
     let expanded = quote! {
         impl rust_ef::entity::IEntityType for #struct_name {
             fn entity_meta() -> rust_ef::metadata::EntityTypeMeta {
@@ -498,6 +571,10 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                 )*
                 map
             }
+
+            fn set_auto_increment_key(&mut self, key: i64) {
+                #set_auto_inc_key_impl
+            }
         }
 
         impl rust_ef::entity::IEntitySnapshot for #struct_name {
@@ -542,7 +619,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             }
 
             async fn load_nested_includes(
-                &mut self,
+                entities: &mut [Self],
                 parent_navigation: &str,
                 nested: &[rust_ef::query::IncludePath],
                 provider: &dyn rust_ef::provider::IDatabaseProvider,

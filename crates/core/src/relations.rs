@@ -68,6 +68,15 @@ impl<T> BelongsTo<T> {
         self.inner.as_deref_mut()
     }
 
+    /// Extracts the related entity, leaving the container empty and unloaded.
+    /// Used by batch nested-include loading to collect related entities
+    /// across multiple parents into a single slice for batch SQL.
+    pub fn take(&mut self) -> Option<T> {
+        let taken = self.inner.take();
+        self.loaded = false;
+        taken.map(|b| *b)
+    }
+
     /// Returns `true` if the navigation has been loaded (either eagerly
     /// via `Include` or lazily via [`load`]).
     pub fn is_loaded(&self) -> bool {
@@ -324,6 +333,15 @@ impl<T> HasOne<T> {
 
     pub fn get_mut(&mut self) -> Option<&mut T> {
         self.inner.as_deref_mut()
+    }
+
+    /// Extracts the related entity, leaving the container empty and unloaded.
+    /// Used by batch nested-include loading to collect related entities
+    /// across multiple parents into a single slice for batch SQL.
+    pub fn take(&mut self) -> Option<T> {
+        let taken = self.inner.take();
+        self.loaded = false;
+        taken.map(|b| *b)
     }
 
     /// Returns `true` if the navigation has been loaded.

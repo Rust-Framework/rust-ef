@@ -86,16 +86,14 @@ where
         }
 
         if !include.nested.is_empty() {
-            for entity in entities.iter_mut() {
-                entity
-                    .load_nested_includes(
-                        &include.navigation,
-                        &include.nested,
-                        provider,
-                        filter_map,
-                    )
-                    .await?;
-            }
+            T::load_nested_includes(
+                entities,
+                &include.navigation,
+                &include.nested,
+                provider,
+                filter_map,
+            )
+            .await?;
         }
     }
     Ok(())

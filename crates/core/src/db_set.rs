@@ -75,6 +75,15 @@ pub struct TrackedEntry<T: IEntityType> {
     pub state: EntityState,
     /// Snapshot taken when the entity was attached (for change detection).
     pub original: Option<HashMap<String, DbValue>>,
+    /// Field names that differ from `original` (populated by `detect_changes`).
+    /// Empty when `detect_changes` hasn't run or the entity was marked Modified
+    /// directly via `update()`. Used by `execute_updates` to generate partial
+    /// UPDATE statements (SET only dirty columns).
+    pub modified_properties: Vec<String>,
+    /// When `true`, the entry is in Added state but should be saved via
+    /// `execute_upserts` (INSERT ... ON CONFLICT DO UPDATE) instead of a plain
+    /// INSERT. Set by `upsert()`.
+    pub is_upsert: bool,
 }
 
 impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
@@ -227,10 +236,30 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
             entity,
             state: EntityState::Modified,
             original: None,
+            modified_properties: Vec::new(),
+            is_upsert: false,
+        });
+    }
+
+    /// Marks an entity for upsert (INSERT ... ON CONFLICT DO UPDATE).
+    ///
+    /// The entity is tracked in `Added` state with `is_upsert = true`. During
+    /// `save_changes`, upsert entries are routed to `execute_upserts` instead
+    /// of `execute_inserts`. The conflict target is the entity's primary key
+    /// column(s).
+    pub fn upsert(&mut self, entity: T) {
+        self.entries.push(TrackedEntry {
+            entity,
+            state: EntityState::Added,
+            original: None,
+            modified_properties: Vec::new(),
+            is_upsert: true,
         });
     }
 
     /// Compares attached entities against their original snapshots and marks changes.
+    /// Populates `modified_properties` with the field names that differ from the
+    /// original snapshot, enabling partial UPDATEs (SET only dirty columns).
     pub fn detect_changes(&mut self)
     where
         T: IEntitySnapshot,
@@ -240,23 +269,91 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
                 continue;
             }
             if let Some(ref original) = entry.original {
-                if entry.entity.snapshot() != *original {
+                let current = entry.entity.snapshot();
+                if current == *original {
+                    entry.modified_properties.clear();
+                    continue;
+                }
+                // Collect the field names that actually differ so the
+                // change executor can generate a partial UPDATE.
+                let changed: Vec<String> = current
+                    .iter()
+                    .filter(|(k, v)| original.get(k.as_str()) != Some(v))
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                if !changed.is_empty() {
                     entry.state = EntityState::Modified;
+                    entry.modified_properties = changed;
                 }
             }
         }
     }
 
-    /// Returns tracked entities in the given state with their original snapshots.
+    /// Returns tracked entities in the given state with their original snapshots,
+    /// modified-property lists, and `is_upsert` flag.
+    #[allow(clippy::type_complexity)]
     pub(crate) fn tracked_by_state(
         &self,
         state: EntityState,
-    ) -> Vec<(&T, Option<&HashMap<String, DbValue>>)> {
+    ) -> Vec<(&T, Option<&HashMap<String, DbValue>>, &[String], bool)> {
         self.entries
             .iter()
             .filter(|e| e.state == state)
-            .map(|e| (&e.entity, e.original.as_ref()))
+            .map(|e| {
+                (
+                    &e.entity,
+                    e.original.as_ref(),
+                    e.modified_properties.as_slice(),
+                    e.is_upsert,
+                )
+            })
             .collect()
+    }
+
+    /// Backfills database-generated auto-increment PKs into Added entries.
+    ///
+    /// Called by `save_one_set` after `execute_inserts`. `keys[i]` corresponds
+    /// to the i-th non-upsert Added entry. Upsert entries (`is_upsert = true`)
+    /// are skipped — their PKs are caller-managed. A key of `0` means no PK was
+    /// generated (non-auto-increment or backfill skipped).
+    pub(crate) fn backfill_added_keys(&mut self, keys: &[i64])
+    where
+        T: IGetKeyValues,
+    {
+        let mut idx = 0usize;
+        for entry in &mut self.entries {
+            if entry.state != EntityState::Added || entry.is_upsert {
+                continue;
+            }
+            if let Some(&key) = keys.get(idx) {
+                if key != 0 {
+                    entry.entity.set_auto_increment_key(key);
+                }
+            }
+            idx += 1;
+        }
+    }
+
+    /// Accepts all pending changes: removes Deleted entries, transitions
+    /// Added/Modified → Unchanged, and refreshes original snapshots so future
+    /// `detect_changes` compares against the post-save state.
+    ///
+    /// Called by `save_changes()` after a successful commit. Mirrors the legacy
+    /// `ChangeTracker::accept_all_changes` but operates on `DbSet.entries`.
+    /// Unlike `clear_entries`, this keeps saved entities tracked (with their
+    /// DB-generated PKs) so callers can read backfilled keys after save.
+    pub(crate) fn accept_all_changes(&mut self)
+    where
+        T: IEntitySnapshot,
+    {
+        self.entries.retain(|e| e.state != EntityState::Deleted);
+        for entry in &mut self.entries {
+            if entry.state == EntityState::Added || entry.state == EntityState::Modified {
+                entry.state = EntityState::Unchanged;
+                entry.original = Some(entry.entity.snapshot());
+                entry.modified_properties.clear();
+            }
+        }
     }
     pub async fn exists_by_id(&self, key_values: HashMap<String, DbValue>) -> EFResult<bool>
     where
@@ -310,6 +407,8 @@ impl<T: IEntityType + IEntitySnapshot> IDbSet<T> for DbSet<T> {
             entity,
             state: EntityState::Added,
             original: None,
+            modified_properties: Vec::new(),
+            is_upsert: false,
         });
     }
 
@@ -336,6 +435,8 @@ impl<T: IEntityType + IEntitySnapshot> IDbSet<T> for DbSet<T> {
             entity,
             state: EntityState::Unchanged,
             original: Some(original),
+            modified_properties: Vec::new(),
+            is_upsert: false,
         });
     }
 

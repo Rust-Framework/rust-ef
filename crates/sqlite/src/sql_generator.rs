@@ -60,6 +60,51 @@ impl ISqlGenerator for SqliteSqlGenerator {
         )
     }
 
+    fn upsert_batch(
+        &self,
+        table: &str,
+        columns: &[&str],
+        conflict_cols: &[&str],
+        row_count: usize,
+    ) -> String {
+        let cols = columns
+            .iter()
+            .map(|c| self.quote_identifier(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let row = format!("({})", vec!["?"; columns.len()].join(", "));
+        let all_rows = vec![row; row_count].join(", ");
+        let conflict = conflict_cols
+            .iter()
+            .map(|c| self.quote_identifier(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let update_cols: Vec<&str> = columns
+            .iter()
+            .filter(|c| !conflict_cols.contains(c))
+            .copied()
+            .collect();
+        let sets = update_cols
+            .iter()
+            .map(|c| {
+                format!(
+                    "{} = EXCLUDED.{}",
+                    self.quote_identifier(c),
+                    self.quote_identifier(c)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "INSERT INTO {} ({}) VALUES {} ON CONFLICT({}) DO UPDATE SET {}",
+            self.quote_identifier(table),
+            cols,
+            all_rows,
+            conflict,
+            sets,
+        )
+    }
+
     fn update(&self, table: &str, set_columns: &[&str], where_clause: &str) -> String {
         let sets: Vec<String> = set_columns
             .iter()
@@ -115,5 +160,17 @@ impl ISqlGenerator for SqliteSqlGenerator {
 
     fn auto_increment_syntax(&self) -> &'static str {
         "AUTOINCREMENT"
+    }
+
+    fn supports_returning(&self) -> bool {
+        false
+    }
+
+    fn last_insert_id_sql(&self) -> Option<&'static str> {
+        Some("SELECT last_insert_rowid()")
+    }
+
+    fn last_insert_id_returns_first(&self) -> bool {
+        false
     }
 }

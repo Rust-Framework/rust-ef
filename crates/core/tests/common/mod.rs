@@ -106,6 +106,9 @@ impl IGetKeyValues for TestItem {
         m.insert("id".into(), DbValue::I32(self.id));
         m
     }
+    fn set_auto_increment_key(&mut self, key: i64) {
+        self.id = key as i32;
+    }
 }
 
 impl IEntitySnapshot for TestItem {

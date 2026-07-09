@@ -1,9 +1,9 @@
 # rust-ef 生产就绪技术规格说明书
 
-> 版本: v1.5.0 — 基于 2026-07-08 v1.5.0 tracing 集成 + SemVer 严格化 + MySQL TLS  
+> 版本: v1.6.0 — 基于 2026-07-09 v1.6.0 生产硬化（4 P0 + 12 P1）  
 > 包名: `rust-ef`（workspace: `crates/core`）  
-> 目标: v1.4 生产硬化 + v1.4.1 零警告 + v1.5.0 可观测性 / SemVer / MySQL TLS 三项优先项  
-> **当前阶段: v1.5.0 已达成（tracing 集成完成，SemVer 严格化策略落地，MySQL TLS 显式 API 对齐 PgTlsMode，8 维度全部就绪）**
+> 目标: v1.4 生产硬化 + v1.4.1 零警告 + v1.5.0 可观测性 / SemVer / MySQL TLS + v1.6.0 生产硬化  
+> **当前阶段: v1.6.0 已达成（连接池单例化、Debug 脱敏、BoolExpr::raw 收窄、TLS 安全优先、De-String 物化、批量 UPDATE/INCLUDE、属性级变更追踪、PK 回填、Upsert API、Raw SQL 映射，8 维度全部就绪）**
 
 ---
 
@@ -907,15 +907,42 @@ v1.4.0 生产硬化迭代完成后，本轮对 REF 框架进行 8 维度生产�
 1. ✅ `tracing` instrument 集成（慢查询、连接池、save_changes 耗时）
 2. ✅ SemVer 严格化（breaking change 预留 deprecation 期 + 迁移指南）
 3. ✅ MySQL TLS 显式 API（对齐 `PgTlsMode` 模式）
-4. ⏳ 错误码体系（结构化错误分类）— 列为 v1.6 候选
+4. ⏳ 错误码体系（结构化错误分类）— 列为 v1.7 候选
 
-### 4.4 验收标准
+### 4.4 v1.6.0 生产硬化更新（2026-07-09）
+
+v1.6.0 修复 4 个 P0 阻塞项和 12 个 P1 改进项，8 维度维持全部就绪：
+
+| 维度 | v1.6 更新 |
+|------|----------|
+| 性能 | 批量 UPDATE（`CASE pk WHEN`）、批量 INCLUDE（UNION 策略）、批量 INSERT 参数布局优化 |
+| 并发 | 连接池单例化（`provider_cache` 进程级复用，避免每请求重建池） |
+| 安全 | TLS secure-by-default（PG `Require` / MySQL `Required`）；`BoolExpr::raw` 收窄为 `pub(crate)`；`Debug` 脱敏连接串凭据；`DbContext::sql_query` 提供 raw SQL 逃生舱 |
+| 易用性 | `DbSet::upsert()`（ON CONFLICT DO UPDATE / ON DUPLICATE KEY UPDATE）；`DbContext::sql_query()` raw SQL 映射；属性级变更追踪 + 部分 UPDATE |
+| 架构 | De-String 物化管道（`IFromRow::from_row` 改用 `DbValue`）；`ISqlGenerator` 新增 `upsert_batch` / `supports_returning` / `last_insert_id_sql`；`IGetKeyValues::set_auto_increment_key` |
+| 可观测性 | 无变化（v1.5 tracing 集成已就绪） |
+| 错误处理 | 无变化（v1.5 `EFError` 分类已就绪） |
+| Semver | v1.6 含破坏性变更（用户确认接受），全部文档化于 `docs/v1.5-semver-migration-guide.md` 第 8 章 |
+
+**v1.6 新增能力**：
+- 属性级变更追踪：`detect_changes` 收集 `modified_properties`，`execute_updates` 仅 SET 脏列
+- 批量 INSERT 主键回填：PG `RETURNING *` / SQLite `last_insert_rowid()` / MySQL `LAST_INSERT_ID()`
+- `save_changes` 后保留已保存实体（`accept_all_changes` 替代 `clear_entries`），回填主键可查询
+- Upsert API：`DbSet::upsert()` + `execute_upserts`（3 provider 方言适配）
+- Raw SQL 映射：`DbContext::sql_query::<T>(sql, params)` 复用 `IFromRow` 物化
+
+**暂不推荐（更新）**：
+- ⚠️ 需要 metrics API（Counter/Histogram）的场景（待 v1.7+）
+- ⚠️ 需要错误码体系的场景（待 v1.7+ 结构化错误分类）
+
+### 4.5 验收标准
 
 - [x] 6 个编译警告全部修复（`cargo clippy -- -D warnings` 通过）
 - [x] 8 维度评估完成，评级明确
 - [x] 推荐场景与暂不推荐场景清晰
-- [x] v1.5 优先项列出
 - [x] v1.5 优先项 1-3 全部完成，8 维度全部 ✅
+- [x] v1.6 P0（4 项）+ P1（12 项）全部完成
+- [x] v1.6 破坏性变更文档化（迁移指南第 8 章）
 
 ---
 
