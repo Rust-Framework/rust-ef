@@ -198,6 +198,10 @@ pub struct NavigationMeta {
     pub pk_row_index: usize,
     /// Resolves metadata for the related entity type (nested Include / ThenInclude).
     pub related_entity_meta: Option<fn() -> EntityTypeMeta>,
+    /// Delete behavior for this navigation. `None` means use the default
+    /// (Cascade for required FKs and M2M, Restrict for optional FKs).
+    /// Set via `#[on_delete(Cascade|Restrict|SetNull|NoAction)]`.
+    pub delete_behavior: Option<crate::relations::DeleteBehavior>,
 }
 
 // ---------------------------------------------------------------------------

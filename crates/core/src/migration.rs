@@ -7,7 +7,7 @@
 //!   - Maintain `__ef_migrations_history` tracking table
 
 use crate::error::EFResult;
-use crate::metadata::{EntityTypeMeta, NavigationKind};
+use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
 use std::collections::{HashMap, HashSet};
 
 /// Represents a single migration with up/down SQL scripts.
@@ -58,6 +58,9 @@ pub struct SnapshotColumn {
     pub has_index: bool,
     /// Unique constraint/index on this column.
     pub is_unique: bool,
+    /// ON DELETE clause for the FK constraint (e.g. "CASCADE", "SET NULL").
+    /// `None` means no explicit clause (DB default applies).
+    pub fk_on_delete: Option<String>,
 }
 
 /// Specifies the database SQL dialect for migration generation.
@@ -210,6 +213,7 @@ pub(crate) enum SchemaChange {
         column: String,
         referenced_table: String,
         referenced_column: String,
+        on_delete: Option<String>,
     },
     DropForeignKey {
         table: String,
@@ -280,8 +284,8 @@ impl MigrationEngine {
                     .iter()
                     .filter(|p| !p.is_not_mapped)
                     .map(|p| {
-                        let (fk_table, fk_col) =
-                            fk_reference_for_property(et, p.field_name.as_ref());
+                        let (fk_table, fk_col, fk_on_delete) =
+                            fk_reference_for_property(et, p.column_name.as_ref());
                         SnapshotColumn {
                             field_name: p.field_name.to_string(),
                             column_name: p.column_name.to_string(),
@@ -297,6 +301,7 @@ impl MigrationEngine {
                             fk_referenced_column: fk_col,
                             has_index: p.has_index,
                             is_unique: p.is_unique,
+                            fk_on_delete,
                         }
                     })
                     .collect(),
@@ -436,6 +441,7 @@ impl MigrationEngine {
                     column: col.column_name.clone(),
                     referenced_table: ref_table,
                     referenced_column: ref_col,
+                    on_delete: col.fk_on_delete.clone(),
                 });
             }
         }
@@ -482,24 +488,68 @@ fn index_name(table: &str, column: &str) -> String {
 
 fn fk_reference_for_property(
     meta: &EntityTypeMeta,
-    field_name: &str,
-) -> (Option<String>, Option<String>) {
+    column_name: &str,
+) -> (Option<String>, Option<String>, Option<String>) {
     for nav in &meta.navigations {
         if nav.kind != NavigationKind::BelongsTo {
             continue;
         }
         let matches = nav
-            .foreign_key_field
+            .fk_column
             .as_ref()
-            .is_some_and(|fk| fk.as_ref() == field_name);
+            .is_some_and(|fk| fk.as_ref() == column_name);
         if matches {
+            let on_delete = resolve_fk_on_delete_clause(nav, meta);
             return (
                 nav.related_table.as_ref().map(|s| s.to_string()),
                 nav.referenced_key_column.as_ref().map(|s| s.to_string()),
+                on_delete,
             );
         }
     }
-    (None, None)
+    (None, None, None)
+}
+
+/// Resolves the `ON DELETE` SQL clause for a FK by checking:
+/// 1. The child's BelongsTo navigation `delete_behavior` (if user configured it here)
+/// 2. The principal's inverse HasMany navigation via `resolve_delete_behavior`
+/// 3. Fallback: nullability of the FK property on the child entity
+fn resolve_fk_on_delete_clause(
+    belongs_to_nav: &NavigationMeta,
+    child_meta: &EntityTypeMeta,
+) -> Option<String> {
+    use crate::relations::DeleteBehavior;
+
+    // 1. Explicit on the BelongsTo side
+    if let Some(b) = belongs_to_nav.delete_behavior {
+        return Some(b.to_sql_clause().to_string());
+    }
+
+    // 2. Find the principal's HasMany navigation pointing back
+    if let Some(meta_fn) = belongs_to_nav.related_entity_meta {
+        let principal_meta = meta_fn();
+        for principal_nav in &principal_meta.navigations {
+            if principal_nav.kind == NavigationKind::HasMany
+                && principal_nav.related_type_id == child_meta.type_id
+            {
+                let behavior = crate::db_context::resolve_delete_behavior(principal_nav);
+                return Some(behavior.to_sql_clause().to_string());
+            }
+        }
+    }
+
+    // 3. Fallback: nullability from the FK property's Rust type
+    if let Some(fk_prop) = child_meta.properties.iter().find(|p| p.is_foreign_key) {
+        let is_nullable = fk_prop.type_name.contains("Option");
+        let behavior = if is_nullable {
+            DeleteBehavior::Restrict
+        } else {
+            DeleteBehavior::Cascade
+        };
+        return Some(behavior.to_sql_clause().to_string());
+    }
+
+    None
 }
 
 fn diff_foreign_keys(
@@ -508,20 +558,26 @@ fn diff_foreign_keys(
     new_et: &SnapshotEntityType,
 ) -> Vec<SchemaChange> {
     let mut changes = Vec::new();
-    let old_fks: HashMap<&str, (&SnapshotColumn, String, String)> = old_et
+    let old_fks: HashMap<&str, (&SnapshotColumn, String, String, Option<String>)> = old_et
         .columns
         .iter()
         .filter_map(|c| {
             let (rt, rc) = fk_target(c)?;
-            Some((c.column_name.as_str(), (c, rt, rc)))
+            Some((
+                c.column_name.as_str(),
+                (c, rt, rc, c.fk_on_delete.clone()),
+            ))
         })
         .collect();
-    let new_fks: HashMap<&str, (&SnapshotColumn, String, String)> = new_et
+    let new_fks: HashMap<&str, (&SnapshotColumn, String, String, Option<String>)> = new_et
         .columns
         .iter()
         .filter_map(|c| {
             let (rt, rc) = fk_target(c)?;
-            Some((c.column_name.as_str(), (c, rt, rc)))
+            Some((
+                c.column_name.as_str(),
+                (c, rt, rc, c.fk_on_delete.clone()),
+            ))
         })
         .collect();
 
@@ -529,17 +585,18 @@ fn diff_foreign_keys(
     let new_names: HashSet<&str> = new_fks.keys().copied().collect();
 
     for col in new_names.difference(&old_names) {
-        let (_, rt, rc) = &new_fks[col];
+        let (_, rt, rc, od) = &new_fks[col];
         changes.push(SchemaChange::AddForeignKey {
             table: table.to_string(),
             column: (*col).to_string(),
             referenced_table: rt.clone(),
             referenced_column: rc.clone(),
+            on_delete: od.clone(),
         });
     }
 
     for col in old_names.difference(&new_names) {
-        let (_, rt, _) = &old_fks[col];
+        let (_, rt, _, _) = &old_fks[col];
         changes.push(SchemaChange::DropForeignKey {
             table: table.to_string(),
             column: (*col).to_string(),
@@ -548,9 +605,9 @@ fn diff_foreign_keys(
     }
 
     for col in old_names.intersection(&new_names) {
-        let (_, old_rt, old_rc) = &old_fks[col];
-        let (_, new_rt, new_rc) = &new_fks[col];
-        if old_rt != new_rt || old_rc != new_rc {
+        let (_, old_rt, old_rc, old_od) = &old_fks[col];
+        let (_, new_rt, new_rc, new_od) = &new_fks[col];
+        if old_rt != new_rt || old_rc != new_rc || old_od != new_od {
             changes.push(SchemaChange::DropForeignKey {
                 table: table.to_string(),
                 column: (*col).to_string(),
@@ -561,6 +618,7 @@ fn diff_foreign_keys(
                 column: (*col).to_string(),
                 referenced_table: new_rt.clone(),
                 referenced_column: new_rc.clone(),
+                on_delete: new_od.clone(),
             });
         }
     }
@@ -814,15 +872,21 @@ impl MigrationEngine {
                     column,
                     referenced_table,
                     referenced_column,
+                    on_delete,
                 } => {
                     let fk_name = Self::foreign_key_name(table, column, referenced_table);
+                    let on_delete_clause = on_delete
+                        .as_deref()
+                        .map(|c| format!(" ON DELETE {}", c))
+                        .unwrap_or_default();
                     sql.push_str(&format!(
-                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({});\n",
+                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({}){};\n",
                         q(table),
                         q(&fk_name),
                         q(column),
                         q(referenced_table),
-                        q(referenced_column)
+                        q(referenced_column),
+                        on_delete_clause
                     ));
                 }
                 SchemaChange::DropForeignKey {
@@ -1511,7 +1575,7 @@ fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
                 out.push(',');
             }
             out.push_str(&format!(
-                "        {{\"field_name\":\"{}\",\"column_name\":\"{}\",\"type_name\":\"{}\",\"is_primary_key\":{},\"is_required\":{},\"is_foreign_key\":{},\"max_length\":{},\"is_auto_increment\":{},\"is_sequence\":{},\"sequence_name\":{},\"fk_referenced_table\":{},\"fk_referenced_column\":{},\"has_index\":{},\"is_unique\":{}}}\n",
+                "        {{\"field_name\":\"{}\",\"column_name\":\"{}\",\"type_name\":\"{}\",\"is_primary_key\":{},\"is_required\":{},\"is_foreign_key\":{},\"max_length\":{},\"is_auto_increment\":{},\"is_sequence\":{},\"sequence_name\":{},\"fk_referenced_table\":{},\"fk_referenced_column\":{},\"has_index\":{},\"is_unique\":{},\"fk_on_delete\":{}}}\n",
                 col.field_name.replace('"', "\\\""),
                 col.column_name.replace('"', "\\\""),
                 col.type_name.replace('"', "\\\""),
@@ -1534,7 +1598,11 @@ fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
                     .map(|s| format!("\"{}\"", s.replace('"', "\\\"")))
                     .unwrap_or_else(|| "null".into()),
                 col.has_index,
-                col.is_unique
+                col.is_unique,
+                col.fk_on_delete
+                    .as_ref()
+                    .map(|s| format!("\"{}\"", s.replace('"', "\\\"")))
+                    .unwrap_or_else(|| "null".into())
             ));
         }
         out.push_str("      ]\n    }\n");
@@ -1584,6 +1652,7 @@ fn snapshot_from_json(text: &str) -> EFResult<Option<ModelSnapshot>> {
                             ),
                             has_index: col_chunk.contains("\"has_index\":true"),
                             is_unique: col_chunk.contains("\"is_unique\":true"),
+                            fk_on_delete: extract_json_string(col_chunk, "fk_on_delete"),
                         });
                     }
                 }

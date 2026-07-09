@@ -123,6 +123,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             let parent_type_name = struct_name.to_string();
             let related_type_name = type_ident_string(inner_type);
             let fk_const = syn::Ident::new(&format!("FK_{}", parent_type_name), struct_name.span());
+            let delete_behavior_tokens = extract_on_delete(&field.attrs);
 
             navigation_builders.push(match nav_kind {
                 NavigationDiscriminant::ManyToMany => {
@@ -158,6 +159,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                             fk_row_index: 0,
                             pk_row_index: <#inner_type>::pk_column_index(),
                             related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                            delete_behavior: #delete_behavior_tokens,
                         }
                     }
                 }
@@ -181,6 +183,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                         fk_row_index: <#inner_type>::fk_column_index(stringify!(#fk_const)),
                         pk_row_index: <#inner_type>::pk_column_index(),
                         related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                        delete_behavior: #delete_behavior_tokens,
                     }
                 },
                 NavigationDiscriminant::BelongsTo | NavigationDiscriminant::HasOne => quote! {
@@ -205,6 +208,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                         fk_row_index: Self::fk_column_index(#parent_fk_col),
                         pk_row_index: <#inner_type>::pk_column_index(),
                         related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                        delete_behavior: #delete_behavior_tokens,
                     }
                 },
             });
@@ -433,9 +437,22 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                             return Some(#col);
                         }
                     });
-                    set_fk_arms.push(quote! {
-                        if target_type == std::any::TypeId::of::<#target_ident>() {
-                            self.#field_name = key as _;
+                    set_fk_arms.push({
+                        let field_type_str = quote!(#field_type).to_string();
+                        let is_optional = field_type_str.starts_with("Option <")
+                            || field_type_str.starts_with("Option<");
+                        if is_optional {
+                            quote! {
+                                if target_type == std::any::TypeId::of::<#target_ident>() {
+                                    self.#field_name = Some(key as _);
+                                }
+                            }
+                        } else {
+                            quote! {
+                                if target_type == std::any::TypeId::of::<#target_ident>() {
+                                    self.#field_name = key as _;
+                                }
+                            }
                         }
                     });
                 }
@@ -895,6 +912,25 @@ fn extract_sequence_name(attrs: &[syn::Attribute]) -> Option<String> {
         }
     }
     None
+}
+
+fn extract_on_delete(attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {
+    for attr in attrs {
+        if attr.path().is_ident("on_delete") {
+            let tokens = &attr.meta;
+            if let syn::Meta::List(list) = tokens {
+                let behavior: String = list.tokens.to_string().trim().to_string();
+                return match behavior.as_str() {
+                    "Cascade" => quote! { Some(rust_ef::relations::DeleteBehavior::Cascade) },
+                    "Restrict" => quote! { Some(rust_ef::relations::DeleteBehavior::Restrict) },
+                    "SetNull" => quote! { Some(rust_ef::relations::DeleteBehavior::SetNull) },
+                    "NoAction" => quote! { Some(rust_ef::relations::DeleteBehavior::NoAction) },
+                    _ => quote! { None },
+                };
+            }
+        }
+    }
+    quote! { None }
 }
 
 fn extract_max_length(attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {

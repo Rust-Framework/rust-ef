@@ -418,3 +418,15 @@ pub enum DeleteBehavior {
     SetNull,
     NoAction,
 }
+
+impl DeleteBehavior {
+    /// Maps to the SQL `ON DELETE` clause keyword.
+    pub fn to_sql_clause(self) -> &'static str {
+        match self {
+            DeleteBehavior::Cascade => "CASCADE",
+            DeleteBehavior::Restrict => "RESTRICT",
+            DeleteBehavior::SetNull => "SET NULL",
+            DeleteBehavior::NoAction => "NO ACTION",
+        }
+    }
+}

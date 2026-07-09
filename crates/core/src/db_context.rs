@@ -57,7 +57,7 @@
 //! changes. Prefer owned resolution.
 
 use crate::change_executor::ChangeExecutor;
-use crate::cascade::{self, DrainedChild, FixupLink};
+use crate::cascade::{self, CascadeDeleteAction, CascadeDeleteDirective, DrainedChild, FixupLink};
 use crate::db_set::DbSet;
 use crate::dependency_graph::DependencyGraph;
 use crate::entity::{
@@ -421,6 +421,27 @@ trait ErasedSetOps: Send + Sync {
         raw_set: &mut (dyn Any + Send + Sync),
         meta: &EntityTypeMeta,
     ) -> EFResult<usize>;
+
+    /// Drains HasMany children from Deleted entries and collects direct DELETE
+    /// directives for untracked dependents. `processed` tracks already-handled
+    /// entries to avoid duplicate directives across drain loop iterations.
+    fn drain_cascade_deleted_children(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+        processed: &mut std::collections::HashSet<(TypeId, usize)>,
+    ) -> (
+        Vec<DrainedChild>,
+        Vec<crate::cascade::CascadeDeleteDirective>,
+    );
+
+    /// Adds a cascade-drained child to this set as Deleted. Returns the new
+    /// entry index, or `None` if the type doesn't match or the child has no PK.
+    fn add_cascade_deleted_child(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        child: Box<dyn Any + Send + Sync>,
+    ) -> Option<usize>;
 }
 
 struct SetOps<E> {
@@ -633,6 +654,175 @@ where
         let query_filter = db_set.query_filter().cloned();
         delete_deleted_phase(conn, provider, db_set, meta, query_filter.as_ref()).await
     }
+
+    fn drain_cascade_deleted_children(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+        processed: &mut std::collections::HashSet<(TypeId, usize)>,
+    ) -> (Vec<DrainedChild>, Vec<CascadeDeleteDirective>) {
+        use crate::relations::DeleteBehavior;
+
+        let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut drained_children = Vec::new();
+        let mut directives = Vec::new();
+
+        for (entry_idx, entry) in db_set.entries.iter_mut().enumerate() {
+            if entry.state != EntityState::Deleted {
+                continue;
+            }
+            // Skip already-processed entries (prevents duplicate directives)
+            if !processed.insert((TypeId::of::<E>(), entry_idx)) {
+                continue;
+            }
+
+            // Get principal PK for directives
+            let principal_pk: i64 = entry
+                .entity
+                .key_values()
+                .into_values()
+                .next()
+                .and_then(|v| v.try_into().ok())
+                .unwrap_or(0);
+
+            for nav in &meta.navigations {
+                match nav.kind {
+                    NavigationKind::ManyToMany => {
+                        // M2M: always delete join table rows, don't delete related entities
+                        if let (Some(table), Some(fk_col), Some(pk)) = (
+                            nav.through_table.as_ref(),
+                            nav.through_parent_fk.as_ref(),
+                            (principal_pk > 0).then_some(principal_pk),
+                        ) {
+                            directives.push(CascadeDeleteDirective {
+                                table: table.to_string(),
+                                fk_column: fk_col.to_string(),
+                                principal_pk: pk,
+                                action: CascadeDeleteAction::Delete,
+                            });
+                        }
+                    }
+                    NavigationKind::HasMany => {
+                        let behavior = resolve_delete_behavior(nav);
+                        match behavior {
+                            DeleteBehavior::Cascade => {
+                                // Drain loaded children + collect DELETE directive for untracked
+                                if let Some(items) = entry.entity.drain_has_many(nav.field_name.as_ref()) {
+                                    for item in items {
+                                        drained_children.push(DrainedChild {
+                                            parent_type_id: TypeId::of::<E>(),
+                                            parent_entry_idx: entry_idx,
+                                            child: item,
+                                            child_type_id: nav.related_type_id,
+                                            fk_target_type_id: TypeId::of::<E>(),
+                                            through_table: None,
+                                            through_parent_fk_col: None,
+                                            through_child_fk_col: None,
+                                        });
+                                    }
+                                }
+                                // Also collect direct DELETE for untracked dependents
+                                if let (Some(table), Some(fk_col), Some(pk)) = (
+                                    nav.related_table.as_ref(),
+                                    nav.fk_column.as_ref(),
+                                    (principal_pk > 0).then_some(principal_pk),
+                                ) {
+                                    directives.push(CascadeDeleteDirective {
+                                        table: table.to_string(),
+                                        fk_column: fk_col.to_string(),
+                                        principal_pk: pk,
+                                        action: CascadeDeleteAction::Delete,
+                                    });
+                                }
+                            }
+                            DeleteBehavior::SetNull => {
+                                // Don't drain children; just set FK to NULL
+                                if let (Some(table), Some(fk_col), Some(pk)) = (
+                                    nav.related_table.as_ref(),
+                                    nav.fk_column.as_ref(),
+                                    (principal_pk > 0).then_some(principal_pk),
+                                ) {
+                                    directives.push(CascadeDeleteDirective {
+                                        table: table.to_string(),
+                                        fk_column: fk_col.to_string(),
+                                        principal_pk: pk,
+                                        action: CascadeDeleteAction::SetNull,
+                                    });
+                                }
+                            }
+                            DeleteBehavior::Restrict | DeleteBehavior::NoAction => {
+                                // No cascade — skip
+                            }
+                        }
+                    }
+                    NavigationKind::BelongsTo | NavigationKind::HasOne => {
+                        // Not applicable for cascade delete
+                    }
+                }
+            }
+        }
+        (drained_children, directives)
+    }
+
+    fn add_cascade_deleted_child(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        child: Box<dyn Any + Send + Sync>,
+    ) -> Option<usize> {
+        let db_set = raw_set.downcast_mut::<DbSet<E>>()?;
+        let child = child.downcast::<E>().ok()?;
+        let pk: i64 = child
+            .key_values()
+            .into_values()
+            .next()
+            .and_then(|v| v.try_into().ok())
+            .unwrap_or(0);
+        if pk == 0 {
+            return None;
+        }
+        let original = child.snapshot();
+        db_set.entries.push(crate::db_set::TrackedEntry {
+            entity: *child,
+            state: EntityState::Deleted,
+            original: Some(original),
+            modified_properties: Vec::new(),
+            is_upsert: false,
+        });
+        Some(db_set.entries.len() - 1)
+    }
+}
+
+/// Resolves the effective `DeleteBehavior` for a navigation, applying
+/// EFCore-style defaults when `delete_behavior` is `None`:
+/// - ManyToMany → Cascade (join rows are always pruned)
+/// - required FK (non-nullable type, e.g. `i32`) → Cascade
+/// - optional FK (nullable type, e.g. `Option<i32>`) → Restrict
+pub(crate) fn resolve_delete_behavior(
+    nav: &crate::metadata::NavigationMeta,
+) -> crate::relations::DeleteBehavior {
+    use crate::relations::DeleteBehavior;
+    if let Some(b) = nav.delete_behavior {
+        return b;
+    }
+    if nav.kind == NavigationKind::ManyToMany {
+        return DeleteBehavior::Cascade;
+    }
+    if let Some(meta_fn) = nav.related_entity_meta {
+        let child_meta = meta_fn();
+        if let Some(fk_prop) = child_meta.properties.iter().find(|p| p.is_foreign_key) {
+            // Determine nullability from the Rust type name: `Option<T>` is
+            // nullable, everything else (i32, i64, String, ...) is not.
+            let is_nullable = fk_prop.type_name.contains("Option");
+            return if is_nullable {
+                DeleteBehavior::Restrict
+            } else {
+                DeleteBehavior::Cascade
+            };
+        }
+    }
+    DeleteBehavior::Cascade
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,6 +1205,47 @@ impl DbContext {
             }
         }
 
+        // --- Cascade DELETE drain loop ---
+        // Iteratively drain HasMany children from Deleted principals. Drained
+        // children are added to their target DbSet as Deleted. Also collects
+        // direct DELETE/SET NULL directives for untracked dependents, executed
+        // before the PK-based DELETE phase.
+        let mut delete_directives: Vec<CascadeDeleteDirective> = Vec::new();
+        let mut processed: std::collections::HashSet<(TypeId, usize)> =
+            std::collections::HashSet::new();
+        loop {
+            let mut all_drained_deleted: Vec<DrainedChild> = Vec::new();
+            for type_id in &type_ids {
+                let saver = self.savers.get(type_id).expect("saver not registered");
+                let set = self.sets.get_mut(type_id).unwrap();
+                let meta = configured_metas
+                    .get(type_id)
+                    .or_else(|| self.entity_metas.get(type_id))
+                    .expect("meta not found");
+                let (drained, directives) =
+                    saver.drain_cascade_deleted_children(set.as_mut(), meta, &mut processed);
+                all_drained_deleted.extend(drained);
+                delete_directives.extend(directives);
+            }
+            if all_drained_deleted.is_empty() {
+                break;
+            }
+            for child in all_drained_deleted {
+                let child_saver = self.savers.get(&child.child_type_id).ok_or_else(|| {
+                    EFError::configuration(format!(
+                        "Cannot cascade-delete child type {:?}: no DbSet registered. \
+                         Call ctx.set::<ChildType>() before save_changes.",
+                        child.child_type_id
+                    ))
+                })?;
+                let child_set = self
+                    .sets
+                    .get_mut(&child.child_type_id)
+                    .expect("set not found for registered saver");
+                child_saver.add_cascade_deleted_child(child_set.as_mut(), child.child);
+            }
+        }
+
         // --- Topological sort ---
         let graph = DependencyGraph::build(&configured_metas);
         let insert_order = graph.topological_sort();
@@ -1284,6 +1515,36 @@ impl DbContext {
             total_updated += n;
         }
 
+        // --- Direct cascade SET NULL SQL (before PK-based deletes) ---
+        // SetNull directives must run before the principal is deleted to avoid
+        // FK constraint violations (the FK is nullified while the principal
+        // still exists).
+        for directive in &delete_directives {
+            if directive.action != CascadeDeleteAction::SetNull {
+                continue;
+            }
+            let sql = format!(
+                "UPDATE {} SET {} = NULL WHERE {} = ?",
+                directive.table, directive.fk_column, directive.fk_column
+            );
+            let params = vec![DbValue::from(directive.principal_pk)];
+            let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                TxnSource::Ambient(t) => t.connection(),
+                TxnSource::Managed(c) => c.as_mut(),
+            };
+            if let Err(e) = conn_ref.execute(&sql, &params).await {
+                if let TxnSource::Managed(mut conn) = txn {
+                    let _ = conn.rollback_transaction().await;
+                } else if let TxnSource::Ambient(t) = txn {
+                    self.ambient_transaction = Some(t);
+                }
+                self.interceptor_pipeline
+                    .on_save_failed(&save_ctx, &e)
+                    .await;
+                return Err(e);
+            }
+        }
+
         // --- DELETE phase (reverse topological order: dependents first) ---
         for type_id in &delete_order {
             if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
@@ -1319,6 +1580,36 @@ impl DbContext {
                 }
             };
             total_deleted += n;
+        }
+
+        // --- Direct cascade DELETE SQL (after PK-based deletes) ---
+        // Cascade DELETE directives run after tracked entities are PK-deleted
+        // to clean up untracked dependents. Running before would cause the
+        // PK-based batch delete to find 0 rows and throw ConcurrencyConflict.
+        for directive in &delete_directives {
+            if directive.action != CascadeDeleteAction::Delete {
+                continue;
+            }
+            let sql = format!(
+                "DELETE FROM {} WHERE {} = ?",
+                directive.table, directive.fk_column
+            );
+            let params = vec![DbValue::from(directive.principal_pk)];
+            let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                TxnSource::Ambient(t) => t.connection(),
+                TxnSource::Managed(c) => c.as_mut(),
+            };
+            if let Err(e) = conn_ref.execute(&sql, &params).await {
+                if let TxnSource::Managed(mut conn) = txn {
+                    let _ = conn.rollback_transaction().await;
+                } else if let TxnSource::Ambient(t) = txn {
+                    self.ambient_transaction = Some(t);
+                }
+                self.interceptor_pipeline
+                    .on_save_failed(&save_ctx, &e)
+                    .await;
+                return Err(e);
+            }
         }
 
         match txn {

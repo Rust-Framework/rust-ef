@@ -92,6 +92,7 @@ impl IEntityType for PerfParent {
                 // PerfChild PK (id) is at index 0 of its row.
                 pk_row_index: 0,
                 related_entity_meta: Some(PerfChild::entity_meta),
+                delete_behavior: None,
             }],
             primary_keys: vec![std::borrow::Cow::Borrowed("id")],
             ..EntityTypeMeta::default()
@@ -488,6 +489,7 @@ impl IEntityType for StringPkParent {
                 fk_row_index: 1,
                 pk_row_index: 0,
                 related_entity_meta: Some(StringPkChild::entity_meta),
+                delete_behavior: None,
             }],
             primary_keys: vec![std::borrow::Cow::Borrowed("code")],
             ..EntityTypeMeta::default()

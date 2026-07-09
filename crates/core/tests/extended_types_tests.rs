@@ -246,6 +246,7 @@ fn map_column_type_chrono_uuid_decimal() {
         fk_referenced_column: None,
         has_index: false,
         is_unique: false,
+        fk_on_delete: None,
     };
 
     // chrono::DateTime<Utc> — std::any::type_name produces "chrono::DateTime<chrono::Utc>"
@@ -319,6 +320,7 @@ fn map_column_type_existing_types_still_match() {
         fk_referenced_column: None,
         has_index: false,
         is_unique: false,
+        fk_on_delete: None,
     };
 
     // Fully-qualified String (from std::any::type_name)

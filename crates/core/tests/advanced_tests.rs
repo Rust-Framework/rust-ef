@@ -254,6 +254,7 @@ mod advanced_tests {
                 fk_row_index: 1,
                 pk_row_index: 0,
                 related_entity_meta: None,
+                delete_behavior: None,
             }],
             primary_keys: vec![std::borrow::Cow::Borrowed("post_id")],
             ..EntityTypeMeta::default()

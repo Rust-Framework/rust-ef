@@ -66,3 +66,30 @@ pub fn m2m_insert_sql(
         placeholders.join(", ")
     )
 }
+
+// ---------------------------------------------------------------------------
+// Cascade delete types
+// ---------------------------------------------------------------------------
+
+/// The action to take for untracked dependents when a principal is deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CascadeDeleteAction {
+    /// `DELETE FROM child_table WHERE fk = ?`
+    Delete,
+    /// `UPDATE child_table SET fk = NULL WHERE fk = ?`
+    SetNull,
+}
+
+/// A directive to delete or nullify untracked dependents of a Deleted
+/// principal. Generated during the cascade delete drain loop and executed
+/// as direct SQL at the start of the DELETE phase, before PK-based deletes.
+pub struct CascadeDeleteDirective {
+    /// The table to act on (child table for HasMany, join table for M2M).
+    pub table: String,
+    /// The FK column to filter on.
+    pub fk_column: String,
+    /// The principal's PK value.
+    pub principal_pk: i64,
+    /// The action to perform.
+    pub action: CascadeDeleteAction,
+}

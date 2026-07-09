@@ -24,6 +24,7 @@ use proc_macro::TokenStream;
         unique,
         through,
         concurrency_check,
+        on_delete,
         context
     )
 )]
