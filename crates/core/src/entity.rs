@@ -3,6 +3,7 @@
 use crate::error::EFResult;
 use crate::metadata::EntityTypeMeta;
 use crate::provider::DbValue;
+use std::any::TypeId;
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,14 @@ pub trait IGetKeyValues: IEntityType {
     /// overridden it). The `#[derive(EntityType)]` macro overrides this for
     /// entities with a single `#[auto_increment]` `#[primary_key]` field.
     fn set_auto_increment_key(&mut self, _key: i64) {}
+
+    /// Sets the foreign key field pointing to `target_type` to `key`.
+    ///
+    /// Called by the cascade save pipeline to fixup child FKs after the
+    /// principal's auto-increment PK is backfilled. The default
+    /// implementation is a no-op. The `#[derive(EntityType)]` macro
+    /// overrides this for each `#[foreign_key(Target)]` scalar field.
+    fn set_foreign_key(&mut self, _target_type: TypeId, _key: i64) {}
 }
 
 /// Extracts all scalar property values from an entity for INSERT/UPDATE.
@@ -111,6 +120,22 @@ pub trait INavigationSetter: IEntityType {
     fn apply_reference(&mut self, field: &str, row: &[DbValue]) -> EFResult<()> {
         let _ = (field, row);
         Ok(())
+    }
+
+    /// Drains all items from a HasMany navigation field, returning them as
+    /// type-erased boxed values. The container is left empty after this call.
+    ///
+    /// Used by the cascade save pipeline to extract Added children from
+    /// principal entities before INSERT. Returns `None` if the field is not a
+    /// HasMany navigation or the container is empty.
+    ///
+    /// The `#[derive(EntityType)]` macro overrides this for each HasMany field.
+    fn drain_has_many(
+        &mut self,
+        field: &str,
+    ) -> Option<Vec<Box<dyn std::any::Any + Send + Sync>>> {
+        let _ = field;
+        None
     }
 
     /// Loads nested includes across multiple entities in batch.

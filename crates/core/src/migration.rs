@@ -46,6 +46,10 @@ pub struct SnapshotColumn {
     pub is_foreign_key: bool,
     pub max_length: Option<usize>,
     pub is_auto_increment: bool,
+    /// Whether this column is backed by a database sequence (PostgreSQL).
+    pub is_sequence: bool,
+    /// The sequence name when `is_sequence` is true.
+    pub sequence_name: Option<String>,
     /// Referenced table when `is_foreign_key` is true.
     pub fk_referenced_table: Option<String>,
     /// Referenced column when `is_foreign_key` is true.
@@ -92,6 +96,25 @@ impl MigrationDialect {
             if tn.ends_with("i64") {
                 return match self {
                     MigrationDialect::Postgres => "BIGSERIAL".into(),
+                    MigrationDialect::MySql => "BIGINT AUTO_INCREMENT".into(),
+                    MigrationDialect::Sqlite => "INTEGER".into(),
+                };
+            }
+        }
+
+        // Sequence handling (PostgreSQL: plain type + DEFAULT nextval in DDL;
+        // non-PG: fall back to auto_increment syntax)
+        if col.is_sequence {
+            if tn.ends_with("i32") {
+                return match self {
+                    MigrationDialect::Postgres => "INTEGER".into(),
+                    MigrationDialect::MySql => "INT AUTO_INCREMENT".into(),
+                    MigrationDialect::Sqlite => "INTEGER".into(),
+                };
+            }
+            if tn.ends_with("i64") {
+                return match self {
+                    MigrationDialect::Postgres => "BIGINT".into(),
                     MigrationDialect::MySql => "BIGINT AUTO_INCREMENT".into(),
                     MigrationDialect::Sqlite => "INTEGER".into(),
                 };
@@ -268,6 +291,8 @@ impl MigrationEngine {
                             is_foreign_key: p.is_foreign_key,
                             max_length: p.max_length,
                             is_auto_increment: p.is_auto_increment,
+                            is_sequence: p.is_sequence,
+                            sequence_name: p.sequence_name.as_ref().map(|s| s.to_string()),
                             fk_referenced_table: fk_table,
                             fk_referenced_column: fk_col,
                             has_index: p.has_index,
@@ -691,6 +716,20 @@ impl MigrationEngine {
         for change in changes {
             match change {
                 SchemaChange::CreateTable { table, columns } => {
+                    // PostgreSQL: create sequences before the table
+                    if self.dialect == MigrationDialect::Postgres {
+                        for c in columns {
+                            if c.is_sequence {
+                                if let Some(seq_name) = &c.sequence_name {
+                                    sql.push_str(&format!(
+                                        "CREATE SEQUENCE IF NOT EXISTS {};\n",
+                                        q(seq_name)
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
                     sql.push_str(&format!("{} {} (\n", create_kw, q(table)));
 
                     // Separate primary key columns from regular columns
@@ -705,6 +744,18 @@ impl MigrationEngine {
                         .map(|c| {
                             let nullable = if c.is_required { "NOT NULL" } else { "NULL" };
                             let col_type = self.dialect.map_column_type(c);
+                            // PostgreSQL sequence column: add DEFAULT nextval('seq_name')
+                            if c.is_sequence && self.dialect == MigrationDialect::Postgres {
+                                if let Some(seq_name) = &c.sequence_name {
+                                    return format!(
+                                        "{} {} DEFAULT nextval('{}') {}",
+                                        q(&c.column_name),
+                                        col_type,
+                                        seq_name,
+                                        nullable
+                                    );
+                                }
+                            }
                             // Don't put PRIMARY KEY on individual columns; handle separately
                             [q(&c.column_name), col_type, nullable.to_string()]
                                 .into_iter()
@@ -1460,7 +1511,7 @@ fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
                 out.push(',');
             }
             out.push_str(&format!(
-                "        {{\"field_name\":\"{}\",\"column_name\":\"{}\",\"type_name\":\"{}\",\"is_primary_key\":{},\"is_required\":{},\"is_foreign_key\":{},\"max_length\":{},\"is_auto_increment\":{},\"fk_referenced_table\":{},\"fk_referenced_column\":{},\"has_index\":{},\"is_unique\":{}}}\n",
+                "        {{\"field_name\":\"{}\",\"column_name\":\"{}\",\"type_name\":\"{}\",\"is_primary_key\":{},\"is_required\":{},\"is_foreign_key\":{},\"max_length\":{},\"is_auto_increment\":{},\"is_sequence\":{},\"sequence_name\":{},\"fk_referenced_table\":{},\"fk_referenced_column\":{},\"has_index\":{},\"is_unique\":{}}}\n",
                 col.field_name.replace('"', "\\\""),
                 col.column_name.replace('"', "\\\""),
                 col.type_name.replace('"', "\\\""),
@@ -1469,6 +1520,11 @@ fn snapshot_to_json(snapshot: &ModelSnapshot) -> String {
                 col.is_foreign_key,
                 col.max_length.map(|n| n.to_string()).unwrap_or_else(|| "null".into()),
                 col.is_auto_increment,
+                col.is_sequence,
+                col.sequence_name
+                    .as_ref()
+                    .map(|s| format!("\"{}\"", s.replace('"', "\\\"")))
+                    .unwrap_or_else(|| "null".into()),
                 col.fk_referenced_table
                     .as_ref()
                     .map(|s| format!("\"{}\"", s.replace('"', "\\\"")))
@@ -1516,6 +1572,8 @@ fn snapshot_from_json(text: &str) -> EFResult<Option<ModelSnapshot>> {
                             is_foreign_key: col_chunk.contains("\"is_foreign_key\":true"),
                             max_length: None,
                             is_auto_increment: col_chunk.contains("\"is_auto_increment\":true"),
+                            is_sequence: col_chunk.contains("\"is_sequence\":true"),
+                            sequence_name: extract_json_string(col_chunk, "sequence_name"),
                             fk_referenced_table: extract_json_string(
                                 col_chunk,
                                 "fk_referenced_table",

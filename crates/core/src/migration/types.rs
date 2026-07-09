@@ -41,6 +41,10 @@ pub struct SnapshotColumn {
     pub is_foreign_key: bool,
     pub max_length: Option<usize>,
     pub is_auto_increment: bool,
+    /// Whether this column is backed by a database sequence (PostgreSQL).
+    pub is_sequence: bool,
+    /// The sequence name when `is_sequence` is true.
+    pub sequence_name: Option<String>,
     /// Referenced table when `is_foreign_key` is true.
     pub fk_referenced_table: Option<String>,
     /// Referenced column when `is_foreign_key` is true.
@@ -87,6 +91,25 @@ impl MigrationDialect {
             if tn.ends_with("i64") {
                 return match self {
                     MigrationDialect::Postgres => "BIGSERIAL".into(),
+                    MigrationDialect::MySql => "BIGINT AUTO_INCREMENT".into(),
+                    MigrationDialect::Sqlite => "INTEGER".into(),
+                };
+            }
+        }
+
+        // Sequence handling (PostgreSQL: plain type + DEFAULT nextval in DDL;
+        // non-PG: fall back to auto_increment syntax)
+        if col.is_sequence {
+            if tn.ends_with("i32") {
+                return match self {
+                    MigrationDialect::Postgres => "INTEGER".into(),
+                    MigrationDialect::MySql => "INT AUTO_INCREMENT".into(),
+                    MigrationDialect::Sqlite => "INTEGER".into(),
+                };
+            }
+            if tn.ends_with("i64") {
+                return match self {
+                    MigrationDialect::Postgres => "BIGINT".into(),
                     MigrationDialect::MySql => "BIGINT AUTO_INCREMENT".into(),
                     MigrationDialect::Sqlite => "INTEGER".into(),
                 };

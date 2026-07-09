@@ -50,17 +50,17 @@ impl ChangeExecutor {
         }
         let insert_cols: Vec<&str> = scalar_props
             .iter()
-            .filter(|p| !p.is_auto_increment || !p.is_primary_key)
+            .filter(|p| !p.is_primary_key || (!p.is_auto_increment && !p.is_sequence))
             .map(|p| p.column_name.as_ref())
             .collect();
         if insert_cols.is_empty() {
             return Ok(0);
         }
 
-        // Identify the auto-increment PK column (if any) for key backfill.
+        // Identify the auto-increment/sequence PK column (if any) for key backfill.
         let auto_inc_pk = scalar_props
             .iter()
-            .find(|p| p.is_auto_increment && p.is_primary_key);
+            .find(|p| (p.is_auto_increment || p.is_sequence) && p.is_primary_key);
 
         // Conservative per-statement parameter ceiling (SQLite limit 999).
         const MAX_PARAMS: usize = 900;
@@ -78,7 +78,7 @@ impl ChangeExecutor {
             for (entity, _) in batch {
                 let snap = entity.snapshot();
                 for p in &scalar_props {
-                    if !p.is_auto_increment || !p.is_primary_key {
+                    if !p.is_primary_key || (!p.is_auto_increment && !p.is_sequence) {
                         params.push(
                             snap.get(p.field_name.as_ref())
                                 .cloned()

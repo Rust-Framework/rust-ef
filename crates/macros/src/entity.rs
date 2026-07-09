@@ -2,6 +2,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
+use syn::spanned::Spanned;
 use syn::{
     parse_macro_input, Data, DeriveInput, Fields, GenericArgument, LitStr, PathArguments, Type,
 };
@@ -48,9 +49,11 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
     let mut has_many_setter_arms = Vec::new();
     let mut reference_setter_arms = Vec::new();
     let mut nested_loader_arms = Vec::new();
+    let mut drain_has_many_arms = Vec::new();
     let mut fk_const_decls = Vec::new();
     let mut fk_index_arms = Vec::new();
     let mut fk_target_arms = Vec::new();
+    let mut set_fk_arms = Vec::new();
     let mut pk_column_name_lit = quote! { "id" };
     let mut pk_column_index_lit = quote! { 0usize };
     let mut auto_inc_pk_ident: Option<&syn::Ident> = None;
@@ -64,6 +67,16 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         let is_not_mapped = has_attr(&field.attrs, "not_mapped");
         let is_primary_key = has_attr(&field.attrs, "primary_key");
         let is_auto_increment = has_attr(&field.attrs, "auto_increment");
+        let sequence_name = extract_sequence_name(&field.attrs);
+        let is_sequence = sequence_name.is_some();
+        if is_auto_increment && is_sequence {
+            return syn::Error::new(
+                field.span(),
+                "#[auto_increment] and #[sequence] are mutually exclusive",
+            )
+            .to_compile_error()
+            .into();
+        }
         let is_required = has_attr(&field.attrs, "required");
         let is_foreign_key = has_attr(&field.attrs, "foreign_key");
         let is_concurrency_token = has_attr(&field.attrs, "concurrency_check");
@@ -77,7 +90,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             pk_field_idents.push(field_name);
             pk_column_names.push(column_name.clone());
             pk_column_name_lit = quote! { #column_name };
-            if is_auto_increment {
+            if is_auto_increment || is_sequence {
                 auto_inc_pk_ident = Some(field_name);
             }
         }
@@ -206,6 +219,20 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                                 .collect();
                             self.#field_name = rust_ef::relations::HasMany::with(items?);
                             return Ok(());
+                        }
+                    });
+                    drain_has_many_arms.push(quote! {
+                        if field == #field_name_str {
+                            let items = std::mem::take(self.#field_name.items_mut());
+                            if items.is_empty() {
+                                return ::core::option::Option::None;
+                            }
+                            return ::core::option::Option::Some(
+                                items.into_iter()
+                                    .map(|item| Box::new(item)
+                                        as Box<dyn std::any::Any + Send + Sync>)
+                                    .collect(),
+                            );
                         }
                     });
                     nested_loader_arms.push(quote! {
@@ -363,6 +390,10 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             if is_primary_key {
                 pk_column_index_lit = quote! { #scalar_idx };
             }
+            let sequence_name_lit = match &sequence_name {
+                Some(name) => quote! { Some(std::borrow::Cow::Borrowed(#name)) },
+                None => quote! { None },
+            };
             property_builders.push(quote! {
                 rust_ef::metadata::PropertyMeta {
                     field_name: std::borrow::Cow::Borrowed(#field_name_str),
@@ -371,6 +402,8 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                     type_name: std::borrow::Cow::Borrowed(std::any::type_name::<#field_type>()),
                     is_primary_key: #is_primary_key,
                     is_auto_increment: #is_auto_increment,
+                    is_sequence: #is_sequence,
+                    sequence_name: #sequence_name_lit,
                     is_required: #is_required,
                     is_foreign_key: #is_foreign_key,
                     is_concurrency_token: #is_concurrency_token,
@@ -398,6 +431,11 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
                     fk_target_arms.push(quote! {
                         if target == std::any::TypeId::of::<#target_ident>() {
                             return Some(#col);
+                        }
+                    });
+                    set_fk_arms.push(quote! {
+                        if target_type == std::any::TypeId::of::<#target_ident>() {
+                            self.#field_name = key as _;
                         }
                     });
                 }
@@ -575,6 +613,11 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             fn set_auto_increment_key(&mut self, key: i64) {
                 #set_auto_inc_key_impl
             }
+
+            fn set_foreign_key(&mut self, target_type: std::any::TypeId, key: i64) {
+                #( #set_fk_arms )*
+                let _ = (target_type, key);
+            }
         }
 
         impl rust_ef::entity::IEntitySnapshot for #struct_name {
@@ -616,6 +659,14 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
             ) -> rust_ef::error::EFResult<()> {
                 #( #reference_setter_arms )*
                 Ok(())
+            }
+
+            fn drain_has_many(
+                &mut self,
+                field: &str,
+            ) -> ::core::option::Option<Vec<Box<dyn std::any::Any + Send + Sync>>> {
+                #( #drain_has_many_arms )*
+                ::core::option::Option::None
             }
 
             async fn load_nested_includes(
@@ -833,6 +884,17 @@ fn extract_column_name(attrs: &[syn::Attribute], field_name: &str) -> String {
         }
     }
     field_name.to_string()
+}
+
+fn extract_sequence_name(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("sequence") {
+            if let Ok(lit_str) = attr.parse_args::<LitStr>() {
+                return Some(lit_str.value());
+            }
+        }
+    }
+    None
 }
 
 fn extract_max_length(attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {

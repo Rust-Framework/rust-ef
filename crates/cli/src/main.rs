@@ -444,6 +444,8 @@ fn snapshot_to_metas(snapshot: &ModelSnapshot) -> Vec<EntityTypeMeta> {
                     type_name: Cow::Owned(c.type_name.clone()),
                     is_primary_key: c.is_primary_key,
                     is_auto_increment: c.is_auto_increment,
+                    is_sequence: c.is_sequence,
+                    sequence_name: c.sequence_name.clone().map(Cow::Owned),
                     is_required: c.is_required,
                     is_foreign_key: c.is_foreign_key,
                     is_concurrency_token: false,

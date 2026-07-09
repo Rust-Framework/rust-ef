@@ -17,6 +17,8 @@ fn make_prop(name: &str, type_name: &str, has_index: bool, is_unique: bool) -> P
         type_name: Cow::Owned(type_name.to_string()),
         is_primary_key: name == "id",
         is_auto_increment: name == "id",
+        is_sequence: false,
+        sequence_name: None,
         is_required: true,
         is_foreign_key: false,
         is_concurrency_token: false,

@@ -57,11 +57,15 @@
 //! changes. Prefer owned resolution.
 
 use crate::change_executor::ChangeExecutor;
+use crate::cascade::{self, DrainedChild, FixupLink};
 use crate::db_set::DbSet;
-use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use crate::dependency_graph::DependencyGraph;
+use crate::entity::{
+    EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
+};
 use crate::error::{EFError, EFResult};
 use crate::interceptor::{InterceptorPipeline, SaveChangesContext, SaveChangesResultContext};
-use crate::metadata::EntityTypeMeta;
+use crate::metadata::{EntityTypeMeta, NavigationKind};
 use crate::migration::MigrationEngine;
 use crate::model_builder::ModelBuilder;
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
@@ -347,6 +351,76 @@ trait ErasedSetOps: Send + Sync {
     /// build `SaveChangesContext` from the real save data source (`DbSet.entries`)
     /// rather than the legacy (empty) `change_tracker`.
     fn collect_entries(&self, raw_set: &(dyn Any + Send + Sync)) -> Vec<EntityEntryView>;
+
+    // ── Cascade pipeline methods ──
+
+    /// Drains HasMany/ManyToMany children from all Added entries. Returns
+    /// type-erased children with parent linkage info for FK fixup.
+    fn drain_cascade_children(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> Vec<DrainedChild>;
+
+    /// Adds a cascade-drained child (type-erased) to this set as Added.
+    /// Returns the new entry index, or `None` if the type doesn't match.
+    fn add_cascade_child(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        child: Box<dyn Any + Send + Sync>,
+    ) -> Option<usize>;
+
+    /// Returns the number of tracked entries.
+    fn entry_count(&self, raw_set: &(dyn Any + Send + Sync)) -> usize;
+
+    /// Reads the first PK value (as i64) of the entry at `idx`. Used after
+    /// INSERT + backfill to read the principal PK for FK fixup.
+    fn get_pk_at(&self, raw_set: &(dyn Any + Send + Sync), idx: usize) -> Option<i64>;
+
+    /// Sets the FK field on the entry at `idx` pointing to `target_type`.
+    fn set_fk_at(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        idx: usize,
+        target_type: TypeId,
+        key: i64,
+    );
+
+    /// Phase 1a: INSERT Added (non-upsert), backfill PKs.
+    async fn insert_added(
+        &self,
+        conn: &mut (dyn IAsyncConnection + Send),
+        provider: &dyn IDatabaseProvider,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> EFResult<usize>;
+
+    /// Phase 1b: UPSERT Added (is_upsert = true).
+    async fn upsert_added(
+        &self,
+        conn: &mut (dyn IAsyncConnection + Send),
+        provider: &dyn IDatabaseProvider,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> EFResult<usize>;
+
+    /// Phase 2: UPDATE Modified.
+    async fn update_modified(
+        &self,
+        conn: &mut (dyn IAsyncConnection + Send),
+        provider: &dyn IDatabaseProvider,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> EFResult<usize>;
+
+    /// Phase 3: DELETE Deleted.
+    async fn delete_deleted(
+        &self,
+        conn: &mut (dyn IAsyncConnection + Send),
+        provider: &dyn IDatabaseProvider,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> EFResult<usize>;
 }
 
 struct SetOps<E> {
@@ -408,6 +482,156 @@ where
                 state: e.state,
             })
             .collect()
+    }
+
+    fn drain_cascade_children(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> Vec<DrainedChild> {
+        let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() else {
+            return Vec::new();
+        };
+        let mut result = Vec::new();
+        for (entry_idx, entry) in db_set.entries.iter_mut().enumerate() {
+            if entry.state != EntityState::Added || entry.is_upsert {
+                continue;
+            }
+            for nav in &meta.navigations {
+                if !matches!(nav.kind, NavigationKind::HasMany | NavigationKind::ManyToMany) {
+                    continue;
+                }
+                if let Some(items) = entry.entity.drain_has_many(nav.field_name.as_ref()) {
+                    for item in items {
+                        result.push(DrainedChild {
+                            parent_type_id: TypeId::of::<E>(),
+                            parent_entry_idx: entry_idx,
+                            child: item,
+                            child_type_id: nav.related_type_id,
+                            fk_target_type_id: TypeId::of::<E>(),
+                            through_table: nav.through_table.as_ref().map(|s| s.to_string()),
+                            through_parent_fk_col: nav
+                                .through_parent_fk
+                                .as_ref()
+                                .map(|s| s.to_string()),
+                            through_child_fk_col: nav
+                                .through_related_fk
+                                .as_ref()
+                                .map(|s| s.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn add_cascade_child(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        child: Box<dyn Any + Send + Sync>,
+    ) -> Option<usize> {
+        let db_set = raw_set.downcast_mut::<DbSet<E>>()?;
+        let child = child.downcast::<E>().ok()?;
+        let pk: i64 = child
+            .key_values()
+            .into_values()
+            .next()
+            .and_then(|v| v.try_into().ok())
+            .unwrap_or(0);
+        let entity = *child;
+        if pk > 0 {
+            db_set.attach(entity);
+        } else {
+            db_set.add(entity);
+        }
+        Some(db_set.entries.len() - 1)
+    }
+
+    fn entry_count(&self, raw_set: &(dyn Any + Send + Sync)) -> usize {
+        raw_set
+            .downcast_ref::<DbSet<E>>()
+            .map(|s| s.entries.len())
+            .unwrap_or(0)
+    }
+
+    fn get_pk_at(&self, raw_set: &(dyn Any + Send + Sync), idx: usize) -> Option<i64> {
+        let db_set = raw_set.downcast_ref::<DbSet<E>>()?;
+        let entry = db_set.entries.get(idx)?;
+        entry
+            .entity
+            .key_values()
+            .into_values()
+            .next()
+            .and_then(|v| v.try_into().ok())
+    }
+
+    fn set_fk_at(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync),
+        idx: usize,
+        target_type: TypeId,
+        key: i64,
+    ) {
+        if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
+            if let Some(entry) = db_set.entries.get_mut(idx) {
+                entry.entity.set_foreign_key(target_type, key);
+            }
+        }
+    }
+
+    async fn insert_added(
+        &self,
+        conn: &mut (dyn IAsyncConnection + Send),
+        provider: &dyn IDatabaseProvider,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> EFResult<usize> {
+        let db_set = raw_set
+            .downcast_mut::<DbSet<E>>()
+            .expect("SetOps type mismatch");
+        insert_added_phase(conn, provider, db_set, meta).await
+    }
+
+    async fn upsert_added(
+        &self,
+        conn: &mut (dyn IAsyncConnection + Send),
+        provider: &dyn IDatabaseProvider,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> EFResult<usize> {
+        let db_set = raw_set
+            .downcast_mut::<DbSet<E>>()
+            .expect("SetOps type mismatch");
+        upsert_added_phase(conn, provider, db_set, meta).await
+    }
+
+    async fn update_modified(
+        &self,
+        conn: &mut (dyn IAsyncConnection + Send),
+        provider: &dyn IDatabaseProvider,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> EFResult<usize> {
+        let db_set = raw_set
+            .downcast_mut::<DbSet<E>>()
+            .expect("SetOps type mismatch");
+        let query_filter = db_set.query_filter().cloned();
+        update_modified_phase(conn, provider, db_set, meta, query_filter.as_ref()).await
+    }
+
+    async fn delete_deleted(
+        &self,
+        conn: &mut (dyn IAsyncConnection + Send),
+        provider: &dyn IDatabaseProvider,
+        raw_set: &mut (dyn Any + Send + Sync),
+        meta: &EntityTypeMeta,
+    ) -> EFResult<usize> {
+        let db_set = raw_set
+            .downcast_mut::<DbSet<E>>()
+            .expect("SetOps type mismatch");
+        let query_filter = db_set.query_filter().cloned();
+        delete_deleted_phase(conn, provider, db_set, meta, query_filter.as_ref()).await
     }
 }
 
@@ -732,26 +956,192 @@ impl DbContext {
         };
 
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
+
+        // --- Cascade drain loop ---
+        // Iteratively drain HasMany/M2M children from Added principals. Drained
+        // children are added to their target DbSet as Added (if new) or attached
+        // as Unchanged (if existing). Repeats until no new children are
+        // extracted (handles arbitrary depth).
+        let mut fixup_links: Vec<FixupLink> = Vec::new();
+        loop {
+            let mut all_drained: Vec<DrainedChild> = Vec::new();
+            for type_id in &type_ids {
+                let saver = self.savers.get(type_id).expect("saver not registered");
+                let set = self.sets.get_mut(type_id).unwrap();
+                let meta = configured_metas
+                    .get(type_id)
+                    .or_else(|| self.entity_metas.get(type_id))
+                    .expect("meta not found");
+                all_drained.extend(saver.drain_cascade_children(set.as_mut(), meta));
+            }
+            if all_drained.is_empty() {
+                break;
+            }
+            for child in all_drained {
+                let child_saver = self.savers.get(&child.child_type_id).ok_or_else(|| {
+                    EFError::configuration(format!(
+                        "Cannot cascade-save child type {:?}: no DbSet registered. \
+                         Call ctx.set::<ChildType>() before save_changes.",
+                        child.child_type_id
+                    ))
+                })?;
+                let child_set = self
+                    .sets
+                    .get_mut(&child.child_type_id)
+                    .expect("set not found for registered saver");
+                if let Some(child_idx) =
+                    child_saver.add_cascade_child(child_set.as_mut(), child.child)
+                {
+                    if let Some(link) = fixup_links.iter_mut().find(|l| {
+                        l.parent_type_id == child.parent_type_id
+                            && l.parent_entry_idx == child.parent_entry_idx
+                            && l.child_type_id == child.child_type_id
+                            && l.through_table == child.through_table
+                    }) {
+                        link.child_entry_indices.push(child_idx);
+                    } else {
+                        fixup_links.push(FixupLink {
+                            parent_type_id: child.parent_type_id,
+                            parent_entry_idx: child.parent_entry_idx,
+                            child_type_id: child.child_type_id,
+                            child_entry_indices: vec![child_idx],
+                            fk_target_type_id: child.fk_target_type_id,
+                            through_table: child.through_table,
+                            through_parent_fk_col: child.through_parent_fk_col,
+                            through_child_fk_col: child.through_child_fk_col,
+                        });
+                    }
+                }
+            }
+        }
+
+        // --- Topological sort ---
+        let graph = DependencyGraph::build(&configured_metas);
+        let insert_order = graph.topological_sort();
+        let delete_order = graph.deletion_order();
+
         let mut total_added = 0usize;
         let mut total_updated = 0usize;
         let mut total_deleted = 0usize;
-        for type_id in &type_ids {
+
+        // --- INSERT phase (topological order) + FK fixup ---
+        for type_id in &insert_order {
+            if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
+                continue;
+            }
             let saver = self.savers.get(type_id).expect("saver not registered");
             let set = self.sets.get_mut(type_id).unwrap();
             let meta = configured_metas
                 .get(type_id)
                 .or_else(|| self.entity_metas.get(type_id))
-                .expect("meta not found for entity type");
-            let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
-                TxnSource::Ambient(t) => t.connection(),
-                TxnSource::Managed(c) => c.as_mut(),
+                .expect("meta not found");
+            let inserted = {
+                let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                    TxnSource::Ambient(t) => t.connection(),
+                    TxnSource::Managed(c) => c.as_mut(),
+                };
+                match saver
+                    .insert_added(conn_ref, &*self.provider, set.as_mut(), meta)
+                    .await
+                {
+                    Ok(n) => n,
+                    Err(e) => {
+                        if let TxnSource::Managed(mut conn) = txn {
+                            let _ = conn.rollback_transaction().await;
+                        } else if let TxnSource::Ambient(t) = txn {
+                            self.ambient_transaction = Some(t);
+                        }
+                        self.interceptor_pipeline
+                            .on_save_failed(&save_ctx, &e)
+                            .await;
+                        return Err(e);
+                    }
+                }
             };
-            let (a, u, d) = match saver
-                .save(conn_ref, &*self.provider, set.as_mut(), meta)
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
+            total_added += inserted;
+
+            // FK fixup: one-to-many links where parent == this type
+            let link_indices: Vec<usize> = fixup_links
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.parent_type_id == *type_id && l.through_table.is_none())
+                .map(|(i, _)| i)
+                .collect();
+
+            // Collect self-referential UPDATEs (deferred to avoid borrow conflicts)
+            let mut self_ref_updates: Vec<(String, i64, i64)> = Vec::new();
+
+            for link_idx in &link_indices {
+                let link = &fixup_links[*link_idx];
+                let parent_pk = {
+                    let parent_saver = self.savers.get(&link.parent_type_id).unwrap();
+                    let parent_set = self.sets.get(&link.parent_type_id).unwrap();
+                    parent_saver.get_pk_at(parent_set.as_ref(), link.parent_entry_idx)
+                };
+                let Some(pk) = parent_pk else {
+                    continue;
+                };
+
+                // set_fk_at on children (in-memory)
+                {
+                    let child_saver = self.savers.get(&link.child_type_id).unwrap();
+                    let child_set = self.sets.get_mut(&link.child_type_id).unwrap();
+                    for &child_idx in &link.child_entry_indices {
+                        child_saver.set_fk_at(
+                            child_set.as_mut(),
+                            child_idx,
+                            link.fk_target_type_id,
+                            pk,
+                        );
+                    }
+                }
+
+                // Self-referential: child already inserted with FK=0
+                if link.child_type_id == link.parent_type_id {
+                    let child_meta = configured_metas
+                        .get(&link.child_type_id)
+                        .or_else(|| self.entity_metas.get(&link.child_type_id))
+                        .unwrap();
+                    let fk_col = child_meta
+                        .properties
+                        .iter()
+                        .find(|p| p.is_foreign_key)
+                        .map(|p| p.column_name.as_ref());
+                    let pk_col = child_meta
+                        .properties
+                        .iter()
+                        .find(|p| p.is_primary_key)
+                        .map(|p| p.column_name.as_ref())
+                        .unwrap_or("id");
+                    if let Some(fk_col) = fk_col {
+                        for &child_idx in &link.child_entry_indices {
+                            let child_pk = {
+                                let child_saver = self.savers.get(&link.child_type_id).unwrap();
+                                let child_set = self.sets.get(&link.child_type_id).unwrap();
+                                child_saver.get_pk_at(child_set.as_ref(), child_idx)
+                            };
+                            if let Some(child_pk) = child_pk {
+                                let sql = format!(
+                                    "UPDATE {} SET {} = ? WHERE {} = ?",
+                                    child_meta.table_name, fk_col, pk_col
+                                );
+                                self_ref_updates.push((sql, pk, child_pk));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Execute deferred self-referential UPDATEs
+            for (sql, fk_val, pk_val) in self_ref_updates {
+                let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                    TxnSource::Ambient(t) => t.connection(),
+                    TxnSource::Managed(c) => c.as_mut(),
+                };
+                if let Err(e) = conn_ref
+                    .execute(&sql, &[DbValue::from(fk_val), DbValue::from(pk_val)])
+                    .await
+                {
                     if let TxnSource::Managed(mut conn) = txn {
                         let _ = conn.rollback_transaction().await;
                     } else if let TxnSource::Ambient(t) = txn {
@@ -762,11 +1152,175 @@ impl DbContext {
                         .await;
                     return Err(e);
                 }
-            };
-            total_added += a;
-            total_updated += u;
-            total_deleted += d;
+            }
         }
+
+        // --- M2M join row insertion (after all entity INSERTs) ---
+        for link in &fixup_links {
+            if link.through_table.is_none() {
+                continue;
+            }
+            let table = link.through_table.as_ref().unwrap();
+            let parent_col = link.through_parent_fk_col.as_ref().unwrap();
+            let child_col = link.through_child_fk_col.as_ref().unwrap();
+
+            let parent_pk = {
+                let parent_saver = self.savers.get(&link.parent_type_id).unwrap();
+                let parent_set = self.sets.get(&link.parent_type_id).unwrap();
+                parent_saver.get_pk_at(parent_set.as_ref(), link.parent_entry_idx)
+            };
+            let Some(parent_pk) = parent_pk else {
+                continue;
+            };
+
+            let mut child_pks: Vec<i64> = Vec::new();
+            {
+                let child_saver = self.savers.get(&link.child_type_id).unwrap();
+                let child_set = self.sets.get(&link.child_type_id).unwrap();
+                for &child_idx in &link.child_entry_indices {
+                    if let Some(child_pk) = child_saver.get_pk_at(child_set.as_ref(), child_idx) {
+                        child_pks.push(child_pk);
+                    }
+                }
+            }
+
+            if !child_pks.is_empty() {
+                let sql = cascade::m2m_insert_sql(table, parent_col, child_col, child_pks.len());
+                let mut params: Vec<DbValue> = Vec::with_capacity(child_pks.len() * 2);
+                for child_pk in &child_pks {
+                    params.push(DbValue::from(parent_pk));
+                    params.push(DbValue::from(*child_pk));
+                }
+                let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                    TxnSource::Ambient(t) => t.connection(),
+                    TxnSource::Managed(c) => c.as_mut(),
+                };
+                if let Err(e) = conn_ref.execute(&sql, &params).await {
+                    if let TxnSource::Managed(mut conn) = txn {
+                        let _ = conn.rollback_transaction().await;
+                    } else if let TxnSource::Ambient(t) = txn {
+                        self.ambient_transaction = Some(t);
+                    }
+                    self.interceptor_pipeline
+                        .on_save_failed(&save_ctx, &e)
+                        .await;
+                    return Err(e);
+                }
+                total_added += child_pks.len();
+            }
+        }
+
+        // --- UPSERT phase (topological order) ---
+        for type_id in &insert_order {
+            if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
+                continue;
+            }
+            let saver = self.savers.get(type_id).expect("saver not registered");
+            let set = self.sets.get_mut(type_id).unwrap();
+            let meta = configured_metas
+                .get(type_id)
+                .or_else(|| self.entity_metas.get(type_id))
+                .expect("meta not found");
+            let n = {
+                let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                    TxnSource::Ambient(t) => t.connection(),
+                    TxnSource::Managed(c) => c.as_mut(),
+                };
+                match saver
+                    .upsert_added(conn_ref, &*self.provider, set.as_mut(), meta)
+                    .await
+                {
+                    Ok(n) => n,
+                    Err(e) => {
+                        if let TxnSource::Managed(mut conn) = txn {
+                            let _ = conn.rollback_transaction().await;
+                        } else if let TxnSource::Ambient(t) = txn {
+                            self.ambient_transaction = Some(t);
+                        }
+                        self.interceptor_pipeline
+                            .on_save_failed(&save_ctx, &e)
+                            .await;
+                        return Err(e);
+                    }
+                }
+            };
+            total_added += n;
+        }
+
+        // --- UPDATE phase (topological order) ---
+        for type_id in &insert_order {
+            if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
+                continue;
+            }
+            let saver = self.savers.get(type_id).expect("saver not registered");
+            let set = self.sets.get_mut(type_id).unwrap();
+            let meta = configured_metas
+                .get(type_id)
+                .or_else(|| self.entity_metas.get(type_id))
+                .expect("meta not found");
+            let n = {
+                let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                    TxnSource::Ambient(t) => t.connection(),
+                    TxnSource::Managed(c) => c.as_mut(),
+                };
+                match saver
+                    .update_modified(conn_ref, &*self.provider, set.as_mut(), meta)
+                    .await
+                {
+                    Ok(n) => n,
+                    Err(e) => {
+                        if let TxnSource::Managed(mut conn) = txn {
+                            let _ = conn.rollback_transaction().await;
+                        } else if let TxnSource::Ambient(t) = txn {
+                            self.ambient_transaction = Some(t);
+                        }
+                        self.interceptor_pipeline
+                            .on_save_failed(&save_ctx, &e)
+                            .await;
+                        return Err(e);
+                    }
+                }
+            };
+            total_updated += n;
+        }
+
+        // --- DELETE phase (reverse topological order: dependents first) ---
+        for type_id in &delete_order {
+            if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
+                continue;
+            }
+            let saver = self.savers.get(type_id).expect("saver not registered");
+            let set = self.sets.get_mut(type_id).unwrap();
+            let meta = configured_metas
+                .get(type_id)
+                .or_else(|| self.entity_metas.get(type_id))
+                .expect("meta not found");
+            let n = {
+                let conn_ref: &mut dyn IAsyncConnection = match &mut txn {
+                    TxnSource::Ambient(t) => t.connection(),
+                    TxnSource::Managed(c) => c.as_mut(),
+                };
+                match saver
+                    .delete_deleted(conn_ref, &*self.provider, set.as_mut(), meta)
+                    .await
+                {
+                    Ok(n) => n,
+                    Err(e) => {
+                        if let TxnSource::Managed(mut conn) = txn {
+                            let _ = conn.rollback_transaction().await;
+                        } else if let TxnSource::Ambient(t) = txn {
+                            self.ambient_transaction = Some(t);
+                        }
+                        self.interceptor_pipeline
+                            .on_save_failed(&save_ctx, &e)
+                            .await;
+                        return Err(e);
+                    }
+                }
+            };
+            total_deleted += n;
+        }
+
         match txn {
             TxnSource::Ambient(t) => {
                 self.ambient_transaction = Some(t);
@@ -869,81 +1423,114 @@ pub async fn save_one_set<E>(
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow,
 {
-    // Clone the filter so the immutable borrow on `db_set` is released before
-    // `backfill_added_keys` (mutable borrow) below. `BoolExpr` is `Clone` and
-    // typically small; the clone is cheap relative to the SQL round-trip.
     let query_filter = db_set.query_filter().cloned();
+    let ac = insert_added_phase(conn, provider, db_set, meta).await?;
+    let ac_upsert = upsert_added_phase(conn, provider, db_set, meta).await?;
+    let uc = update_modified_phase(conn, provider, db_set, meta, query_filter.as_ref()).await?;
+    let dc = delete_deleted_phase(conn, provider, db_set, meta, query_filter.as_ref()).await?;
+    Ok((ac + ac_upsert, uc, dc))
+}
 
-    let mut ac = 0usize;
-    let mut uc = 0usize;
-    let mut dc = 0usize;
-
-    // Phase 1a: INSERT Added entities (non-upsert), then backfill generated PKs.
-    {
-        let added: Vec<(&E, &EntityTypeMeta)> = db_set
-            .tracked_by_state(crate::entity::EntityState::Added)
-            .into_iter()
-            .filter(|(_, _, _, is_upsert)| !*is_upsert)
-            .map(|(e, _, _, _)| (e, meta))
-            .collect();
-        if !added.is_empty() {
-            let added_count = added.len();
-            let mut generated_keys: Vec<i64> = vec![0; added_count];
-            ac = ChangeExecutor::execute_inserts(conn, provider, &added, |idx, key| {
-                if idx < generated_keys.len() {
-                    generated_keys[idx] = key;
-                }
-            })
-            .await?;
-            db_set.backfill_added_keys(&generated_keys);
-        }
+/// Phase 1a: INSERT Added (non-upsert) entities, then backfill generated PKs.
+pub async fn insert_added_phase<E>(
+    conn: &mut dyn IAsyncConnection,
+    provider: &dyn IDatabaseProvider,
+    db_set: &mut DbSet<E>,
+    meta: &EntityTypeMeta,
+) -> EFResult<usize>
+where
+    E: IEntityType + IEntitySnapshot + IGetKeyValues,
+{
+    let added: Vec<(&E, &EntityTypeMeta)> = db_set
+        .tracked_by_state(EntityState::Added)
+        .into_iter()
+        .filter(|(_, _, _, is_upsert)| !*is_upsert)
+        .map(|(e, _, _, _)| (e, meta))
+        .collect();
+    if added.is_empty() {
+        return Ok(0);
     }
-
-    // Phase 1b: UPSERT Added entities (is_upsert = true).
-    {
-        let upserts: Vec<(&E, &EntityTypeMeta)> = db_set
-            .tracked_by_state(crate::entity::EntityState::Added)
-            .into_iter()
-            .filter(|(_, _, _, is_upsert)| *is_upsert)
-            .map(|(e, _, _, _)| (e, meta))
-            .collect();
-        if !upserts.is_empty() {
-            ac += ChangeExecutor::execute_upserts(conn, provider, &upserts).await?;
+    let added_count = added.len();
+    let mut generated_keys: Vec<i64> = vec![0; added_count];
+    let inserted = ChangeExecutor::execute_inserts(conn, provider, &added, |idx, key| {
+        if idx < generated_keys.len() {
+            generated_keys[idx] = key;
         }
-    }
+    })
+    .await?;
+    db_set.backfill_added_keys(&generated_keys);
+    Ok(inserted)
+}
 
-    // Phase 2: UPDATE Modified entities (partial update via modified_properties).
-    {
-        let modified: Vec<(
-            &E,
-            &EntityTypeMeta,
-            Option<&HashMap<String, DbValue>>,
-            &[String],
-        )> = db_set
-            .tracked_by_state(crate::entity::EntityState::Modified)
-            .into_iter()
-            .map(|(e, orig, mods, _)| (e, meta, orig, mods))
-            .collect();
-        if !modified.is_empty() {
-            uc = ChangeExecutor::execute_updates(conn, provider, &modified, query_filter.as_ref())
-                .await?;
-        }
+/// Phase 1b: UPSERT Added entities (is_upsert = true).
+pub async fn upsert_added_phase<E>(
+    conn: &mut dyn IAsyncConnection,
+    provider: &dyn IDatabaseProvider,
+    db_set: &mut DbSet<E>,
+    meta: &EntityTypeMeta,
+) -> EFResult<usize>
+where
+    E: IEntityType + IEntitySnapshot + IGetKeyValues,
+{
+    let upserts: Vec<(&E, &EntityTypeMeta)> = db_set
+        .tracked_by_state(EntityState::Added)
+        .into_iter()
+        .filter(|(_, _, _, is_upsert)| *is_upsert)
+        .map(|(e, _, _, _)| (e, meta))
+        .collect();
+    if upserts.is_empty() {
+        return Ok(0);
     }
+    ChangeExecutor::execute_upserts(conn, provider, &upserts).await
+}
 
-    // Phase 3: DELETE Deleted entities.
-    {
-        let deleted: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
-            .tracked_by_state(crate::entity::EntityState::Deleted)
-            .into_iter()
-            .map(|(e, orig, _, _)| (e, meta, orig))
-            .collect();
-        if !deleted.is_empty() {
-            dc = ChangeExecutor::execute_deletes(conn, provider, &deleted, query_filter.as_ref())
-                .await?;
-        }
+/// Phase 2: UPDATE Modified entities (partial update via modified_properties).
+pub async fn update_modified_phase<E>(
+    conn: &mut dyn IAsyncConnection,
+    provider: &dyn IDatabaseProvider,
+    db_set: &mut DbSet<E>,
+    meta: &EntityTypeMeta,
+    query_filter: Option<&crate::query::BoolExpr>,
+) -> EFResult<usize>
+where
+    E: IEntityType + IEntitySnapshot + IGetKeyValues,
+{
+    let modified: Vec<(
+        &E,
+        &EntityTypeMeta,
+        Option<&HashMap<String, DbValue>>,
+        &[String],
+    )> = db_set
+        .tracked_by_state(EntityState::Modified)
+        .into_iter()
+        .map(|(e, orig, mods, _)| (e, meta, orig, mods))
+        .collect();
+    if modified.is_empty() {
+        return Ok(0);
     }
+    ChangeExecutor::execute_updates(conn, provider, &modified, query_filter).await
+}
 
-    Ok((ac, uc, dc))
+/// Phase 3: DELETE Deleted entities.
+pub async fn delete_deleted_phase<E>(
+    conn: &mut dyn IAsyncConnection,
+    provider: &dyn IDatabaseProvider,
+    db_set: &mut DbSet<E>,
+    meta: &EntityTypeMeta,
+    query_filter: Option<&crate::query::BoolExpr>,
+) -> EFResult<usize>
+where
+    E: IEntityType + IEntitySnapshot + IGetKeyValues,
+{
+    let deleted: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
+        .tracked_by_state(EntityState::Deleted)
+        .into_iter()
+        .map(|(e, orig, _, _)| (e, meta, orig))
+        .collect();
+    if deleted.is_empty() {
+        return Ok(0);
+    }
+    ChangeExecutor::execute_deletes(conn, provider, &deleted, query_filter).await
 }
 
 // ---------------------------------------------------------------------------

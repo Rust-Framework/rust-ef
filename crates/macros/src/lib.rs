@@ -13,6 +13,7 @@ use proc_macro::TokenStream;
         table,
         primary_key,
         auto_increment,
+        sequence,
         required,
         max_length,
         column,

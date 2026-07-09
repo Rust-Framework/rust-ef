@@ -105,6 +105,20 @@ impl MigrationEngine {
         for change in changes {
             match change {
                 SchemaChange::CreateTable { table, columns } => {
+                    // PostgreSQL: create sequences before the table
+                    if self.dialect == MigrationDialect::Postgres {
+                        for c in columns {
+                            if c.is_sequence {
+                                if let Some(seq_name) = &c.sequence_name {
+                                    sql.push_str(&format!(
+                                        "CREATE SEQUENCE IF NOT EXISTS {};\n",
+                                        q(seq_name)
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
                     sql.push_str(&format!("{} {} (\n", create_kw, q(table)));
 
                     // Separate primary key columns from regular columns
@@ -119,6 +133,18 @@ impl MigrationEngine {
                         .map(|c| {
                             let nullable = if c.is_required { "NOT NULL" } else { "NULL" };
                             let col_type = self.dialect.map_column_type(c);
+                            // PostgreSQL sequence column: add DEFAULT nextval('seq_name')
+                            if c.is_sequence && self.dialect == MigrationDialect::Postgres {
+                                if let Some(seq_name) = &c.sequence_name {
+                                    return format!(
+                                        "{} {} DEFAULT nextval('{}') {}",
+                                        q(&c.column_name),
+                                        col_type,
+                                        seq_name,
+                                        nullable
+                                    );
+                                }
+                            }
                             // Don't put PRIMARY KEY on individual columns; handle separately
                             [q(&c.column_name), col_type, nullable.to_string()]
                                 .into_iter()

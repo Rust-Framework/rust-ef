@@ -84,6 +84,8 @@ impl MigrationEngine {
                             is_foreign_key: p.is_foreign_key,
                             max_length: p.max_length,
                             is_auto_increment: p.is_auto_increment,
+                            is_sequence: p.is_sequence,
+                            sequence_name: p.sequence_name.as_ref().map(|s| s.to_string()),
                             fk_referenced_table: fk_table,
                             fk_referenced_column: fk_col,
                             has_index: p.has_index,

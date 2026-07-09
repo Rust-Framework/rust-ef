@@ -27,6 +27,11 @@ pub struct PropertyMeta {
     pub is_primary_key: bool,
     /// Whether this property is auto-increment / identity.
     pub is_auto_increment: bool,
+    /// Whether this property is backed by a database sequence (PostgreSQL).
+    /// On non-PG providers, falls back to auto_increment behavior.
+    pub is_sequence: bool,
+    /// The sequence name when `is_sequence` is true (PostgreSQL only).
+    pub sequence_name: Option<Cow<'static, str>>,
     /// Whether this property is required (NOT NULL).
     pub is_required: bool,
     /// Whether this property is a foreign key.
@@ -58,6 +63,8 @@ impl PropertyMetaBuilder {
                 type_name: Cow::Borrowed(type_name),
                 is_primary_key: false,
                 is_auto_increment: false,
+                is_sequence: false,
+                sequence_name: None,
                 is_required: false,
                 is_foreign_key: false,
                 is_concurrency_token: false,
@@ -81,6 +88,16 @@ impl PropertyMetaBuilder {
 
     pub fn is_auto_increment(mut self, v: bool) -> Self {
         self.meta.is_auto_increment = v;
+        self
+    }
+
+    pub fn is_sequence(mut self, v: bool) -> Self {
+        self.meta.is_sequence = v;
+        self
+    }
+
+    pub fn sequence_name(mut self, name: &'static str) -> Self {
+        self.meta.sequence_name = Some(Cow::Borrowed(name));
         self
     }
 
