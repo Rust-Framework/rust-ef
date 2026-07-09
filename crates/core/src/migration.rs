@@ -205,8 +205,8 @@ pub(crate) enum SchemaChange {
     AlterColumn {
         table: String,
         column_name: String,
-        old: SnapshotColumn,
-        new: SnapshotColumn,
+        old: Box<SnapshotColumn>,
+        new: Box<SnapshotColumn>,
     },
     AddForeignKey {
         table: String,
@@ -419,8 +419,8 @@ impl MigrationEngine {
                     changes.push(SchemaChange::AlterColumn {
                         table: table.clone(),
                         column_name: col_name.to_string(),
-                        old: (*old_col).clone(),
-                        new: (*new_col).clone(),
+                        old: Box::new((*old_col).clone()),
+                        new: Box::new((*new_col).clone()),
                     });
                 }
             }
@@ -563,10 +563,7 @@ fn diff_foreign_keys(
         .iter()
         .filter_map(|c| {
             let (rt, rc) = fk_target(c)?;
-            Some((
-                c.column_name.as_str(),
-                (c, rt, rc, c.fk_on_delete.clone()),
-            ))
+            Some((c.column_name.as_str(), (c, rt, rc, c.fk_on_delete.clone())))
         })
         .collect();
     let new_fks: HashMap<&str, (&SnapshotColumn, String, String, Option<String>)> = new_et
@@ -574,10 +571,7 @@ fn diff_foreign_keys(
         .iter()
         .filter_map(|c| {
             let (rt, rc) = fk_target(c)?;
-            Some((
-                c.column_name.as_str(),
-                (c, rt, rc, c.fk_on_delete.clone()),
-            ))
+            Some((c.column_name.as_str(), (c, rt, rc, c.fk_on_delete.clone())))
         })
         .collect();
 

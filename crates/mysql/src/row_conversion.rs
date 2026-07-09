@@ -1,4 +1,6 @@
 use rust_ef::provider::DbValue;
+#[cfg(feature = "tracing")]
+use sqlx::Column;
 use sqlx::Row;
 
 /// Converts a cell from a `sqlx::mysql::MySqlRow` into a native `DbValue`.

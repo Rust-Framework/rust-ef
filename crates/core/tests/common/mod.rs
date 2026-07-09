@@ -1,4 +1,5 @@
 //! Shared CRUD test entity and helpers for multi-provider integration tests.
+#![allow(dead_code)]
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};

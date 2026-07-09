@@ -140,10 +140,7 @@ fn assert_fk_on_delete(up_sql: &str, expected_clause: &str, label: &str) {
 #[test]
 fn test_required_fk_generates_cascade() {
     let engine = MigrationEngine::new(MigrationDialect::Sqlite);
-    let metas = vec![
-        FkCascadeBlog::entity_meta(),
-        FkCascadePost::entity_meta(),
-    ];
+    let metas = vec![FkCascadeBlog::entity_meta(), FkCascadePost::entity_meta()];
     let migration = engine.generate("InitCascade", &metas, &None).unwrap();
 
     assert_fk_on_delete(&migration.up_sql, "CASCADE", "required FK");
@@ -162,10 +159,7 @@ fn test_required_fk_generates_cascade() {
 #[test]
 fn test_optional_fk_generates_restrict() {
     let engine = MigrationEngine::new(MigrationDialect::Sqlite);
-    let metas = vec![
-        FkOptionalBlog::entity_meta(),
-        FkOptionalPost::entity_meta(),
-    ];
+    let metas = vec![FkOptionalBlog::entity_meta(), FkOptionalPost::entity_meta()];
     let migration = engine.generate("InitRestrict", &metas, &None).unwrap();
 
     assert_fk_on_delete(&migration.up_sql, "RESTRICT", "optional FK");
@@ -174,10 +168,7 @@ fn test_optional_fk_generates_restrict() {
 #[test]
 fn test_explicit_set_null() {
     let engine = MigrationEngine::new(MigrationDialect::Sqlite);
-    let metas = vec![
-        FkSetNullBlog::entity_meta(),
-        FkSetNullPost::entity_meta(),
-    ];
+    let metas = vec![FkSetNullBlog::entity_meta(), FkSetNullPost::entity_meta()];
     let migration = engine.generate("InitSetNull", &metas, &None).unwrap();
 
     assert_fk_on_delete(&migration.up_sql, "SET NULL", "explicit SetNull");
@@ -186,10 +177,7 @@ fn test_explicit_set_null() {
 #[test]
 fn test_explicit_no_action() {
     let engine = MigrationEngine::new(MigrationDialect::Sqlite);
-    let metas = vec![
-        FkNoActionBlog::entity_meta(),
-        FkNoActionPost::entity_meta(),
-    ];
+    let metas = vec![FkNoActionBlog::entity_meta(), FkNoActionPost::entity_meta()];
     let migration = engine.generate("InitNoAction", &metas, &None).unwrap();
 
     assert_fk_on_delete(&migration.up_sql, "NO ACTION", "explicit NoAction");
@@ -200,10 +188,7 @@ fn test_on_delete_change_triggers_fk_rebuild() {
     let engine = MigrationEngine::new(MigrationDialect::Sqlite);
 
     // Build current snapshot from FkCascadePost (CASCADE)
-    let current_metas = vec![
-        FkCascadeBlog::entity_meta(),
-        FkCascadePost::entity_meta(),
-    ];
+    let current_metas = vec![FkCascadeBlog::entity_meta(), FkCascadePost::entity_meta()];
     let current_snapshot = engine.create_snapshot("current", &current_metas);
 
     // Build previous snapshot manually: same structure but SET NULL on blog_id
@@ -226,7 +211,8 @@ fn test_on_delete_change_triggers_fk_rebuild() {
 
     // Should drop the old FK and add a new one with CASCADE
     assert!(
-        migration.up_sql.contains("DROP CONSTRAINT") || migration.up_sql.contains("DROP FOREIGN KEY"),
+        migration.up_sql.contains("DROP CONSTRAINT")
+            || migration.up_sql.contains("DROP FOREIGN KEY"),
         "up_sql should contain DROP CONSTRAINT/FOREIGN KEY:\n{}",
         migration.up_sql
     );
@@ -241,10 +227,7 @@ fn test_on_delete_change_triggers_fk_rebuild() {
 #[test]
 fn test_snapshot_json_roundtrip() {
     let engine = MigrationEngine::new(MigrationDialect::Sqlite);
-    let metas = vec![
-        FkCascadeBlog::entity_meta(),
-        FkCascadePost::entity_meta(),
-    ];
+    let metas = vec![FkCascadeBlog::entity_meta(), FkCascadePost::entity_meta()];
     let snapshot = engine.create_snapshot("roundtrip", &metas);
 
     // Verify fk_on_delete is populated
@@ -278,7 +261,10 @@ fn test_snapshot_json_roundtrip() {
     );
 
     // Reload and verify
-    let loaded = store.load_snapshot().unwrap().expect("snapshot should load");
+    let loaded = store
+        .load_snapshot()
+        .unwrap()
+        .expect("snapshot should load");
     let loaded_posts = loaded
         .entity_types
         .iter()

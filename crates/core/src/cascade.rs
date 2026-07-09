@@ -51,12 +51,7 @@ pub struct FixupLink {
 
 /// Generates a batched `INSERT INTO through_table (parent_col, child_col)
 /// VALUES (?, ?), (?, ?), ...` statement for M2M join rows.
-pub fn m2m_insert_sql(
-    table: &str,
-    parent_col: &str,
-    child_col: &str,
-    row_count: usize,
-) -> String {
+pub fn m2m_insert_sql(table: &str, parent_col: &str, child_col: &str, row_count: usize) -> String {
     let placeholders: Vec<String> = (0..row_count).map(|_| "(?, ?)".to_string()).collect();
     format!(
         "INSERT INTO {} ({}, {}) VALUES {}",

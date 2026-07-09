@@ -285,22 +285,12 @@ mod cascade_save_tests {
         ctx.set::<CascadeStudent>().add(student);
         ctx.save_changes().await.unwrap();
 
-        let students = ctx
-            .set::<CascadeStudent>()
-            .query()
-            .to_list()
-            .await
-            .unwrap();
+        let students = ctx.set::<CascadeStudent>().query().to_list().await.unwrap();
         assert_eq!(students.len(), 1);
         let student_id = students[0].student_id;
         assert!(student_id > 0, "Student PK should be backfilled");
 
-        let courses = ctx
-            .set::<CascadeCourse>()
-            .query()
-            .to_list()
-            .await
-            .unwrap();
+        let courses = ctx.set::<CascadeCourse>().query().to_list().await.unwrap();
         assert_eq!(courses.len(), 2, "Two courses should be cascade-inserted");
         for course in &courses {
             assert!(course.course_id > 0, "Course PK should be backfilled");
@@ -348,11 +338,13 @@ mod cascade_save_tests {
         let mut blogs = ctx.set::<CascadeBlog>().query().to_list().await.unwrap();
         let blog_id = blogs[0].blog_id;
         blogs[0].url = "https://updated.example".into();
-        ctx.set::<CascadeBlog>().update(blogs.into_iter().next().unwrap());
+        ctx.set::<CascadeBlog>()
+            .update(blogs.into_iter().next().unwrap());
 
         let mut posts = ctx.set::<CascadePost>().query().to_list().await.unwrap();
         posts[0].title = "Updated Title".into();
-        ctx.set::<CascadePost>().update(posts.into_iter().next().unwrap());
+        ctx.set::<CascadePost>()
+            .update(posts.into_iter().next().unwrap());
 
         ctx.save_changes().await.unwrap();
 
@@ -474,16 +466,24 @@ mod cascade_save_tests {
             .await
             .unwrap();
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].posts.len(), 2, "Posts should be loaded via include");
+        assert_eq!(
+            loaded[0].posts.len(),
+            2,
+            "Posts should be loaded via include"
+        );
 
-        ctx.set::<CascadeBlog>().attach(loaded.into_iter().next().unwrap());
+        ctx.set::<CascadeBlog>()
+            .attach(loaded.into_iter().next().unwrap());
         ctx.set::<CascadeBlog>().remove_at(0).unwrap();
         ctx.save_changes().await.unwrap();
 
         let blogs = ctx.set::<CascadeBlog>().query().to_list().await.unwrap();
         assert!(blogs.is_empty(), "Blog table should be empty");
         let posts = ctx.set::<CascadePost>().query().to_list().await.unwrap();
-        assert!(posts.is_empty(), "Post table should be empty (cascade delete)");
+        assert!(
+            posts.is_empty(),
+            "Post table should be empty (cascade delete)"
+        );
     }
 
     #[tokio::test]
@@ -558,12 +558,7 @@ mod cascade_save_tests {
         ctx.set::<CascadeStudent>().remove_at(0).unwrap();
         ctx.save_changes().await.unwrap();
 
-        let students = ctx
-            .set::<CascadeStudent>()
-            .query()
-            .to_list()
-            .await
-            .unwrap();
+        let students = ctx.set::<CascadeStudent>().query().to_list().await.unwrap();
         assert!(students.is_empty(), "Student table should be empty");
 
         let enrollments = ctx

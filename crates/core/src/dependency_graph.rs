@@ -7,9 +7,9 @@
 //! do not affect type-level ordering — instance-level ordering is handled by
 //! the cascade drain + FK fixup pipeline.
 
+use crate::metadata::EntityTypeMeta;
 use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
-use crate::metadata::EntityTypeMeta;
 
 pub struct DependencyGraph {
     /// child_type_id → list of principal type_ids it depends on.
@@ -32,10 +32,7 @@ impl DependencyGraph {
                     crate::metadata::NavigationKind::HasMany
                         | crate::metadata::NavigationKind::ManyToMany
                 ) {
-                    edges
-                        .entry(nav.related_type_id)
-                        .or_default()
-                        .push(*type_id);
+                    edges.entry(nav.related_type_id).or_default().push(*type_id);
                 }
             }
         }

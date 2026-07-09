@@ -8,7 +8,6 @@ mod common;
 
 use common::TestItem;
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
-use rust_ef::db_set::IDbSet;
 use rust_ef::provider::DbValue;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 

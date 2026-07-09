@@ -130,10 +130,7 @@ pub trait INavigationSetter: IEntityType {
     /// HasMany navigation or the container is empty.
     ///
     /// The `#[derive(EntityType)]` macro overrides this for each HasMany field.
-    fn drain_has_many(
-        &mut self,
-        field: &str,
-    ) -> Option<Vec<Box<dyn std::any::Any + Send + Sync>>> {
+    fn drain_has_many(&mut self, field: &str) -> Option<Vec<Box<dyn std::any::Any + Send + Sync>>> {
         let _ = field;
         None
     }

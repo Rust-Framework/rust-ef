@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "postgres", "database"]
 categories = ["database"]
 
 [dependencies]
-rust-ef = { version = "1.5.2", path = "../core", features = ["chrono", "uuid", "decimal"] }
+rust-ef = { version = "1.5.3", path = "../core", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"] }
 deadpool-postgres = "0.14"

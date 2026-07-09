@@ -9,7 +9,7 @@ keywords = ["orm", "efcore", "entity-framework", "database", "postgresql"]
 categories = ["database"]
 
 [dependencies]
-rust-ef-macros = { version = "1.5.2", path = "../macros" }
+rust-ef-macros = { version = "1.5.3", path = "../macros" }
 rust-dix = "0.6"
 async-trait = "0.1"
 thiserror = "2"

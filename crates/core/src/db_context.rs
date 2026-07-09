@@ -56,8 +56,8 @@
 //! pollution — Thread A's `save_changes()` would commit Thread B's pending
 //! changes. Prefer owned resolution.
 
-use crate::change_executor::ChangeExecutor;
 use crate::cascade::{self, CascadeDeleteAction, CascadeDeleteDirective, DrainedChild, FixupLink};
+use crate::change_executor::ChangeExecutor;
 use crate::db_set::DbSet;
 use crate::dependency_graph::DependencyGraph;
 use crate::entity::{
@@ -334,13 +334,6 @@ impl Default for DbContextOptionsBuilder {
 
 #[async_trait::async_trait]
 trait ErasedSetOps: Send + Sync {
-    async fn save(
-        &self,
-        conn: &mut (dyn IAsyncConnection + Send),
-        provider: &dyn IDatabaseProvider,
-        raw_set: &mut (dyn Any + Send + Sync),
-        meta: &EntityTypeMeta,
-    ) -> EFResult<(usize, usize, usize)>;
     fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync));
     /// Accepts all pending changes in the set: Added/Modified → Unchanged
     /// (with refreshed snapshots), Deleted entries removed. Called after a
@@ -369,9 +362,6 @@ trait ErasedSetOps: Send + Sync {
         raw_set: &mut (dyn Any + Send + Sync),
         child: Box<dyn Any + Send + Sync>,
     ) -> Option<usize>;
-
-    /// Returns the number of tracked entries.
-    fn entry_count(&self, raw_set: &(dyn Any + Send + Sync)) -> usize;
 
     /// Reads the first PK value (as i64) of the entry at `idx`. Used after
     /// INSERT + backfill to read the principal PK for FK fixup.
@@ -467,18 +457,6 @@ where
         + Sync
         + 'static,
 {
-    async fn save(
-        &self,
-        conn: &mut (dyn IAsyncConnection + Send),
-        provider: &dyn IDatabaseProvider,
-        raw_set: &mut (dyn Any + Send + Sync),
-        meta: &EntityTypeMeta,
-    ) -> EFResult<(usize, usize, usize)> {
-        let db_set = raw_set
-            .downcast_mut::<DbSet<E>>()
-            .expect("SetOps type mismatch");
-        save_one_set(conn, provider, db_set, meta).await
-    }
     fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync)) {
         if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
             db_set.detect_changes();
@@ -519,7 +497,10 @@ where
                 continue;
             }
             for nav in &meta.navigations {
-                if !matches!(nav.kind, NavigationKind::HasMany | NavigationKind::ManyToMany) {
+                if !matches!(
+                    nav.kind,
+                    NavigationKind::HasMany | NavigationKind::ManyToMany
+                ) {
                     continue;
                 }
                 if let Some(items) = entry.entity.drain_has_many(nav.field_name.as_ref()) {
@@ -567,13 +548,6 @@ where
             db_set.add(entity);
         }
         Some(db_set.entries.len() - 1)
-    }
-
-    fn entry_count(&self, raw_set: &(dyn Any + Send + Sync)) -> usize {
-        raw_set
-            .downcast_ref::<DbSet<E>>()
-            .map(|s| s.entries.len())
-            .unwrap_or(0)
     }
 
     fn get_pk_at(&self, raw_set: &(dyn Any + Send + Sync), idx: usize) -> Option<i64> {
@@ -709,7 +683,9 @@ where
                         match behavior {
                             DeleteBehavior::Cascade => {
                                 // Drain loaded children + collect DELETE directive for untracked
-                                if let Some(items) = entry.entity.drain_has_many(nav.field_name.as_ref()) {
+                                if let Some(items) =
+                                    entry.entity.drain_has_many(nav.field_name.as_ref())
+                                {
                                     for item in items {
                                         drained_children.push(DrainedChild {
                                             parent_type_id: TypeId::of::<E>(),
@@ -1776,6 +1752,7 @@ where
 }
 
 /// Phase 2: UPDATE Modified entities (partial update via modified_properties).
+#[allow(clippy::type_complexity)]
 pub async fn update_modified_phase<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
@@ -1803,6 +1780,7 @@ where
 }
 
 /// Phase 3: DELETE Deleted entities.
+#[allow(clippy::type_complexity)]
 pub async fn delete_deleted_phase<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,

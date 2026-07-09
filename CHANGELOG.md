@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.3] — 2026-07-09 — 阻断性修复 + 死代码清理 + CI 加固
+
+### Fixed
+
+- **MySQL tracing 编译失败**：`crates/mysql/src/row_conversion.rs` 在 `--features tracing` 下
+  缺少 `use sqlx::Column;`，导致 `c.name()` 调用编译失败。已将导入条件化为
+  `#[cfg(feature = "tracing")] use sqlx::Column;`。
+- **clippy `--all-features` 阻断**：修复 4 个仅在 `--all-features` 下暴露的 clippy 错误：
+  - 移除 `ErasedSetOps` trait 中未使用的 `save` 和 `entry_count` 方法（死代码）
+  - `SchemaChange::AlterColumn` 的 `old`/`new` 字段改为 `Box<SnapshotColumn>`（large_enum_variant）
+  - `update_modified_phase` / `delete_deleted_phase` 添加 `#[allow(clippy::type_complexity)]`
+- **测试文件未使用导入**：移除 3 个测试文件中的 `use rust_ef::db_set::IDbSet;`
+- **代码格式**：运行 `cargo fmt --all` 修复全部格式偏差
+
+### Removed
+
+- **migration/ 死代码目录**：删除 `crates/core/src/migration/` 下 5 个未编译文件
+  （types.rs / engine.rs / engine_sql.rs / engine_exec.rs / diff.rs，共 ~1,298 行）。
+  这是一套未完成的重构，缺少 v1.5.2 的 `fk_on_delete` 支持，且引用不存在的
+  `super::history` 模块，与 `migration.rs` 内联实现重复。
+
+### Changed
+
+- **CI 加固**：`.github/workflows/ci.yml` 新增 `cargo clippy --all-features` 步骤，
+  sqlite 测试改为 `--all-features` 覆盖 tracing feature，防止类似 #1 的编译失败再次遗漏。
+- **测试公共模块**：`crates/core/tests/common/mod.rs` 添加 `#![allow(dead_code)]`，
+  因多 provider 测试目标共享该模块但各自只使用部分辅助函数。
+
+---
+
 ## [1.5.2] — 2026-07-09 — 级联删除 + FK ON DELETE DDL（含未发布的 v1.6.0 生产硬化）
 
 ### Summary

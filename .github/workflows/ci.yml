@@ -24,6 +24,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Clippy (chrono/uuid/decimal features)
         run: cargo clippy --workspace --all-targets --features chrono,uuid,decimal -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: Test (${{ matrix.db }})
@@ -69,7 +71,7 @@ jobs:
         run: |
           case "${{ matrix.db }}" in
             sqlite)
-              cargo test --workspace --features chrono,uuid,decimal -- --skip postgres --skip mysql
+              cargo test --workspace --all-features -- --skip postgres --skip mysql
               ;;
             postgres)
               cargo test --workspace --features chrono,uuid,decimal --test postgres_crud_tests
