@@ -9,14 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.7.0] — 2026-07-09 — 级联删除 + FK ON DELETE DDL
+## [1.5.2] — 2026-07-09 — 级联删除 + FK ON DELETE DDL（含未发布的 v1.6.0 生产硬化）
 
 ### Summary
 
-v1.7.0 新增应用级与数据库级联删除能力。从宏属性解析、元数据存储、应用级级联
-执行到迁移 DDL 的 `ON DELETE` 子句生成，形成全链路一致的删除策略。新增
-`#[on_delete]` 宏属性，支持 `Cascade` / `Restrict` / `SetNull` / `NoAction`
-四种行为。
+v1.5.2 新增应用级与数据库级联删除能力，并包含此前未发布到 crates.io 的 v1.6.0
+生产硬化全部改动（连接池单例化、Debug 脱敏、BoolExpr::raw 收窄、TLS 安全优先、
+De-String 物化管道、属性级变更追踪、批量 INSERT 主键回填、Upsert API、Raw SQL
+映射等——详见下方 [1.6.0] 条目）。从宏属性解析、元数据存储、应用级级联执行到
+迁移 DDL 的 `ON DELETE` 子句生成，形成全链路一致的删除策略。新增 `#[on_delete]`
+宏属性，支持 `Cascade` / `Restrict` / `SetNull` / `NoAction` 四种行为。
+
+> 注：v1.6.0 曾作为 git tag 标记但未发布到 crates.io，其全部改动包含在 v1.5.2 中。
 
 ### Added — 应用级级联删除
 

@@ -502,10 +502,10 @@ FromDbContextOptions (DI bridge)
 | **Entity** | `#[derive(EntityType)]` with 14 attributes, navigation types, auto-discovery |
 | **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation, IN/NOT IN subqueries |
 | **Advanced Query** | CTE (`linq!(with ...)` syntax sugar), Window functions (10 kinds), Lazy Loading (opt-in) |
-| **Persistence** | `save_changes()`, parameterized queries, transactions, cascade delete (v1.7) |
+| **Persistence** | `save_changes()`, parameterized queries, transactions, cascade delete (v1.5.2) |
 | **DI** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`, `Arc<DbContext>`, multi-DB context key isolation |
 | **Interception** | `ISaveChangesInterceptor` ??on_saving/on_saved/on_save_failed hooks |
-| **Migrations** | Model diff, Up/Down SQL, history tracking, `MigrationStore`, FK ON DELETE clauses (v1.7) |
+| **Migrations** | Model diff, Up/Down SQL, history tracking, `MigrationStore`, FK ON DELETE clauses (v1.5.2) |
 | **CLI** | `rust-ef-cli`: `migration init/add/apply/revert/list/script`, `scaffold dbcontext` |
 
 ---
@@ -526,7 +526,7 @@ FromDbContextOptions (DI bridge)
 | `#[index]` / `#[unique]` | `[Index]` |
 | `#[concurrency_check]` | `[ConcurrencyCheck]` |
 | `#[context("key")]` | Multi-DB context key isolation (v1.1) |
-| `#[on_delete]` | `OnDelete(DeleteBehavior)` Fluent API (v1.7) |
+| `#[on_delete]` | `OnDelete(DeleteBehavior)` Fluent API (v1.5.2) |
 
 ---
 
