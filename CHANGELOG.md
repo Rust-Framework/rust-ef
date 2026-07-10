@@ -9,6 +9,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.7.0] — 2026-07-10 — 性能优化迭代（热路径堆分配消除）
+
+### Summary
+
+v1.7.0 是性能优化迭代，外部 API 保持不变（仅新增 `DbValueKey` 公开类型与
+`ISqlGenerator::uses_numbered_placeholders()` 带默认实现的方法）。针对代码审查中
+识别的 6 处热路径堆分配瓶颈，通过 4 个迭代完成优化：导航加载热路径（`DbValueKey`
++ `hex::encode` 查表法）、SQL 构建缓冲区（`to_sql_with` + `update_batch`）、
+保存管线（`scalar_props` 提升 + 过滤器 SQL 缓存）、基准测试补全。
+
+### Added
+
+- **`DbValueKey` 公开类型**（`crates/core/src/provider/db_value_key.rs`）：owned
+  枚举，将 `DbValue` 规范化为可哈希形式，用作 `HashMap`/`HashSet` 键。
+  - 整数变体（`I16`/`I32`/`I64`）统一为 `Int(i64)`，**零分配**（PK 最常见类型）
+  - 浮点变体（`F32`/`F64`）经 `to_bits()` 统一为 `FloatBits(u64)`，零分配且 NaN
+    哈希语义正确
+  - `String`/`Bytes` 仍有一次 clone，但免去 `format!` 的格式串解析开销
+  - feature-gated 变体严格对齐 `DbValue`（`chrono`/`uuid`/`decimal`）
+  - 8 个单元测试覆盖整数/浮点/String/Bytes/Null/NaN/UUID/DateTime 转换与哈希一致性
+  - 已通过 `provider/mod.rs` 的 `pub use` 导出
+
+- **`ISqlGenerator::uses_numbered_placeholders()`**（`crates/core/src/provider/traits.rs`）：
+  新增带默认实现的方法（`false`），标识 provider 是否使用编号占位符。
+  - PostgreSQL `$N` → 覆写为 `true`
+  - SQLite/MySQL `?` → 保持默认 `false`（占位符与索引无关）
+  - 默认实现保证现有 provider 无需改动
+
+- **基准测试**（`crates/core/benches/`）：
+  - `bench_save.rs` — 批量 UPDATE（1000 实体 CASE WHEN）+ 批量 DELETE（1000 实体 IN 子句）
+  - `bench_detect_changes.rs` — 500/1000 已跟踪实体（半数修改）的 `detect_changes`
+  - 在 `crates/core/Cargo.toml` 注册两个 `[[bench]]` 入口
+
+### Changed — 性能优化
+
+#### 迭代 1（P1）：导航加载热路径
+
+- **`navigation_loader.rs` 键类型迁移**：`db_value_key()` 返回类型 `String` → `DbValueKey`；
+  `group_rows` / `group_join_rows` / `index_rows` 的 `HashMap<String, ...>` →
+  `HashMap<DbValueKey, ...>`；`load_many_to_many` 去重 `HashSet<String>` →
+  `HashSet<DbValueKey>`。消除整数 PK 场景的 `format!("{}", v)` 分配（50×10 include
+  场景从 500 次分配降为 0）。
+
+- **`db_value.rs` 的 `hex::encode` 查表法**：替换每字节 `format!("{:02x}", b)` 为
+  `HEX_CHARS` 查表 + `String::with_capacity(bytes.len() * 2)` 单次分配。N 字节从
+  N+1 次分配降为 1 次分配，且无 `format!` 机制开销。4 个单元测试验证输出一致性。
+
+#### 迭代 2（P2）：SQL 构建缓冲区
+
+- **`query/state.rs` 的 `to_sql_with()`**：替换链式 `format!()` 临时 String 为
+  `String::with_capacity(256)` + `push_str`/`push(' ')`。CTE 前缀从
+  `format!("{} {} {}", ...)` 改为预构建 prefix 缓冲区 + `sql.insert_str(0, &prefix)`。
+  消除 SELECT/FROM/JOIN/WHERE/GROUP BY/HAVING/ORDER BY/LIMIT 等子句的中间 String 分配。
+
+- **`provider/traits.rs` 的 `update_batch()`**：替换 `Vec<String>` 收集 + `format!`
+  为直接缓冲区构建（`String::with_capacity(256 + set_columns.len() * row_count * 20)`
+  + `push_str`）。CASE WHEN 片段直接写入缓冲区。
+
+#### 迭代 3（P2）：保存管线
+
+- **`executor_dml.rs` 的 `scalar_props` 提升**：`execute_updates_per_row` 和
+  `execute_deletes_per_row` 中，将 `meta.mapped_scalar_properties().collect()` 从
+  per-entity 循环内提升到循环外（使用 `entities[0].1` 的 meta）。同一调用中所有实体
+  共享同一 `EntityTypeMeta`，避免每实体重复收集。
+
+- **batch 路径过滤器 SQL 缓存**：`execute_updates` 和 `execute_deletes` 的 batch 路径
+  中，当 `!gen.uses_numbered_placeholders()` 时（SQLite/MySQL），在 batch 循环外
+  预编译 `compile_bool_expr` 结果供所有 batch 复用。PostgreSQL（`$N`）仍每 batch
+  重编译（占位符编号与起始索引相关）。
+
+### Compliance
+
+- 所有 `.rs` 文件 ≤500 行（`db_value_key.rs` ~130 行）
+- `provider/mod.rs` 仅添加 `mod db_value_key;` + `pub use db_value_key::DbValueKey;`
+- `cargo check --workspace --all-features` 通过
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` 零警告
+- `cargo fmt --all --check` 通过
+- `cargo test --workspace --all-features` 全量通过
+- 基准测试编译通过：`cargo bench -p rust-ef --bench bench_save --no-run`、
+  `cargo bench -p rust-ef --bench bench_detect_changes --no-run`
+
+---
+
 ## [1.6.0] — 2026-07-10 — 内部清理迭代（大文件拆分 + mod.rs 合规 + panic 收敛 + EFErrorCode）
 
 ### Summary

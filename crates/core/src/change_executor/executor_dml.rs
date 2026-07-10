@@ -94,6 +94,18 @@ impl ChangeExecutor {
             None => Vec::new(),
         };
 
+        // For non-numbered placeholder dialects (SQLite/MySQL `?`), the filter
+        // SQL is index-independent — compile once and reuse across batches.
+        // PostgreSQL (`$N`) must recompile per batch because numbering shifts.
+        let cached_filter_sql: Option<String> = if !gen.uses_numbered_placeholders() {
+            query_filter.map(|f| {
+                let mut idx = 1;
+                compile_bool_expr(f, gen, &mut idx)
+            })
+        } else {
+            None
+        };
+
         // Each row consumes 2 * set_cols params (CASE WHEN pk/value pairs)
         // plus 1 param in the WHERE IN-list.
         const MAX_PARAMS: usize = 900;
@@ -146,7 +158,10 @@ impl ChangeExecutor {
 
             // Append filter to WHERE clause.
             if let Some(filter) = query_filter {
-                let filter_sql = compile_bool_expr(filter, gen, &mut idx);
+                let filter_sql = match &cached_filter_sql {
+                    Some(cached) => cached.clone(),
+                    None => compile_bool_expr(filter, gen, &mut idx),
+                };
                 params.extend(filter_params.iter().cloned());
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
@@ -195,10 +210,21 @@ impl ChangeExecutor {
         let mut updated = 0;
         let mut sql_cache: HashMap<(String, Vec<String>, String), String> = HashMap::new();
 
-        for (entity, meta, original, modified_props) in entities {
+        // Hoist metadata-derived collections outside the per-entity loop —
+        // all entities share the same EntityTypeMeta (same type E), so
+        // scalar_props and concurrency_tokens are identical for every row.
+        let meta0 = entities[0].1;
+        let scalar_props: Vec<&PropertyMeta> = meta0.mapped_scalar_properties().collect();
+        let concurrency_tokens: Vec<&PropertyMeta> = scalar_props
+            .iter()
+            .copied()
+            .filter(|p| p.is_concurrency_token)
+            .collect();
+        let table_name = meta0.table_name.as_ref();
+
+        for (entity, _meta, original, modified_props) in entities {
             let snap = entity.snapshot();
             let keys = entity.key_values();
-            let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
 
             // When modified_properties is populated, SET only those columns
             // (partial update). When empty, SET all non-PK columns.
@@ -223,12 +249,6 @@ impl ChangeExecutor {
                 continue;
             }
 
-            let concurrency_tokens: Vec<&PropertyMeta> = scalar_props
-                .iter()
-                .copied()
-                .filter(|p| p.is_concurrency_token)
-                .collect();
-
             let (mut where_clause, mut where_params) = build_where_with_concurrency(
                 gen,
                 &keys,
@@ -246,11 +266,11 @@ impl ChangeExecutor {
 
             let sql = sql_cache
                 .entry((
-                    meta.table_name.to_string(),
+                    table_name.to_string(),
                     set_cols.iter().map(|s| (*s).to_string()).collect(),
                     where_clause.clone(),
                 ))
-                .or_insert_with(|| gen.update(meta.table_name.as_ref(), &set_cols, &where_clause))
+                .or_insert_with(|| gen.update(table_name, &set_cols, &where_clause))
                 .clone();
 
             let mut params: Vec<DbValue> = set_props
@@ -267,7 +287,7 @@ impl ChangeExecutor {
             if rows == 0 {
                 return Err(EFError::concurrency_conflict(format!(
                     "update affected 0 rows on {} (row may have been modified or deleted)",
-                    meta.table_name
+                    table_name
                 )));
             }
             updated += 1;
@@ -325,10 +345,20 @@ impl ChangeExecutor {
         }
 
         // Filter params are constant across batches; their SQL is recomputed
-        // per batch because Postgres numbered placeholders depend on batch size.
+        // per batch for numbered-placeholder dialects (Postgres `$N`).
+        // For `?` dialects (SQLite/MySQL), the filter SQL is index-independent
+        // and can be compiled once and reused.
         let filter_params: Vec<DbValue> = match query_filter {
             Some(filter) => collect_bool_expr_values(filter),
             None => Vec::new(),
+        };
+        let cached_filter_sql: Option<String> = if !gen.uses_numbered_placeholders() {
+            query_filter.map(|f| {
+                let mut idx = 1;
+                compile_bool_expr(f, gen, &mut idx)
+            })
+        } else {
+            None
         };
         const MAX_PARAMS: usize = 900;
         let batch_size = MAX_PARAMS.saturating_sub(filter_params.len()).max(1);
@@ -350,9 +380,13 @@ impl ChangeExecutor {
             );
             let mut params: Vec<DbValue> = batch.to_vec();
             if let Some(filter) = query_filter {
-                // Filter placeholders are numbered after the PK IN-list.
-                let mut idx = pk_count + 1;
-                let filter_sql = compile_bool_expr(filter, gen, &mut idx);
+                let filter_sql = match &cached_filter_sql {
+                    Some(cached) => cached.clone(),
+                    None => {
+                        let mut idx = pk_count + 1;
+                        compile_bool_expr(filter, gen, &mut idx)
+                    }
+                };
                 params.extend(filter_params.iter().cloned());
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
@@ -385,17 +419,21 @@ impl ChangeExecutor {
         E: IEntityType + IGetKeyValues,
     {
         let mut deleted = 0;
-        for (entity, meta, original) in entities {
+
+        // Hoist metadata-derived collections outside the per-entity loop —
+        // all entities share the same EntityTypeMeta (same type E).
+        let meta0 = entities[0].1;
+        let concurrency_tokens: Vec<&PropertyMeta> = meta0
+            .mapped_scalar_properties()
+            .filter(|p| p.is_concurrency_token)
+            .collect();
+        let table_name = meta0.table_name.as_ref();
+
+        for (entity, _meta, original) in entities {
             let keys = entity.key_values();
             if keys.is_empty() {
                 continue;
             }
-            let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
-            let concurrency_tokens: Vec<&PropertyMeta> = scalar_props
-                .iter()
-                .copied()
-                .filter(|p| p.is_concurrency_token)
-                .collect();
 
             let (mut where_clause, mut where_params) =
                 build_where_with_concurrency(gen, &keys, &concurrency_tokens, *original, 1)?;
@@ -407,12 +445,12 @@ impl ChangeExecutor {
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
 
-            let sql = gen.delete(meta.table_name.as_ref(), &where_clause);
+            let sql = gen.delete(table_name, &where_clause);
             let rows = conn.execute(&sql, &where_params).await?;
             if rows == 0 {
                 return Err(EFError::concurrency_conflict(format!(
                     "delete affected 0 rows on {} (row may have been modified or deleted)",
-                    meta.table_name
+                    table_name
                 )));
             }
             deleted += 1;

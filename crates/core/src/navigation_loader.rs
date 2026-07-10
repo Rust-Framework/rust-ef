@@ -3,7 +3,7 @@
 use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
-use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
+use crate::provider::{DbValue, DbValueKey, IDatabaseProvider, ISqlGenerator};
 use crate::query::{compile_bool_expr, CompiledFilter, IncludePath};
 use std::collections::{HashMap, HashSet};
 
@@ -269,7 +269,7 @@ where
 
     // Collect unique related keys using a HashSet for O(1) dedup
     // (previously O(N²) linear scan per join row).
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: HashSet<DbValueKey> = HashSet::new();
     let related_ids: Vec<DbValue> = join_rows
         .iter()
         .filter_map(|row| row.get(nav.through_related_fk_index).cloned())
@@ -321,12 +321,12 @@ where
     Ok(())
 }
 
-fn db_value_key(v: &DbValue) -> String {
-    format!("{}", v)
+fn db_value_key(v: &DbValue) -> DbValueKey {
+    DbValueKey::from(v)
 }
 
-fn group_rows(rows: &[Vec<DbValue>], fk_index: usize) -> HashMap<String, Vec<Vec<DbValue>>> {
-    let mut map: HashMap<String, Vec<Vec<DbValue>>> = HashMap::new();
+fn group_rows(rows: &[Vec<DbValue>], fk_index: usize) -> HashMap<DbValueKey, Vec<Vec<DbValue>>> {
+    let mut map: HashMap<DbValueKey, Vec<Vec<DbValue>>> = HashMap::new();
     for row in rows {
         if let Some(fk_val) = row.get(fk_index) {
             map.entry(db_value_key(fk_val))
@@ -341,8 +341,8 @@ fn group_join_rows(
     rows: &[Vec<DbValue>],
     parent_index: usize,
     related_index: usize,
-) -> HashMap<String, Vec<DbValue>> {
-    let mut map: HashMap<String, Vec<DbValue>> = HashMap::new();
+) -> HashMap<DbValueKey, Vec<DbValue>> {
+    let mut map: HashMap<DbValueKey, Vec<DbValue>> = HashMap::new();
     for row in rows {
         if let (Some(parent), Some(related)) = (row.get(parent_index), row.get(related_index)) {
             map.entry(db_value_key(parent))
@@ -353,7 +353,7 @@ fn group_join_rows(
     map
 }
 
-fn index_rows(rows: &[Vec<DbValue>], pk_index: usize) -> HashMap<String, Vec<DbValue>> {
+fn index_rows(rows: &[Vec<DbValue>], pk_index: usize) -> HashMap<DbValueKey, Vec<DbValue>> {
     let mut map = HashMap::new();
     for row in rows {
         if let Some(pk) = row.get(pk_index) {

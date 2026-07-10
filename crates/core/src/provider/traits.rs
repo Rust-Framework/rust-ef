@@ -39,32 +39,35 @@ pub trait ISqlGenerator: Send + Sync {
         where_clause: &str,
     ) -> String {
         let mut idx = 1usize;
-        let sets: Vec<String> = set_columns
-            .iter()
-            .map(|col| {
-                let whens: Vec<String> = (0..row_count)
-                    .map(|_| {
-                        let pk_ph = self.parameter_placeholder(idx);
-                        idx += 1;
-                        let val_ph = self.parameter_placeholder(idx);
-                        idx += 1;
-                        format!("WHEN {} THEN {}", pk_ph, val_ph)
-                    })
-                    .collect();
-                format!(
-                    "{} = CASE {} {} END",
-                    self.quote_identifier(col),
-                    self.quote_identifier(pk_col),
-                    whens.join(" ")
-                )
-            })
-            .collect();
-        format!(
-            "UPDATE {} SET {} WHERE {}",
-            self.quote_identifier(table),
-            sets.join(", "),
-            where_clause
-        )
+        let mut sql = String::with_capacity(256 + set_columns.len() * row_count * 20);
+        sql.push_str("UPDATE ");
+        sql.push_str(&self.quote_identifier(table));
+        sql.push_str(" SET ");
+        let quoted_pk = self.quote_identifier(pk_col);
+        for (i, col) in set_columns.iter().enumerate() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push_str(&self.quote_identifier(col));
+            sql.push_str(" = CASE ");
+            sql.push_str(&quoted_pk);
+            sql.push(' ');
+            for _ in 0..row_count {
+                let pk_ph = self.parameter_placeholder(idx);
+                idx += 1;
+                let val_ph = self.parameter_placeholder(idx);
+                idx += 1;
+                sql.push_str("WHEN ");
+                sql.push_str(&pk_ph);
+                sql.push_str(" THEN ");
+                sql.push_str(&val_ph);
+                sql.push(' ');
+            }
+            sql.push_str("END");
+        }
+        sql.push_str(" WHERE ");
+        sql.push_str(where_clause);
+        sql
     }
     /// Generates a DELETE statement.
     fn delete(&self, table: &str, where_clause: &str) -> String;
@@ -80,6 +83,16 @@ pub trait ISqlGenerator: Send + Sync {
     fn quote_identifier(&self, identifier: &str) -> String;
     /// Returns the dialect-specific auto-increment syntax.
     fn auto_increment_syntax(&self) -> &'static str;
+
+    /// Whether the dialect uses numbered placeholders (e.g. PostgreSQL `$1`,
+    /// `$2`) where the index depends on position within the full statement.
+    ///
+    /// When `false` (SQLite/MySQL `?`), compiled filter SQL fragments are
+    /// index-independent and can be cached across batches. When `true`, each
+    /// batch must recompile the filter because placeholder numbering shifts.
+    fn uses_numbered_placeholders(&self) -> bool {
+        false
+    }
 
     /// Whether `insert_batch` includes a `RETURNING *` clause (PostgreSQL).
     /// When true, `execute_inserts` uses `query()` to read back generated PKs

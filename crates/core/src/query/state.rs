@@ -146,11 +146,17 @@ impl QueryState {
             }
         };
 
-        let mut sql = format!("{} FROM {}", select, self.from);
+        // Pre-allocate a single buffer instead of chaining format!() calls
+        // that each allocate a temporary String and copy it via push_str.
+        let mut sql = String::with_capacity(256);
+        sql.push_str(&select);
+        sql.push_str(" FROM ");
+        sql.push_str(&self.from);
 
         // JOINs
         for join in &self.joins {
-            sql.push_str(&format!(" {}", join.to_sql()));
+            sql.push(' ');
+            sql.push_str(&join.to_sql());
         }
 
         // Parameter index is shared across WHERE and HAVING so that
@@ -161,15 +167,11 @@ impl QueryState {
 
         // WHERE
         if let Some(ref expr) = self.where_expr {
-            sql.push_str(&format!(
-                " WHERE {}",
-                compile_bool_expr(expr, gen, &mut param_idx)
-            ));
+            sql.push_str(" WHERE ");
+            sql.push_str(&compile_bool_expr(expr, gen, &mut param_idx));
         } else if !self.filters.is_empty() {
-            sql.push_str(&format!(
-                " WHERE {}",
-                build_where_clauses(&self.filters, gen)
-            ));
+            sql.push_str(" WHERE ");
+            sql.push_str(&build_where_clauses(&self.filters, gen));
             // Advance `param_idx` past the legacy `filters` path so that
             // HAVING placeholders (PostgreSQL `$N`) continue from the
             // correct index. `build_where_clauses` always starts at index 1.
@@ -178,7 +180,8 @@ impl QueryState {
 
         // GROUP BY
         if !self.group_bys.is_empty() {
-            sql.push_str(&format!(" GROUP BY {}", self.group_bys.join(", ")));
+            sql.push_str(" GROUP BY ");
+            sql.push_str(&self.group_bys.join(", "));
         }
 
         // HAVING — compile each `HavingExpr` AST node with the provider's
@@ -190,13 +193,15 @@ impl QueryState {
                 .iter()
                 .map(|h| h.to_sql(gen, &mut param_idx))
                 .collect();
-            sql.push_str(&format!(" HAVING {}", compiled.join(" AND ")));
+            sql.push_str(" HAVING ");
+            sql.push_str(&compiled.join(" AND "));
         }
 
         // ORDER BY
         if !self.orderings.is_empty() {
             let ords: Vec<String> = self.orderings.iter().map(|o| o.to_sql()).collect();
-            sql.push_str(&format!(" ORDER BY {}", ords.join(", ")));
+            sql.push_str(" ORDER BY ");
+            sql.push_str(&ords.join(", "));
         }
 
         // LIMIT / OFFSET — delegated to the dialect-specific generator so
@@ -287,7 +292,15 @@ impl QueryState {
             } else {
                 "WITH"
             };
-            sql = format!("{} {} {}", with_kw, cte_parts.join(", "), sql);
+            // Prepend the CTE prefix to `sql` without allocating a new String
+            // via format!("{} {} {}", ...).
+            let joined = cte_parts.join(", ");
+            let mut prefix = String::with_capacity(with_kw.len() + 1 + joined.len() + 1);
+            prefix.push_str(with_kw);
+            prefix.push(' ');
+            prefix.push_str(&joined);
+            prefix.push(' ');
+            sql.insert_str(0, &prefix);
         }
 
         // Set operations (UNION / INTERSECT / EXCEPT) — appended after the

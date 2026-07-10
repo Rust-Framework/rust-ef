@@ -68,8 +68,43 @@ impl fmt::Display for DbValue {
 }
 
 mod hex {
+    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+
     pub fn encode(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{:02x}", b)).collect()
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for &b in bytes {
+            s.push(HEX_CHARS[(b >> 4) as usize] as char);
+            s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
+        }
+        s
+    }
+}
+
+#[cfg(test)]
+mod hex_tests {
+    use super::hex;
+
+    #[test]
+    fn empty_bytes() {
+        assert_eq!(hex::encode(&[]), "");
+    }
+
+    #[test]
+    fn single_byte() {
+        assert_eq!(hex::encode(&[0xff]), "ff");
+        assert_eq!(hex::encode(&[0x0a]), "0a");
+    }
+
+    #[test]
+    fn multi_byte() {
+        assert_eq!(hex::encode(&[0x00, 0x7f, 0xab, 0xcd]), "007fabcd");
+    }
+
+    #[test]
+    fn matches_format_based_output() {
+        let bytes: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef];
+        let expected: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(hex::encode(&bytes), expected);
     }
 }
 

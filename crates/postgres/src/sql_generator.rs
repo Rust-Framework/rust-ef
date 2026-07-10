@@ -208,4 +208,8 @@ impl ISqlGenerator for PostgresSqlGenerator {
     fn supports_returning(&self) -> bool {
         true
     }
+
+    fn uses_numbered_placeholders(&self) -> bool {
+        true
+    }
 }

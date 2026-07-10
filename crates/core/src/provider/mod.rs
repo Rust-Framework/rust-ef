@@ -9,7 +9,9 @@
 
 mod db_value;
 mod db_value_convert;
+mod db_value_key;
 mod traits;
 
 pub use db_value::{DbValue, DbValueConvertError};
+pub use db_value_key::DbValueKey;
 pub use traits::{IAsyncConnection, IDatabaseProvider, ISqlGenerator, IsolationLevel};
