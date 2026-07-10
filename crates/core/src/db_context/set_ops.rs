@@ -223,8 +223,9 @@ where
         let child = child.downcast::<E>().ok()?;
         let pk: i64 = child
             .key_values()
-            .into_values()
+            .iter()
             .next()
+            .map(|(_, v)| v.clone())
             .and_then(|v| v.try_into().ok())
             .unwrap_or(0);
         let entity = *child;
@@ -242,8 +243,9 @@ where
         entry
             .entity
             .key_values()
-            .into_values()
+            .iter()
             .next()
+            .map(|(_, v)| v.clone())
             .and_then(|v| v.try_into().ok())
     }
 
@@ -342,8 +344,9 @@ where
             let principal_pk: i64 = entry
                 .entity
                 .key_values()
-                .into_values()
+                .iter()
                 .next()
+                .map(|(_, v)| v.clone())
                 .and_then(|v| v.try_into().ok())
                 .unwrap_or(0);
 
@@ -437,8 +440,9 @@ where
         let child = child.downcast::<E>().ok()?;
         let pk: i64 = child
             .key_values()
-            .into_values()
+            .iter()
             .next()
+            .map(|(_, v)| v.clone())
             .and_then(|v| v.try_into().ok())
             .unwrap_or(0);
         if pk == 0 {

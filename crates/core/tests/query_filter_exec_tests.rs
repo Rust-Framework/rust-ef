@@ -7,12 +7,12 @@
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::IEntityType;
+use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFError;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
 use rust_ef::provider::DbValue;
 use rust_ef::query::{BoolExpr, FilterCondition};
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 struct TenantItem {
@@ -107,20 +107,18 @@ impl rust_ef::entity::IFromRow for TenantItem {
 }
 
 impl rust_ef::entity::IEntitySnapshot for TenantItem {
-    fn snapshot(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m.insert("tenant_id".into(), DbValue::I32(self.tenant_id));
-        m.insert("name".into(), DbValue::String(self.name.clone()));
-        m
+    fn snapshot(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![
+            ("id", DbValue::I32(self.id)),
+            ("tenant_id", DbValue::I32(self.tenant_id)),
+            ("name", DbValue::String(self.name.clone())),
+        ])
     }
 }
 
 impl rust_ef::entity::IGetKeyValues for TenantItem {
-    fn key_values(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m
+    fn key_values(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![("id", DbValue::I32(self.id))])
     }
 }
 

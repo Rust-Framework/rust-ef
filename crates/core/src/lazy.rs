@@ -13,6 +13,7 @@
 //! `EFError::other("lazy loading recursion limit exceeded")`.
 
 use crate::entity::IEntityType;
+use crate::entity_snapshot::EntitySnapshot;
 use crate::error::{EFError, EFResult};
 use crate::metadata::{NavigationKind, NavigationMeta};
 use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
@@ -53,13 +54,13 @@ pub trait LazyContext: Send + Sync {
     /// The owning entity's full property snapshot (field_name → value).
     ///
     /// Used to extract foreign-key values for `BelongsTo` navigations.
-    fn owner_snapshot(&self) -> &HashMap<String, DbValue>;
+    fn owner_snapshot(&self) -> &EntitySnapshot;
 
     /// The owning entity's primary-key values (field_name → value).
     ///
     /// Used to extract principal-key values for `HasMany` / `HasOne`
     /// navigations.
-    fn owner_key_values(&self) -> &HashMap<String, DbValue>;
+    fn owner_key_values(&self) -> &EntitySnapshot;
 
     /// Metadata describing the navigation to lazy-load.
     fn navigation(&self) -> &NavigationMeta;
@@ -83,8 +84,8 @@ pub trait LazyContext: Send + Sync {
 /// implementation for each navigation field on an entity.
 pub struct LazyContextImpl {
     provider: Arc<dyn IDatabaseProvider>,
-    owner_snapshot: HashMap<String, DbValue>,
-    owner_key_values: HashMap<String, DbValue>,
+    owner_snapshot: EntitySnapshot,
+    owner_key_values: EntitySnapshot,
     navigation: NavigationMeta,
     filter_map: Option<Arc<HashMap<String, CompiledFilter>>>,
     depth: usize,
@@ -94,8 +95,8 @@ impl LazyContextImpl {
     /// Creates a new lazy context for a single navigation field.
     pub fn new(
         provider: Arc<dyn IDatabaseProvider>,
-        owner_snapshot: HashMap<String, DbValue>,
-        owner_key_values: HashMap<String, DbValue>,
+        owner_snapshot: EntitySnapshot,
+        owner_key_values: EntitySnapshot,
         navigation: NavigationMeta,
         filter_map: Option<Arc<HashMap<String, CompiledFilter>>>,
         depth: usize,
@@ -115,10 +116,10 @@ impl LazyContext for LazyContextImpl {
     fn provider(&self) -> &Arc<dyn IDatabaseProvider> {
         &self.provider
     }
-    fn owner_snapshot(&self) -> &HashMap<String, DbValue> {
+    fn owner_snapshot(&self) -> &EntitySnapshot {
         &self.owner_snapshot
     }
-    fn owner_key_values(&self) -> &HashMap<String, DbValue> {
+    fn owner_key_values(&self) -> &EntitySnapshot {
         &self.owner_key_values
     }
     fn navigation(&self) -> &NavigationMeta {
@@ -147,8 +148,8 @@ impl LazyContext for LazyContextImpl {
 /// [`build_m2m_lazy_queries`].
 fn build_lazy_query(
     nav: &NavigationMeta,
-    owner_snapshot: &HashMap<String, DbValue>,
-    owner_key_values: &HashMap<String, DbValue>,
+    owner_snapshot: &EntitySnapshot,
+    owner_key_values: &EntitySnapshot,
     gen: &dyn ISqlGenerator,
     filter_map: Option<&HashMap<String, CompiledFilter>>,
 ) -> EFResult<Option<(String, Vec<DbValue>)>> {
@@ -215,7 +216,7 @@ fn build_lazy_query(
 /// Returns `Ok(None)` if M2M metadata is incomplete.
 fn build_m2m_lazy_queries(
     nav: &NavigationMeta,
-    owner_key_values: &HashMap<String, DbValue>,
+    owner_key_values: &EntitySnapshot,
     ref_column: &str,
     gen: &dyn ISqlGenerator,
     filter_map: Option<&HashMap<String, CompiledFilter>>,

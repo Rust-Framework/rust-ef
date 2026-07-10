@@ -11,12 +11,12 @@
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta, PropertyMeta};
 use rust_ef::provider::DbValue;
 use rust_ef::relations::HasMany;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // PerfParent — has a HasMany<PerfChild> navigation.
@@ -117,19 +117,17 @@ impl IFromRow for PerfParent {
 }
 
 impl IGetKeyValues for PerfParent {
-    fn key_values(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m
+    fn key_values(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![("id", DbValue::I32(self.id))])
     }
 }
 
 impl IEntitySnapshot for PerfParent {
-    fn snapshot(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m.insert("name".into(), DbValue::String(self.name.clone()));
-        m
+    fn snapshot(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![
+            ("id", DbValue::I32(self.id)),
+            ("name", DbValue::String(self.name.clone())),
+        ])
     }
 }
 
@@ -257,20 +255,18 @@ impl IFromRow for PerfChild {
 }
 
 impl IGetKeyValues for PerfChild {
-    fn key_values(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m
+    fn key_values(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![("id", DbValue::I32(self.id))])
     }
 }
 
 impl IEntitySnapshot for PerfChild {
-    fn snapshot(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m.insert("parent_id".into(), DbValue::I32(self.parent_id));
-        m.insert("label".into(), DbValue::String(self.label.clone()));
-        m
+    fn snapshot(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![
+            ("id", DbValue::I32(self.id)),
+            ("parent_id", DbValue::I32(self.parent_id)),
+            ("label", DbValue::String(self.label.clone())),
+        ])
     }
 }
 

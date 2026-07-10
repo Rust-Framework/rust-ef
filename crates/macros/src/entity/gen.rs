@@ -97,15 +97,12 @@ pub(super) fn generate_impls(
         });
     }
 
-    // Build snapshot assignments: field_name -> DbValue::from(self.field)
+    // Build snapshot assignments: (field_name, DbValue::from(self.field))
     let mut snapshot_entries = Vec::new();
     for (field_name, _field_type) in &ctx.from_row_fields {
         let field_name_str = field_name.to_string();
         snapshot_entries.push(quote! {
-            map.insert(
-                #field_name_str.to_string(),
-                rust_ef::provider::DbValue::from(self.#field_name.clone()),
-            );
+            (#field_name_str, rust_ef::provider::DbValue::from(self.#field_name.clone())),
         });
     }
 
@@ -183,15 +180,12 @@ pub(super) fn generate_impls(
         }
 
         impl rust_ef::entity::IGetKeyValues for #struct_name {
-            fn key_values(&self) -> std::collections::HashMap<String, rust_ef::provider::DbValue> {
-                let mut map = std::collections::HashMap::new();
-                #(
-                    map.insert(
-                        stringify!(#pk_field_idents).to_string(),
-                        rust_ef::provider::DbValue::from(self.#pk_field_idents.clone()),
-                    );
-                )*
-                map
+            fn key_values(&self) -> rust_ef::entity_snapshot::EntitySnapshot {
+                rust_ef::entity_snapshot::EntitySnapshot::new(vec![
+                    #(
+                        (stringify!(#pk_field_idents), rust_ef::provider::DbValue::from(self.#pk_field_idents.clone())),
+                    )*
+                ])
             }
 
             fn set_auto_increment_key(&mut self, key: i64) {
@@ -205,10 +199,10 @@ pub(super) fn generate_impls(
         }
 
         impl rust_ef::entity::IEntitySnapshot for #struct_name {
-            fn snapshot(&self) -> std::collections::HashMap<String, rust_ef::provider::DbValue> {
-                let mut map = std::collections::HashMap::new();
-                #(#snapshot_entries)*
-                map
+            fn snapshot(&self) -> rust_ef::entity_snapshot::EntitySnapshot {
+                rust_ef::entity_snapshot::EntitySnapshot::new(vec![
+                    #(#snapshot_entries)*
+                ])
             }
         }
 

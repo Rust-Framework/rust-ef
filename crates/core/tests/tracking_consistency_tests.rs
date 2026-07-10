@@ -7,6 +7,7 @@
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::IEntityType;
+use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFResult;
 use rust_ef::interceptor::{ISaveChangesInterceptor, SaveChangesContext};
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
@@ -84,22 +85,20 @@ impl rust_ef::entity::IFromRow for Item {
 }
 
 impl rust_ef::entity::IEntitySnapshot for Item {
-    fn snapshot(&self) -> std::collections::HashMap<String, rust_ef::provider::DbValue> {
-        let mut m = std::collections::HashMap::new();
-        m.insert("id".into(), rust_ef::provider::DbValue::I32(self.id));
-        m.insert(
-            "name".into(),
-            rust_ef::provider::DbValue::String(self.name.clone()),
-        );
-        m
+    fn snapshot(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![
+            ("id", rust_ef::provider::DbValue::I32(self.id)),
+            (
+                "name",
+                rust_ef::provider::DbValue::String(self.name.clone()),
+            ),
+        ])
     }
 }
 
 impl rust_ef::entity::IGetKeyValues for Item {
-    fn key_values(&self) -> std::collections::HashMap<String, rust_ef::provider::DbValue> {
-        let mut m = std::collections::HashMap::new();
-        m.insert("id".into(), rust_ef::provider::DbValue::I32(self.id));
-        m
+    fn key_values(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![("id", rust_ef::provider::DbValue::I32(self.id))])
     }
 }
 

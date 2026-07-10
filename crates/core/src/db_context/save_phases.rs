@@ -8,9 +8,10 @@
 use crate::change_executor::ChangeExecutor;
 use crate::db_set::DbSet;
 use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
+use crate::entity_snapshot::EntitySnapshot;
 use crate::error::{EFError, EFResult};
 use crate::metadata::EntityTypeMeta;
-use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
+use crate::provider::{IAsyncConnection, IDatabaseProvider};
 use std::any::TypeId;
 use std::collections::HashMap;
 
@@ -239,12 +240,7 @@ pub async fn update_modified_phase<E>(
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues,
 {
-    let modified: Vec<(
-        &E,
-        &EntityTypeMeta,
-        Option<&HashMap<String, DbValue>>,
-        &[String],
-    )> = db_set
+    let modified: Vec<(&E, &EntityTypeMeta, Option<&EntitySnapshot>, &[String])> = db_set
         .tracked_by_state(EntityState::Modified)
         .into_iter()
         .map(|(e, orig, mods, _)| (e, meta, orig, mods))
@@ -267,7 +263,7 @@ pub async fn delete_deleted_phase<E>(
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues,
 {
-    let deleted: Vec<(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)> = db_set
+    let deleted: Vec<(&E, &EntityTypeMeta, Option<&EntitySnapshot>)> = db_set
         .tracked_by_state(EntityState::Deleted)
         .into_iter()
         .map(|(e, orig, _, _)| (e, meta, orig))

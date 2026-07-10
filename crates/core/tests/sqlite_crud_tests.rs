@@ -6,13 +6,13 @@
 #[cfg(test)]
 mod sqlite_crud {
     use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
+    use rust_ef::entity_snapshot::EntitySnapshot;
     use rust_ef::error::EFResult;
     use rust_ef::linq;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
     use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
     use rust_ef_sqlite::SqliteProvider;
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     // -----------------------------------------------------------------------
@@ -117,20 +117,18 @@ mod sqlite_crud {
     }
 
     impl IGetKeyValues for TestItem {
-        fn key_values(&self) -> HashMap<String, DbValue> {
-            let mut m = HashMap::new();
-            m.insert("id".into(), DbValue::I32(self.id));
-            m
+        fn key_values(&self) -> EntitySnapshot {
+            EntitySnapshot::new(vec![("id", DbValue::I32(self.id))])
         }
     }
 
     impl IEntitySnapshot for TestItem {
-        fn snapshot(&self) -> HashMap<String, DbValue> {
-            let mut m = HashMap::new();
-            m.insert("id".into(), DbValue::I32(self.id));
-            m.insert("name".into(), DbValue::String(self.name.clone()));
-            m.insert("value".into(), DbValue::F64(self.value));
-            m
+        fn snapshot(&self) -> EntitySnapshot {
+            EntitySnapshot::new(vec![
+                ("id", DbValue::I32(self.id)),
+                ("name", DbValue::String(self.name.clone())),
+                ("value", DbValue::F64(self.value)),
+            ])
         }
     }
 

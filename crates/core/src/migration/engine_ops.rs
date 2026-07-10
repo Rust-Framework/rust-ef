@@ -6,6 +6,7 @@ use super::history::{
     MigrationHistoryEntry,
 };
 use super::types::Migration;
+use crate::entity_snapshot::EntitySnapshot;
 use crate::error::{EFError, EFResult};
 use crate::metadata::EntityTypeMeta;
 use crate::provider::IDatabaseProvider;
@@ -281,7 +282,7 @@ impl MigrationEngine {
         &self,
         provider: &dyn IDatabaseProvider,
         meta: &EntityTypeMeta,
-        rows: &[std::collections::HashMap<String, crate::provider::DbValue>],
+        rows: &[EntitySnapshot],
     ) -> EFResult<()> {
         if rows.is_empty() {
             return Ok(());

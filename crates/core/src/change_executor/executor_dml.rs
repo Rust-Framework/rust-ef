@@ -1,6 +1,7 @@
 //! `ChangeExecutor` — UPDATE and DELETE execution (batched + per-row fallback).
 
 use crate::entity::{IEntitySnapshot, IEntityType, IGetKeyValues};
+use crate::entity_snapshot::EntitySnapshot;
 use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, PropertyMeta};
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
@@ -30,12 +31,7 @@ impl ChangeExecutor {
     pub async fn execute_updates<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
-        entities: &[(
-            &E,
-            &EntityTypeMeta,
-            Option<&HashMap<String, DbValue>>,
-            &[String],
-        )],
+        entities: &[(&E, &EntityTypeMeta, Option<&EntitySnapshot>, &[String])],
         query_filter: Option<&BoolExpr>,
     ) -> EFResult<usize>
     where
@@ -83,7 +79,7 @@ impl ChangeExecutor {
         let pk_field = pk_props[0].field_name.as_ref();
 
         // Pre-compute snapshots and keys to avoid re-hashing per batch.
-        let entity_data: Vec<(HashMap<String, DbValue>, HashMap<String, DbValue>)> = entities
+        let entity_data: Vec<(EntitySnapshot, EntitySnapshot)> = entities
             .iter()
             .map(|(e, _, _, _)| (e.snapshot(), e.key_values()))
             .collect();
@@ -196,12 +192,7 @@ impl ChangeExecutor {
     async fn execute_updates_per_row<E>(
         conn: &mut dyn IAsyncConnection,
         gen: &'static dyn crate::provider::ISqlGenerator,
-        entities: &[(
-            &E,
-            &EntityTypeMeta,
-            Option<&HashMap<String, DbValue>>,
-            &[String],
-        )],
+        entities: &[(&E, &EntityTypeMeta, Option<&EntitySnapshot>, &[String])],
         query_filter: Option<&BoolExpr>,
     ) -> EFResult<usize>
     where
@@ -310,7 +301,7 @@ impl ChangeExecutor {
     pub async fn execute_deletes<E>(
         conn: &mut dyn IAsyncConnection,
         provider: &dyn IDatabaseProvider,
-        entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
+        entities: &[(&E, &EntityTypeMeta, Option<&EntitySnapshot>)],
         query_filter: Option<&BoolExpr>,
     ) -> EFResult<usize>
     where
@@ -412,7 +403,7 @@ impl ChangeExecutor {
     async fn execute_deletes_per_row<E>(
         conn: &mut dyn IAsyncConnection,
         gen: &'static dyn crate::provider::ISqlGenerator,
-        entities: &[(&E, &EntityTypeMeta, Option<&HashMap<String, DbValue>>)],
+        entities: &[(&E, &EntityTypeMeta, Option<&EntitySnapshot>)],
         query_filter: Option<&BoolExpr>,
     ) -> EFResult<usize>
     where
@@ -461,15 +452,15 @@ impl ChangeExecutor {
 
 fn build_where_with_concurrency(
     gen: &dyn crate::provider::ISqlGenerator,
-    keys: &HashMap<String, DbValue>,
+    keys: &EntitySnapshot,
     concurrency_tokens: &[&PropertyMeta],
-    original: Option<&HashMap<String, DbValue>>,
+    original: Option<&EntitySnapshot>,
     start_param_idx: usize,
 ) -> EFResult<(String, Vec<DbValue>)> {
     let mut where_parts: Vec<String> = keys
-        .keys()
+        .iter()
         .enumerate()
-        .map(|(i, k)| {
+        .map(|(i, (k, _))| {
             format!(
                 "{} = {}",
                 gen.quote_identifier(k),
@@ -478,7 +469,7 @@ fn build_where_with_concurrency(
         })
         .collect();
 
-    let mut params: Vec<DbValue> = keys.values().cloned().collect();
+    let mut params: Vec<DbValue> = keys.iter().map(|(_, v)| v.clone()).collect();
 
     for (next_idx, token) in (start_param_idx + keys.len()..).zip(concurrency_tokens.iter()) {
         where_parts.push(format!(

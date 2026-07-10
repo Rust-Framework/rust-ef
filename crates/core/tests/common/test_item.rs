@@ -3,10 +3,10 @@
 #![allow(dead_code)]
 
 use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
 use rust_ef::provider::DbValue;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct TestItem {
@@ -106,10 +106,8 @@ impl IFromRow for TestItem {
 }
 
 impl IGetKeyValues for TestItem {
-    fn key_values(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m
+    fn key_values(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![("id", DbValue::I32(self.id))])
     }
     fn set_auto_increment_key(&mut self, key: i64) {
         self.id = key as i32;
@@ -117,12 +115,12 @@ impl IGetKeyValues for TestItem {
 }
 
 impl IEntitySnapshot for TestItem {
-    fn snapshot(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m.insert("name".into(), DbValue::String(self.name.clone()));
-        m.insert("value".into(), DbValue::F64(self.value));
-        m
+    fn snapshot(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![
+            ("id", DbValue::I32(self.id)),
+            ("name", DbValue::String(self.name.clone())),
+            ("value", DbValue::F64(self.value)),
+        ])
     }
 }
 

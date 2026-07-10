@@ -30,6 +30,7 @@ pub mod db_set;
 pub mod dependency_graph;
 pub mod di;
 pub mod entity;
+pub mod entity_snapshot;
 pub mod error;
 pub mod interceptor;
 pub mod lazy;
@@ -63,6 +64,7 @@ pub mod prelude {
         EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, ILazyInit,
         INavigationSetter,
     };
+    pub use crate::entity_snapshot::EntitySnapshot;
     pub use crate::error::{EFError, EFErrorCode, EFResult};
     pub use crate::interceptor::{
         ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext,

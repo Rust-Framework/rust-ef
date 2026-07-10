@@ -8,12 +8,12 @@
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
 use rust_ef::provider::DbValue;
 use rust_ef::query::{BoolExpr, FilterCondition};
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Test entity: BatchItem (manual impl for test isolation)
@@ -134,21 +134,19 @@ impl IFromRow for BatchItem {
 }
 
 impl IGetKeyValues for BatchItem {
-    fn key_values(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m
+    fn key_values(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![("id", DbValue::I32(self.id))])
     }
 }
 
 impl IEntitySnapshot for BatchItem {
-    fn snapshot(&self) -> HashMap<String, DbValue> {
-        let mut m = HashMap::new();
-        m.insert("id".into(), DbValue::I32(self.id));
-        m.insert("name".into(), DbValue::String(self.name.clone()));
-        m.insert("value".into(), DbValue::F64(self.value));
-        m.insert("tenant_id".into(), DbValue::I32(self.tenant_id));
-        m
+    fn snapshot(&self) -> EntitySnapshot {
+        EntitySnapshot::new(vec![
+            ("id", DbValue::I32(self.id)),
+            ("name", DbValue::String(self.name.clone())),
+            ("value", DbValue::F64(self.value)),
+            ("tenant_id", DbValue::I32(self.tenant_id)),
+        ])
     }
 }
 

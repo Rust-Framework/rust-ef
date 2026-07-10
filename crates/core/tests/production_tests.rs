@@ -6,6 +6,7 @@ mod production_tests {
     use rust_ef::entity::{
         IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
     };
+    use rust_ef::entity_snapshot::EntitySnapshot;
     use rust_ef::error::EFError;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
@@ -122,20 +123,18 @@ mod production_tests {
     }
 
     impl IGetKeyValues for VersionedItem {
-        fn key_values(&self) -> HashMap<String, DbValue> {
-            let mut m = HashMap::new();
-            m.insert("id".into(), DbValue::I32(self.id));
-            m
+        fn key_values(&self) -> EntitySnapshot {
+            EntitySnapshot::new(vec![("id", DbValue::I32(self.id))])
         }
     }
 
     impl IEntitySnapshot for VersionedItem {
-        fn snapshot(&self) -> HashMap<String, DbValue> {
-            let mut m = HashMap::new();
-            m.insert("id".into(), DbValue::I32(self.id));
-            m.insert("name".into(), DbValue::String(self.name.clone()));
-            m.insert("row_version".into(), DbValue::I32(self.row_version));
-            m
+        fn snapshot(&self) -> EntitySnapshot {
+            EntitySnapshot::new(vec![
+                ("id", DbValue::I32(self.id)),
+                ("name", DbValue::String(self.name.clone())),
+                ("row_version", DbValue::I32(self.row_version)),
+            ])
         }
     }
 
@@ -386,21 +385,21 @@ mod production_tests {
         }
 
         impl IGetKeyValues for UserRole {
-            fn key_values(&self) -> HashMap<String, DbValue> {
-                let mut m = HashMap::new();
-                m.insert("user_id".into(), DbValue::I32(self.user_id));
-                m.insert("role_id".into(), DbValue::I32(self.role_id));
-                m
+            fn key_values(&self) -> EntitySnapshot {
+                EntitySnapshot::new(vec![
+                    ("user_id", DbValue::I32(self.user_id)),
+                    ("role_id", DbValue::I32(self.role_id)),
+                ])
             }
         }
 
         impl IEntitySnapshot for UserRole {
-            fn snapshot(&self) -> HashMap<String, DbValue> {
-                let mut m = HashMap::new();
-                m.insert("user_id".into(), DbValue::I32(self.user_id));
-                m.insert("role_id".into(), DbValue::I32(self.role_id));
-                m.insert("label".into(), DbValue::String(self.label.clone()));
-                m
+            fn snapshot(&self) -> EntitySnapshot {
+                EntitySnapshot::new(vec![
+                    ("user_id", DbValue::I32(self.user_id)),
+                    ("role_id", DbValue::I32(self.role_id)),
+                    ("label", DbValue::String(self.label.clone())),
+                ])
             }
         }
 

@@ -8,6 +8,7 @@
 use crate::entity::{
     EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
 };
+use crate::entity_snapshot::EntitySnapshot;
 use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 use crate::query::{BoolExpr, IQueryable, QueryBuilder};
@@ -74,7 +75,7 @@ pub struct TrackedEntry<T: IEntityType> {
     pub entity: T,
     pub state: EntityState,
     /// Snapshot taken when the entity was attached (for change detection).
-    pub original: Option<HashMap<String, DbValue>>,
+    pub original: Option<EntitySnapshot>,
     /// Field names that differ from `original` (populated by `detect_changes`).
     /// Empty when `detect_changes` hasn't run or the entity was marked Modified
     /// directly via `update()`. Used by `execute_updates` to generate partial
@@ -278,8 +279,8 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
                 // change executor can generate a partial UPDATE.
                 let changed: Vec<String> = current
                     .iter()
-                    .filter(|(k, v)| original.get(k.as_str()) != Some(v))
-                    .map(|(k, _)| k.clone())
+                    .filter(|(k, v)| original.get(k) != Some(*v))
+                    .map(|(k, _)| k.to_string())
                     .collect();
                 if !changed.is_empty() {
                     entry.state = EntityState::Modified;
@@ -295,7 +296,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     pub(crate) fn tracked_by_state(
         &self,
         state: EntityState,
-    ) -> Vec<(&T, Option<&HashMap<String, DbValue>>, &[String], bool)> {
+    ) -> Vec<(&T, Option<&EntitySnapshot>, &[String], bool)> {
         self.entries
             .iter()
             .filter(|e| e.state == state)

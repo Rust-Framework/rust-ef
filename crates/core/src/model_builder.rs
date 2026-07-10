@@ -6,8 +6,8 @@
 //! the migration engine and query builder.
 
 use crate::entity::{IEntitySnapshot, IEntityType};
+use crate::entity_snapshot::EntitySnapshot;
 use crate::metadata::EntityTypeMeta;
-use crate::provider::DbValue;
 use crate::query::{BoolExpr, CompiledFilter};
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ pub(crate) struct EntityConfig {
     pub(crate) primary_key_fields: Option<Vec<String>>,
     pub(crate) property_overrides: HashMap<String, PropertyConfigOverride>,
     pub(crate) query_filter: Option<BoolExpr>,
-    pub(crate) seed_rows: Vec<HashMap<String, DbValue>>,
+    pub(crate) seed_rows: Vec<EntitySnapshot>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -292,7 +292,7 @@ impl ModelBuilder {
     }
 
     /// Returns seed rows configured via `EntityTypeBuilder::has_data`.
-    pub fn seed_rows_for(&self, type_id: &TypeId) -> &[HashMap<String, DbValue>] {
+    pub fn seed_rows_for(&self, type_id: &TypeId) -> &[EntitySnapshot] {
         self.configs
             .get(type_id)
             .map(|c| c.seed_rows.as_slice())

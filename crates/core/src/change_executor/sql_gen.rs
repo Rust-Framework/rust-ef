@@ -1,13 +1,13 @@
 //! Standalone SQL generation helpers (for use by simplified callers).
 
+use crate::entity_snapshot::EntitySnapshot;
 use crate::metadata::EntityTypeMeta;
 use crate::provider::{DbValue, IDatabaseProvider};
-use std::collections::HashMap;
 
 pub fn generate_insert_sql(
     provider: &dyn IDatabaseProvider,
     meta: &EntityTypeMeta,
-    _property_values: &HashMap<String, DbValue>,
+    _property_values: &EntitySnapshot,
 ) -> String {
     let gen = provider.sql_generator();
     let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
@@ -24,22 +24,22 @@ pub fn generate_insert_sql(
 pub fn generate_update_sql(
     provider: &dyn IDatabaseProvider,
     meta: &EntityTypeMeta,
-    property_values: &HashMap<String, DbValue>,
-    primary_key_values: &HashMap<String, DbValue>,
+    property_values: &EntitySnapshot,
+    primary_key_values: &EntitySnapshot,
 ) -> String {
     let gen = provider.sql_generator();
     let set_columns: Vec<&str> = property_values
-        .keys()
-        .filter(|k| !primary_key_values.contains_key(*k))
-        .map(|k| k.as_str())
+        .iter()
+        .map(|(k, _)| k)
+        .filter(|k| primary_key_values.get(k).is_none())
         .collect();
     if set_columns.is_empty() || primary_key_values.is_empty() {
         return String::new();
     }
     let where_parts: Vec<String> = primary_key_values
-        .keys()
+        .iter()
         .enumerate()
-        .map(|(i, k)| {
+        .map(|(i, (k, _))| {
             format!(
                 "{} = {}",
                 gen.quote_identifier(k),
@@ -57,16 +57,16 @@ pub fn generate_update_sql(
 pub fn generate_delete_sql(
     provider: &dyn IDatabaseProvider,
     meta: &EntityTypeMeta,
-    primary_key_values: &HashMap<String, DbValue>,
+    primary_key_values: &EntitySnapshot,
 ) -> String {
     let gen = provider.sql_generator();
     if primary_key_values.is_empty() {
         return String::new();
     }
     let where_parts: Vec<String> = primary_key_values
-        .keys()
+        .iter()
         .enumerate()
-        .map(|(i, k)| {
+        .map(|(i, (k, _))| {
             format!(
                 "{} = {}",
                 gen.quote_identifier(k),
@@ -79,7 +79,7 @@ pub fn generate_delete_sql(
 
 pub fn collect_insert_params(
     meta: &EntityTypeMeta,
-    property_values: &HashMap<String, DbValue>,
+    property_values: &EntitySnapshot,
 ) -> Vec<DbValue> {
     meta.mapped_scalar_properties()
         .map(|p| {
@@ -92,21 +92,26 @@ pub fn collect_insert_params(
 }
 
 pub fn collect_update_params(
-    property_values: &HashMap<String, DbValue>,
-    primary_key_values: &HashMap<String, DbValue>,
+    property_values: &EntitySnapshot,
+    primary_key_values: &EntitySnapshot,
     set_keys: &[String],
 ) -> Vec<DbValue> {
     let mut params: Vec<DbValue> = set_keys
         .iter()
-        .filter(|k| !primary_key_values.contains_key(*k))
-        .map(|k| property_values.get(k).cloned().unwrap_or(DbValue::Null))
+        .filter(|k| primary_key_values.get(k.as_str()).is_none())
+        .map(|k| {
+            property_values
+                .get(k.as_str())
+                .cloned()
+                .unwrap_or(DbValue::Null)
+        })
         .collect();
-    for v in primary_key_values.values() {
+    for (_, v) in primary_key_values.iter() {
         params.push(v.clone());
     }
     params
 }
 
-pub fn collect_delete_params(primary_key_values: &HashMap<String, DbValue>) -> Vec<DbValue> {
-    primary_key_values.values().cloned().collect()
+pub fn collect_delete_params(primary_key_values: &EntitySnapshot) -> Vec<DbValue> {
+    primary_key_values.iter().map(|(_, v)| v.clone()).collect()
 }
