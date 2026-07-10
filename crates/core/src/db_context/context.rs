@@ -322,14 +322,9 @@ impl DbContext {
         conn.begin_transaction().await?;
         self.ambient_transaction = Some(Box::new(DbTransaction::new(conn)));
         let result = f(self).await;
-        let txn = self
-            .ambient_transaction
-            .take()
-            .ok_or_else(|| {
-                EFError::transaction(
-                    "ambient_transaction was consumed during use_transaction closure",
-                )
-            })?;
+        let txn = self.ambient_transaction.take().ok_or_else(|| {
+            EFError::transaction("ambient_transaction was consumed during use_transaction closure")
+        })?;
         match result {
             Ok(r) => {
                 txn.commit().await?;

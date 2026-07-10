@@ -62,15 +62,12 @@ impl super::DbContext {
                         child.child_type_id
                     ))
                 })?;
-                let child_set = self
-                    .sets
-                    .get_mut(&child.child_type_id)
-                    .ok_or_else(|| {
-                        EFError::configuration(format!(
-                            "DbSet not found for registered saver type {:?}",
-                            child.child_type_id
-                        ))
-                    })?;
+                let child_set = self.sets.get_mut(&child.child_type_id).ok_or_else(|| {
+                    EFError::configuration(format!(
+                        "DbSet not found for registered saver type {:?}",
+                        child.child_type_id
+                    ))
+                })?;
                 if let Some(child_idx) =
                     child_saver.add_cascade_child(child_set.as_mut(), child.child)
                 {
@@ -142,15 +139,12 @@ impl super::DbContext {
                         child.child_type_id
                     ))
                 })?;
-                let child_set = self
-                    .sets
-                    .get_mut(&child.child_type_id)
-                    .ok_or_else(|| {
-                        EFError::configuration(format!(
-                            "DbSet not found for registered saver type {:?}",
-                            child.child_type_id
-                        ))
-                    })?;
+                let child_set = self.sets.get_mut(&child.child_type_id).ok_or_else(|| {
+                    EFError::configuration(format!(
+                        "DbSet not found for registered saver type {:?}",
+                        child.child_type_id
+                    ))
+                })?;
                 child_saver.add_cascade_deleted_child(child_set.as_mut(), child.child);
             }
         }

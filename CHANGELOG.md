@@ -9,6 +9,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.6.0] — 2026-07-10 — 内部清理迭代（大文件拆分 + mod.rs 合规 + panic 收敛 + EFErrorCode）
+
+### Summary
+
+v1.6.0 是内部清理迭代，无新功能开发，外部 API 保持不变。涵盖 6 个迭代周期：
+大文件拆分（core + macros + tests）、mod.rs 合规性修复、生产代码 panic 路径收敛、
+EFErrorCode 错误码体系、MetadataCache 读锁优化、dead_code 清理。所有 `.rs` 文件
+≤500 行，所有 `mod.rs` 仅含 `mod` 声明与 `pub use` 重导出。
+
+### Added
+
+- **EFErrorCode 错误码体系**（`crates/core/src/error.rs`）：新增 `EFErrorCode` 枚举
+  （15 变体）和 `EFError::code()` 方法，支持程序化错误分类。按变体 + 消息模式匹配
+  子类区分（如 `Connection` → `ConnectionRefused` / `ConnectionTimeout`）。已导出
+  至 `prelude`。
+
+### Changed
+
+- **MetadataCache Mutex → RwLock**（`crates/core/src/metadata_cache.rs`）：读多写少
+  场景从 `Mutex<HashMap>` 改为 `RwLock<HashMap>`。`get_or_build` 采用 double-check
+  模式：`read()` 快速路径查缓存，miss 时降级 `write()` 构建 + 插入。Poison 恢复保留。
+
+- **生产代码 panic 收敛**：生产代码 panic 从 57 处收敛至 11 处（目标 ≤20）。涉及
+  `save_pipeline.rs`（30→0）、`save_phases.rs`（8→0）、`set_ops.rs`（4→0）、
+  `transaction.rs`（3→1）、`context.rs`（2→1）、`navigation_loader.rs`（1→0）。
+  剩余 11 处均为 API 受限方法（返回 `Self` / `String` / `&mut T`，无法改为 `Result`）。
+
+- **dead_code 清理**：9 处 `#[allow(dead_code)]` 全部添加 `reason` 说明。
+  - `macros/linq/ast.rs`（1 处）：`CrossJoin.param` 为未来 select-binding 保留
+  - `core/tests/fk_on_delete_tests.rs`（8 处）：测试实体结构体为 `#[derive(EntityType)]`
+    元数据生成存在，字段不在测试中实例化
+
+### Internal Refactoring — 大文件拆分
+
+**迭代 2（P0）**：删除 `migration.rs`（1569 行，已拆分为 `migration/` 目录）；
+`db_context/mod.rs` 和 `tests/common/mod.rs` 合规性修复（业务代码提取到子文件）。
+
+**迭代 3（P0）**：core crate 大文件拆分：
+- `query/builder.rs`（1219 行）→ `query/builder/` 目录（6 文件）
+- `provider.rs`（731 行）→ `provider/` 目录（3 文件）
+- `change_executor.rs`（728 行）→ `change_executor/` 目录（3 文件）
+- `query/ast.rs`（518 行）→ 降至 500 行以内
+
+**迭代 4（P1）**：macros crate 大文件拆分：
+- `macros/entity.rs`（979 行）→ `entity/` 目录（4 文件）
+- `macros/linq/parse.rs`（963 行）→ `linq/parse/` 目录（3 文件）
+- `macros/linq/compile.rs`（798 行）→ `linq/compile/` 目录（4 文件）
+
+**迭代 5（P1）**：测试文件拆分：
+- `cascade_save_tests.rs`（772 行）→ 4 文件 + `common/cascade_fixtures.rs`
+- `navigation_perf_tests.rs`（742 行）→ 2 文件
+- `having_pagination_dialect_tests.rs`（606 行）→ 2 文件 + `common/mock_generators.rs`
+
+### Compliance
+
+- 所有 `.rs` 文件 ≤500 行（验证通过）
+- 所有 `mod.rs` ≤50 行且仅含 `mod` 声明与 `pub use` 重导出（12 文件全部合规）
+- `cargo check --workspace --all-features` 通过
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` 零警告
+- `cargo fmt --all --check` 通过
+- `cargo test --workspace --all-features` 全量通过
+
+---
+
 ## [1.5.3] — 2026-07-09 — 阻断性修复 + 死代码清理 + CI 加固
 
 ### Fixed
@@ -130,7 +194,10 @@ ALTER TABLE posts ADD CONSTRAINT fk_posts_blog_id_blogs
 
 ---
 
-## [1.6.0] — 2026-07-09 — Production Hardening（4 P0 + 12 P1）
+## [1.6.0-aborted] — 2026-07-09 — Production Hardening（4 P0 + 12 P1）
+
+> **注**：此版本曾作为 git tag 标记但未发布到 crates.io，其全部改动已合并到 v1.5.2 中。
+> v1.6.0 版本号于 2026-07-10 重新用于内部清理迭代发布（见上方 `[1.6.0]` 条目）。
 
 ### Summary
 

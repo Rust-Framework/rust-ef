@@ -63,7 +63,7 @@ pub mod prelude {
         EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, ILazyInit,
         INavigationSetter,
     };
-    pub use crate::error::{EFError, EFResult};
+    pub use crate::error::{EFError, EFErrorCode, EFResult};
     pub use crate::interceptor::{
         ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext,
     };

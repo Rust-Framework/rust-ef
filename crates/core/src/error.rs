@@ -62,6 +62,32 @@ pub enum EFError {
     Other(String, #[source] Option<BoxError>),
 }
 
+/// Stable, programmatic error code for `EFError` classification.
+///
+/// Unlike the `EFError` enum (which may gain variants over time), `EFErrorCode`
+/// is a stable, `Copy` taxonomy that callers can match on for retry logic,
+/// metrics, or user-facing routing. Sub-categories (e.g. `ConnectionTimeout`
+/// vs `ConnectionRefused`) are derived from message patterns within each
+/// `EFError` variant — see [`EFError::code`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EFErrorCode {
+    ConnectionRefused,
+    ConnectionTimeout,
+    QuerySyntax,
+    QueryTimeout,
+    EntityNotFound,
+    ModelValidation,
+    MigrationConflict,
+    ProviderUnsupported,
+    ConfigurationInvalid,
+    ChangeTrackingCorrupted,
+    TransactionAborted,
+    TransactionDeadlock,
+    ConcurrencyConflict,
+    TypeConversionFailed,
+    Unknown,
+}
+
 impl EFError {
     pub fn connection(msg: impl Into<String>) -> Self {
         EFError::Connection(msg.into(), None)
@@ -144,6 +170,48 @@ impl EFError {
             EFError::ConcurrencyConflict(m, _) => m,
             EFError::TypeConversion(m, _) => m,
             EFError::Other(m, _) => m,
+        }
+    }
+
+    /// Returns a stable [`EFErrorCode`] for programmatic dispatch.
+    ///
+    /// Sub-categories within a variant are detected via case-insensitive
+    /// message patterns (e.g. `"timeout"` → `ConnectionTimeout`). Messages
+    /// are stable internal strings produced by rust-ef's own call sites;
+    /// user-supplied messages from [`EFError::other`] fall back to `Unknown`.
+    pub fn code(&self) -> EFErrorCode {
+        let msg = self.message().to_ascii_lowercase();
+        match self {
+            EFError::Connection(_, _) => {
+                if msg.contains("timeout") {
+                    EFErrorCode::ConnectionTimeout
+                } else {
+                    EFErrorCode::ConnectionRefused
+                }
+            }
+            EFError::Query(_, _) => {
+                if msg.contains("timeout") {
+                    EFErrorCode::QueryTimeout
+                } else {
+                    EFErrorCode::QuerySyntax
+                }
+            }
+            EFError::NotFound(_, _) => EFErrorCode::EntityNotFound,
+            EFError::ModelValidation(_, _) => EFErrorCode::ModelValidation,
+            EFError::Migration(_, _) => EFErrorCode::MigrationConflict,
+            EFError::Provider(_, _) => EFErrorCode::ProviderUnsupported,
+            EFError::Configuration(_, _) => EFErrorCode::ConfigurationInvalid,
+            EFError::ChangeTracking(_, _) => EFErrorCode::ChangeTrackingCorrupted,
+            EFError::Transaction(_, _) => {
+                if msg.contains("deadlock") {
+                    EFErrorCode::TransactionDeadlock
+                } else {
+                    EFErrorCode::TransactionAborted
+                }
+            }
+            EFError::ConcurrencyConflict(_, _) => EFErrorCode::ConcurrencyConflict,
+            EFError::TypeConversion(_, _) => EFErrorCode::TypeConversionFailed,
+            EFError::Other(_, _) => EFErrorCode::Unknown,
         }
     }
 }

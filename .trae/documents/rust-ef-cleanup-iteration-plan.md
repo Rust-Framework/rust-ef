@@ -288,12 +288,12 @@ impl EFError {
 扫描所有 `mod.rs`，确认仅含 `mod` 声明和 `pub use` 重导出。含业务代码的重构到子文件。
 
 **迭代 6 验证检查点**：
-- [ ] 生产代码 panic ≤20
-- [ ] `EFErrorCode` 可通过 `error.code()` 获取
-- [ ] `MetadataCache` 使用 `RwLock`
-- [ ] 所有 `#[allow(dead_code)]` 有明确理由或已删除
-- [ ] 所有 `mod.rs` 仅含声明和重导出
-- [ ] 全量测试通过
+- [x] 生产代码 panic ≤20（剩余 11 处均为 API 受限方法，返回 Self/String/&mut T）
+- [x] `EFErrorCode` 可通过 `error.code()` 获取
+- [x] `MetadataCache` 使用 `RwLock`
+- [x] 所有 `#[allow(dead_code)]` 有明确理由或已删除
+- [x] 所有 `mod.rs` 仅含声明和重导出
+- [x] 全量测试通过
 
 ---
 
@@ -315,10 +315,10 @@ impl EFError {
 6. git commit + tag `v1.6.0` + push
 
 **迭代 7 验证检查点**：
-- [ ] CHANGELOG.md 含 v1.6.0 条目
-- [ ] 所有 crate 版本一致（1.6.0）
-- [ ] `cargo publish --dry-run` 全部成功
-- [ ] git tag v1.6.0 已推送
+- [x] CHANGELOG.md 含 v1.6.0 条目
+- [x] 所有 crate 版本一致（1.6.0）
+- [x] `cargo publish --dry-run` 成功（macros + core）
+- [ ] git tag v1.6.0 已推送（待用户确认）
 
 ---
 

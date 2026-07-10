@@ -106,7 +106,10 @@ pub(crate) enum LinqClause {
     },
     /// `cross_join b: T2` — no ON condition
     CrossJoin {
-        #[allow(dead_code)]
+        #[allow(
+            dead_code,
+            reason = "parsed from syntax for future select-binding support; cross_join_internal currently only needs the table name"
+        )]
         param: Ident,
         entity: Type,
     },

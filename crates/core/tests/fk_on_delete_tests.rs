@@ -20,7 +20,10 @@ use rust_ef::prelude::*;
 /// Principal with required FK (i32) → default CASCADE
 #[derive(Debug, Clone, EntityType)]
 #[table("fk_cascade_blogs")]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "struct exists for #[derive(EntityType)]-generated entity_meta(); fields are never instantiated in tests"
+)]
 struct FkCascadeBlog {
     #[primary_key]
     #[auto_increment]
@@ -31,7 +34,10 @@ struct FkCascadeBlog {
 
 #[derive(Debug, Clone, EntityType)]
 #[table("fk_cascade_posts")]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "struct exists for #[derive(EntityType)]-generated entity_meta(); fields are never instantiated in tests"
+)]
 struct FkCascadePost {
     #[primary_key]
     #[auto_increment]
@@ -45,7 +51,10 @@ struct FkCascadePost {
 /// Principal with optional FK (Option<i32>) → default RESTRICT
 #[derive(Debug, Clone, EntityType)]
 #[table("fk_optional_blogs")]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "struct exists for #[derive(EntityType)]-generated entity_meta(); fields are never instantiated in tests"
+)]
 struct FkOptionalBlog {
     #[primary_key]
     #[auto_increment]
@@ -56,7 +65,10 @@ struct FkOptionalBlog {
 
 #[derive(Debug, Clone, EntityType)]
 #[table("fk_optional_posts")]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "struct exists for #[derive(EntityType)]-generated entity_meta(); fields are never instantiated in tests"
+)]
 struct FkOptionalPost {
     #[primary_key]
     #[auto_increment]
@@ -70,7 +82,10 @@ struct FkOptionalPost {
 /// Principal with explicit #[on_delete(SetNull)] → SET NULL
 #[derive(Debug, Clone, EntityType)]
 #[table("fk_setnull_blogs")]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "struct exists for #[derive(EntityType)]-generated entity_meta(); fields are never instantiated in tests"
+)]
 struct FkSetNullBlog {
     #[primary_key]
     #[auto_increment]
@@ -82,7 +97,10 @@ struct FkSetNullBlog {
 
 #[derive(Debug, Clone, EntityType)]
 #[table("fk_setnull_posts")]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "struct exists for #[derive(EntityType)]-generated entity_meta(); fields are never instantiated in tests"
+)]
 struct FkSetNullPost {
     #[primary_key]
     #[auto_increment]
@@ -96,7 +114,10 @@ struct FkSetNullPost {
 /// Principal with explicit #[on_delete(NoAction)] → NO ACTION
 #[derive(Debug, Clone, EntityType)]
 #[table("fk_noaction_blogs")]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "struct exists for #[derive(EntityType)]-generated entity_meta(); fields are never instantiated in tests"
+)]
 struct FkNoActionBlog {
     #[primary_key]
     #[auto_increment]
@@ -108,7 +129,10 @@ struct FkNoActionBlog {
 
 #[derive(Debug, Clone, EntityType)]
 #[table("fk_noaction_posts")]
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "struct exists for #[derive(EntityType)]-generated entity_meta(); fields are never instantiated in tests"
+)]
 struct FkNoActionPost {
     #[primary_key]
     #[auto_increment]

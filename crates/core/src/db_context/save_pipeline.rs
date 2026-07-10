@@ -196,8 +196,7 @@ impl super::DbContext {
                     if let Some(fk_col) = fk_col {
                         for &child_idx in &link.child_entry_indices {
                             let child_pk = {
-                                let Some(child_saver) = self.savers.get(&link.child_type_id)
-                                else {
+                                let Some(child_saver) = self.savers.get(&link.child_type_id) else {
                                     continue;
                                 };
                                 let Some(child_set) = self.sets.get(&link.child_type_id) else {

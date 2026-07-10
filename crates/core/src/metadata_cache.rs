@@ -19,7 +19,7 @@ use crate::model_builder::{EntityConfig, ModelBuilder};
 use crate::registration::{EntityConfigRegistration, EntityRegistration};
 use std::any::TypeId;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 /// The output of running `discover_entities()` for a given `context_key`.
 ///
@@ -42,41 +42,52 @@ pub(crate) struct BuiltMetadata {
 /// Stored on `DbContextOptions` (which is `Arc`-shared across all `DbContext`
 /// instances created from the same `add_dbcontext` registration).
 pub(crate) struct MetadataCache {
-    by_key: Mutex<HashMap<Option<String>, Arc<BuiltMetadata>>>,
+    by_key: RwLock<HashMap<Option<String>, Arc<BuiltMetadata>>>,
 }
 
 impl MetadataCache {
     pub fn new() -> Self {
         Self {
-            by_key: Mutex::new(HashMap::new()),
+            by_key: RwLock::new(HashMap::new()),
         }
     }
 
     /// Returns the `BuiltMetadata` for the given `context_key`, building it
     /// on first access.
     ///
-    /// Lock is held only during lookup/insertion. After return, the
-    /// `Arc<BuiltMetadata>` is lock-free.
+    /// Read path uses a shared `read()` guard for cache hits (the common case
+    /// after warm-up). On miss, the read guard is dropped and a `write()` guard
+    /// is acquired to build + insert, with a double-check to avoid redundant
+    /// builds when multiple threads race for the same key.
     ///
-    /// If the mutex is poisoned (a previous holder panicked), the cache is
+    /// If the lock is poisoned (a previous holder panicked), the cache is
     /// cleared and rebuilt rather than panicking. A poison indicates the
     /// prior build was interrupted, so cached entries may be incomplete.
     /// Clearing forces a fresh `build()` on the next access.
     pub fn get_or_build(&self, context_key: Option<&str>) -> Arc<BuiltMetadata> {
         let key = context_key.map(|s| s.to_string());
-        let mut cache = match self.by_key.lock() {
+
+        // Fast path: shared read lock for cache lookup. On poison, fall
+        // through to the write path which can clear + rebuild.
+        if let Ok(cache) = self.by_key.read() {
+            if let Some(built) = cache.get(&key) {
+                return Arc::clone(built);
+            }
+        }
+
+        // Slow path: exclusive write lock for build + insert.
+        let mut cache = match self.by_key.write() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                // Recover from poison: clear potentially-incomplete entries
-                // and proceed. The current request will rebuild from
-                // inventory; subsequent requests re-cache the result.
                 let mut guard = poisoned.into_inner();
                 guard.clear();
                 guard
             }
         };
-        if let Some(built) = cache.get(&key) {
-            return Arc::clone(built);
+        // Double-check: another thread may have built and inserted while we
+        // were waiting for the write lock.
+        if let Some(existing) = cache.get(&key) {
+            return Arc::clone(existing);
         }
         let built = Arc::new(Self::build(context_key));
         cache.insert(key, Arc::clone(&built));
@@ -156,16 +167,16 @@ mod tests {
         let first_entity_count = built1.entity_metas.len();
         let first_model_count = built1.model_metas.len();
 
-        // Intentionally poison the mutex by panicking while holding the lock.
-        // catch_unwind isolates the panic so the test process continues.
+        // Intentionally poison the RwLock by panicking while holding the
+        // write lock. catch_unwind isolates the panic so the test continues.
         let _ = std::panic::catch_unwind(|| {
-            let _guard = cache.by_key.lock().unwrap();
+            let _guard = cache.by_key.write().unwrap();
             panic!("intentional poison for test");
         });
 
-        // The mutex is now poisoned. get_or_build must recover (clear + rebuild)
-        // rather than panic. This is the core assertion — if the fix regresses,
-        // this call panics and the test fails.
+        // The RwLock is now poisoned. get_or_build must recover (clear +
+        // rebuild) rather than panic. This is the core assertion — if the
+        // fix regresses, this call panics and the test fails.
         let built2 = cache.get_or_build(None);
 
         // The rebuilt metadata should have the same shape as the first build
