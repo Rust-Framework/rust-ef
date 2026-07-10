@@ -48,7 +48,7 @@ async fn test_exists_by_id_true_for_existing_row() {
     ctx.set::<Widget>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<Widget>().add(Widget {
+    ctx.add::<Widget>(Widget {
         id: 0,
         name: "alpha".into(),
     });
@@ -75,7 +75,7 @@ async fn test_exists_by_id_false_for_missing_row() {
     ctx.set::<Widget>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<Widget>().add(Widget {
+    ctx.add::<Widget>(Widget {
         id: 0,
         name: "alpha".into(),
     });
@@ -133,7 +133,7 @@ async fn test_exists_by_id_uses_pk_metadata_not_hardcoded_id() {
     let mut ctx = make_ctx();
     ctx.set::<Widget>();
     ctx.ensure_created().await.unwrap();
-    ctx.set::<Widget>().add(Widget {
+    ctx.add::<Widget>(Widget {
         id: 0,
         name: "beta".into(),
     });
@@ -156,7 +156,7 @@ async fn test_exists_by_key_true_for_existing_composite() {
     ctx.set::<BlogTag>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<BlogTag>().add(BlogTag {
+    ctx.add::<BlogTag>(BlogTag {
         blog_id: 1,
         tag_id: 5,
         label: "rust".into(),
@@ -184,7 +184,7 @@ async fn test_exists_by_key_false_when_one_component_missing() {
     ctx.set::<BlogTag>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<BlogTag>().add(BlogTag {
+    ctx.add::<BlogTag>(BlogTag {
         blog_id: 1,
         tag_id: 5,
         label: "rust".into(),
@@ -237,7 +237,7 @@ async fn test_exists_by_id_consistent_with_find() {
     let mut ctx = make_ctx();
     ctx.set::<Widget>();
     ctx.ensure_created().await.unwrap();
-    ctx.set::<Widget>().add(Widget {
+    ctx.add::<Widget>(Widget {
         id: 0,
         name: "gamma".into(),
     });

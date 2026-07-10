@@ -24,7 +24,7 @@ async fn upsert_inserts_then_updates_on_conflict() {
     ctx.ensure_created().await.expect("ensure_created");
 
     // First upsert: id=1 doesn't exist → INSERT.
-    ctx.set::<TestItem>().upsert(TestItem {
+    ctx.upsert::<TestItem>(TestItem {
         id: 1,
         name: "Alpha".into(),
         value: 1.0,
@@ -40,7 +40,7 @@ async fn upsert_inserts_then_updates_on_conflict() {
     ctx.set::<TestItem>().clear_entries();
 
     // Second upsert: id=1 exists → UPDATE via ON CONFLICT.
-    ctx.set::<TestItem>().upsert(TestItem {
+    ctx.upsert::<TestItem>(TestItem {
         id: 1,
         name: "Alpha2".into(),
         value: 2.0,
@@ -69,7 +69,7 @@ async fn batch_upsert_mixed_new_and_existing() {
     ctx.ensure_created().await.expect("ensure_created");
 
     // Seed id=1 via a regular add.
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Seed".into(),
         value: 0.0,
@@ -78,17 +78,17 @@ async fn batch_upsert_mixed_new_and_existing() {
     ctx.set::<TestItem>().clear_entries();
 
     // Batch upsert: id=1 (exists → UPDATE), id=2 (new → INSERT), id=3 (new → INSERT).
-    ctx.set::<TestItem>().upsert(TestItem {
+    ctx.upsert::<TestItem>(TestItem {
         id: 1,
         name: "Updated".into(),
         value: 10.0,
     });
-    ctx.set::<TestItem>().upsert(TestItem {
+    ctx.upsert::<TestItem>(TestItem {
         id: 2,
         name: "New2".into(),
         value: 20.0,
     });
-    ctx.set::<TestItem>().upsert(TestItem {
+    ctx.upsert::<TestItem>(TestItem {
         id: 3,
         name: "New3".into(),
         value: 30.0,

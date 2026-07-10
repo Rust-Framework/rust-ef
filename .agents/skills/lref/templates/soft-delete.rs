@@ -63,7 +63,7 @@ async fn soft_delete_article(
     article.updated_id = operator_id;
 
     // detect_changes: only changed fields appear in UPDATE SQL
-    ctx.set::<Article>().detect_changes();
+    ctx.detect_changes();
     ctx.save_changes().await?;
 
     Ok(())
@@ -90,7 +90,7 @@ async fn soft_delete_by_title(
     title_pattern: &str,
 ) -> Result<usize, EFError> {
     // load_all: loads all matching rows into the tracker
-    ctx.set::<Article>().load_all().await?;
+    ctx.load_all::<Article>().await?;
 
     let mut count = 0;
     for entry in ctx.set::<Article>().tracked_entries_mut() {
@@ -101,7 +101,7 @@ async fn soft_delete_by_title(
     }
 
     if count > 0 {
-        ctx.set::<Article>().detect_changes();
+        ctx.detect_changes();
         ctx.save_changes().await?;
     }
 

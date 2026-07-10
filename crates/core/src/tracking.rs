@@ -1,21 +1,24 @@
-//! Change tracking �?entity state management, snapshots, and detection.
+//! Change tracking — entity state management, snapshots, and detection.
 //!
-//! Implements EFCore's change-tracking semantics:
-//!   - Entity states: Detached | Added | Unchanged | Modified | Deleted
-//!   - Property-level snapshots taken at tracking time
-//!   - `detect_changes()` compares current values against snapshots
-//!   - `has_changes()` quickly checks for any pending mutations
-//!   - `accept_all_changes()` resets states after successful SaveChanges
+//! `ChangeTracker` is the single authoritative source for entity state, original
+//! snapshots, and modified-property lists. `DbSet` holds only the typed entity
+//! + `entry_id`; tracking state lives here, joined by `entry_id` during save.
 
 use crate::entity::EntityState;
+use crate::entity_snapshot::EntitySnapshot;
+use std::any::TypeId;
 use std::collections::HashMap;
 
 /// Tracks changes to entities within a DbContext.
+///
+/// The single source of truth for `EntityState`, original `EntitySnapshot`,
+/// `modified_properties`, and `is_upsert` across all tracked entities.
+/// `DbSet<T>` holds the typed entity + `entry_id`; this tracker holds the
+/// tracking state, joined by `entry_id` during `save_changes`.
 #[derive(Debug)]
 pub struct ChangeTracker {
-    entries: Vec<TrackerEntry>,
+    entries: HashMap<u64, TrackerEntry>,
     auto_detect_changes: bool,
-    /// Counter for generating stable entry IDs.
     next_id: u64,
 }
 
@@ -23,46 +26,31 @@ pub struct ChangeTracker {
 #[derive(Debug, Clone)]
 pub struct EntityEntry {
     pub entry_id: u64,
-    pub type_id: std::any::TypeId,
+    pub type_id: TypeId,
     pub type_name: String,
     pub state: EntityState,
-    /// Property names that have been modified (populated after detect_changes).
     pub modified_properties: Vec<String>,
 }
 
 /// Lightweight, type-erased view of a pending entity entry used to build
-/// `SaveChangesContext` from `DbSet.entries` (the real save data source).
-///
-/// Unlike `EntityEntry`, this carries no `entry_id` / `modified_properties`
-/// (which only have meaning inside `ChangeTracker`). It exists so that
-/// interceptors receive a snapshot consistent with what `save_changes()`
-/// will actually commit, instead of the legacy (empty) `change_tracker`.
+/// `SaveChangesContext` for interceptors.
 #[derive(Debug, Clone)]
 pub struct EntityEntryView {
-    pub type_id: std::any::TypeId,
+    pub type_id: TypeId,
     pub type_name: String,
     pub state: EntityState,
 }
 
-/// Internal tracker entry storing the entity, its state, and original snapshots.
+/// Internal tracker entry — stores state, original snapshot, and modified
+/// property names for a single tracked entity.
 struct TrackerEntry {
     id: u64,
-    type_id: std::any::TypeId,
+    type_id: TypeId,
     type_name: String,
     state: EntityState,
-    /// Original property values captured when the entity was first tracked.
-    snapshot: HashMap<String, PropertySnapshot>,
-    /// Property names (field_name) that differ from the snapshot, populated
-    /// by `detect_changes_with_properties`. Empty when no detection has run
-    /// or when the entity was directly marked Modified without detection.
+    original: Option<EntitySnapshot>,
     modified_properties: Vec<String>,
-}
-
-/// A stored snapshot of a single property.
-#[derive(Debug, Clone)]
-struct PropertySnapshot {
-    /// Serialized string representation of the value at tracking time.
-    serialized: String,
+    is_upsert: bool,
 }
 
 impl std::fmt::Debug for TrackerEntry {
@@ -78,110 +66,166 @@ impl std::fmt::Debug for TrackerEntry {
 impl ChangeTracker {
     pub fn new() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: HashMap::new(),
             auto_detect_changes: true,
             next_id: 0,
         }
     }
 
-    /// Takes a snapshot of the entity's current properties and begins tracking.
-    ///
-    /// The `snapshotter` closure should return a map of property-name �?string
-    /// serialization of the property's current value.
-    pub fn track_entity_with_snapshot(
+    /// Begins tracking an entity with the given state and optional original
+    /// snapshot. Returns the assigned `entry_id` for joining with `DbSet`.
+    pub fn track(
         &mut self,
-        type_id: std::any::TypeId,
+        type_id: TypeId,
         type_name: &str,
         state: EntityState,
-        snapshot: HashMap<String, String>,
+        original: Option<EntitySnapshot>,
+        is_upsert: bool,
     ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-
-        self.entries.push(TrackerEntry {
+        self.entries.insert(
             id,
-            type_id,
-            type_name: type_name.to_string(),
-            state,
-            snapshot: snapshot
-                .into_iter()
-                .map(|(k, v)| (k, PropertySnapshot { serialized: v }))
-                .collect(),
-            modified_properties: Vec::new(),
-        });
-
+            TrackerEntry {
+                id,
+                type_id,
+                type_name: type_name.to_string(),
+                state,
+                original,
+                modified_properties: Vec::new(),
+                is_upsert,
+            },
+        );
         id
     }
 
-    /// Begins tracking an entity without taking a snapshot (used for Added entities
-    /// that have no pre-existing state).
-    pub fn track_entity(
-        &mut self,
-        type_id: std::any::TypeId,
-        type_name: &str,
-        state: EntityState,
-    ) -> u64 {
-        self.track_entity_with_snapshot(type_id, type_name, state, HashMap::new())
-    }
+    /// Compares current property snapshots against stored originals.
+    ///
+    /// For each `Unchanged` entry whose `original` exists, if the current
+    /// snapshot differs, transitions to `Modified` and records the changed
+    /// field names in `modified_properties`.
+    pub fn detect_changes(&mut self, current_snapshots: &[(u64, EntitySnapshot)]) {
+        let snap_map: HashMap<u64, &EntitySnapshot> =
+            current_snapshots.iter().map(|(id, s)| (*id, s)).collect();
 
-    /// Compares current property values (provided by the caller) against the
-    /// stored snapshots. Any property whose value differs is recorded in the
-    /// entry's `modified_properties`, and the entity transitions to
-    /// `EntityState::Modified`. When no differences are found,
-    /// `modified_properties` is cleared.
-    pub fn detect_changes_with_properties(
-        &mut self,
-        current_properties: &[(u64, HashMap<String, String>)],
-    ) {
-        // Build a lookup of current values by entry ID
-        let current_map: HashMap<u64, &HashMap<String, String>> = current_properties
-            .iter()
-            .map(|(id, props)| (*id, props))
-            .collect();
-
-        for entry in &mut self.entries {
-            // Only check Unchanged entities
+        for entry in self.entries.values_mut() {
             if entry.state != EntityState::Unchanged {
                 continue;
             }
+            let Some(original) = &entry.original else {
+                continue;
+            };
+            let Some(current) = snap_map.get(&entry.id) else {
+                continue;
+            };
 
-            if let Some(current) = current_map.get(&entry.id) {
-                let mut changed_props: Vec<String> = Vec::new();
-                for (prop_name, snapshot) in &entry.snapshot {
-                    let changed = match current.get(prop_name) {
-                        Some(current_val) => current_val != &snapshot.serialized,
-                        None => true, // Property removed = change
-                    };
+            if **current == *original {
+                entry.modified_properties.clear();
+                continue;
+            }
 
-                    if changed {
-                        changed_props.push(prop_name.clone());
-                    }
-                }
+            let changed: Vec<String> = current
+                .iter()
+                .filter(|(k, v)| original.get(k) != Some(*v))
+                .map(|(k, _)| k.to_string())
+                .collect();
 
-                if !changed_props.is_empty() {
-                    entry.state = EntityState::Modified;
-                    entry.modified_properties = changed_props;
-                } else {
-                    entry.modified_properties.clear();
+            if !changed.is_empty() {
+                entry.state = EntityState::Modified;
+                entry.modified_properties = changed;
+            }
+        }
+    }
+
+    // ── Query methods (read path for save phases) ──
+
+    pub fn entry_state(&self, entry_id: u64) -> Option<EntityState> {
+        self.entries.get(&entry_id).map(|e| e.state)
+    }
+
+    pub fn entry_original(&self, entry_id: u64) -> Option<&EntitySnapshot> {
+        self.entries
+            .get(&entry_id)
+            .and_then(|e| e.original.as_ref())
+    }
+
+    pub fn entry_modified(&self, entry_id: u64) -> Option<&[String]> {
+        self.entries
+            .get(&entry_id)
+            .map(|e| e.modified_properties.as_slice())
+    }
+
+    pub fn entry_is_upsert(&self, entry_id: u64) -> bool {
+        self.entries.get(&entry_id).is_some_and(|e| e.is_upsert)
+    }
+
+    // ── Mutation methods ──
+
+    pub fn set_state(&mut self, entry_id: u64, state: EntityState) {
+        if let Some(entry) = self.entries.get_mut(&entry_id) {
+            entry.state = state;
+        }
+    }
+
+    pub fn set_modified(&mut self, entry_id: u64, modified: Vec<String>) {
+        if let Some(entry) = self.entries.get_mut(&entry_id) {
+            entry.modified_properties = modified;
+        }
+    }
+
+    /// After successful SaveChanges:
+    /// - Deleted entries are removed
+    /// - Added/Modified → Unchanged (original refreshed to current snapshot)
+    /// - `modified_properties` cleared
+    ///
+    /// `current_snapshots` provides the post-save entity snapshots (with
+    /// backfilled auto-increment PKs) to become the new `original`.
+    pub fn accept_all_changes(&mut self, current_snapshots: &[(u64, EntitySnapshot)]) {
+        let snap_map: HashMap<u64, &EntitySnapshot> =
+            current_snapshots.iter().map(|(id, s)| (*id, s)).collect();
+
+        self.entries.retain(|_, e| e.state != EntityState::Deleted);
+
+        for (id, entry) in &mut self.entries {
+            if entry.state == EntityState::Added || entry.state == EntityState::Modified {
+                entry.state = EntityState::Unchanged;
+                entry.modified_properties.clear();
+                if let Some(snap) = snap_map.get(id) {
+                    entry.original = Some((*snap).clone());
                 }
             }
         }
     }
 
-    /// Marks the property snapshot for the given entry as updated.
-    /// Used after a successful SaveChanges to update the "original" values.
-    pub fn update_snapshot(&mut self, entry_id: u64, properties: HashMap<String, String>) {
-        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == entry_id) {
-            entry.snapshot = properties
-                .into_iter()
-                .map(|(k, v)| (k, PropertySnapshot { serialized: v }))
-                .collect();
+    /// Reverts all pending changes:
+    /// - Added entries are removed
+    /// - Modified/Deleted → Unchanged (original stays as-is)
+    /// - `modified_properties` cleared
+    pub fn reject_all_changes(&mut self) {
+        self.entries.retain(|_, e| e.state != EntityState::Added);
+        for entry in self.entries.values_mut() {
+            if entry.state == EntityState::Modified || entry.state == EntityState::Deleted {
+                entry.state = EntityState::Unchanged;
+                entry.modified_properties.clear();
+            }
         }
     }
 
-    /// Returns whether any tracked entity has changes pending.
+    /// Detaches a specific entry by ID.
+    pub fn detach(&mut self, entry_id: u64) {
+        self.entries.remove(&entry_id);
+    }
+
+    /// Removes all tracked entries of the given type. Used by `load_all` to
+    /// clear stale tracking state before re-attaching fresh entities.
+    pub fn clear_by_type(&mut self, type_id: TypeId) {
+        self.entries.retain(|_, e| e.type_id != type_id);
+    }
+
+    // ── Aggregate queries ──
+
     pub fn has_changes(&self) -> bool {
-        self.entries.iter().any(|e| {
+        self.entries.values().any(|e| {
             matches!(
                 e.state,
                 EntityState::Added | EntityState::Modified | EntityState::Deleted
@@ -189,15 +233,13 @@ impl ChangeTracker {
         })
     }
 
-    /// Clears all tracked entities.
     pub fn clear(&mut self) {
         self.entries.clear();
     }
 
-    /// Returns an iterator over tracked entry views.
     pub fn entries(&self) -> Vec<EntityEntry> {
         self.entries
-            .iter()
+            .values()
             .map(|e| EntityEntry {
                 entry_id: e.id,
                 type_id: e.type_id,
@@ -208,47 +250,35 @@ impl ChangeTracker {
             .collect()
     }
 
-    /// Returns count of entities in a given state.
     pub fn count_by_state(&self, state: EntityState) -> usize {
-        self.entries.iter().filter(|e| e.state == state).count()
+        self.entries.values().filter(|e| e.state == state).count()
     }
 
-    /// Returns entities grouped by their state.
     pub fn entries_by_state(&self, state: EntityState) -> Vec<EntityEntry> {
-        self.entries()
-            .into_iter()
+        self.entries
+            .values()
             .filter(|e| e.state == state)
+            .map(|e| EntityEntry {
+                entry_id: e.id,
+                type_id: e.type_id,
+                type_name: e.type_name.clone(),
+                state: e.state,
+                modified_properties: e.modified_properties.clone(),
+            })
             .collect()
     }
 
-    /// After successful SaveChanges:
-    /// - Added �?Unchanged (save snapshot)
-    /// - Modified �?Unchanged (save current as new snapshot)
-    /// - Deleted �?Detached (removed from tracker)
-    pub fn accept_all_changes(&mut self) {
-        self.entries.retain(|e| e.state != EntityState::Deleted);
-        for entry in &mut self.entries {
-            if entry.state == EntityState::Added || entry.state == EntityState::Modified {
-                entry.state = EntityState::Unchanged;
-                entry.modified_properties.clear();
-            }
-        }
-    }
-
-    /// Reverts all pending changes (detached state reverted).
-    pub fn reject_all_changes(&mut self) {
-        self.entries.retain(|e| e.state != EntityState::Added);
-        for entry in &mut self.entries {
-            if entry.state == EntityState::Modified || entry.state == EntityState::Deleted {
-                entry.state = EntityState::Unchanged;
-                entry.modified_properties.clear();
-            }
-        }
-    }
-
-    /// Detaches a specific entry by ID.
-    pub fn detach(&mut self, entry_id: u64) {
-        self.entries.retain(|e| e.id != entry_id);
+    /// Returns `(type_id, type_name, state)` views for all tracked entries,
+    /// used to build `SaveChangesContext` for interceptors.
+    pub fn entry_views(&self) -> Vec<EntityEntryView> {
+        self.entries
+            .values()
+            .map(|e| EntityEntryView {
+                type_id: e.type_id,
+                type_name: e.type_name.clone(),
+                state: e.state,
+            })
+            .collect()
     }
 
     pub fn is_auto_detect_changes_enabled(&self) -> bool {
@@ -266,23 +296,120 @@ impl Default for ChangeTracker {
     }
 }
 
-// ---------------------------------------------------------------------------
-// TrackedEntity �?generic container for tracked entities
-// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::DbValue;
 
-#[derive(Debug)]
-pub struct TrackedEntity<T> {
-    pub entity: T,
-    pub entry_id: u64,
-    pub state: EntityState,
-}
+    #[test]
+    fn track_assigns_sequential_ids() {
+        let mut tracker = ChangeTracker::new();
+        let id1 = tracker.track(TypeId::of::<u32>(), "u32", EntityState::Added, None, false);
+        let id2 = tracker.track(TypeId::of::<u32>(), "u32", EntityState::Added, None, false);
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+        assert_eq!(tracker.count_by_state(EntityState::Added), 2);
+    }
 
-impl<T> TrackedEntity<T> {
-    pub fn new(entity: T, entry_id: u64, state: EntityState) -> Self {
-        Self {
-            entity,
-            entry_id,
-            state,
-        }
+    #[test]
+    fn entry_queries_return_tracked_data() {
+        let mut tracker = ChangeTracker::new();
+        let snap = EntitySnapshot::new(vec![("id", DbValue::I32(42))]);
+        let id = tracker.track(
+            TypeId::of::<u32>(),
+            "u32",
+            EntityState::Unchanged,
+            Some(snap),
+            false,
+        );
+        assert_eq!(tracker.entry_state(id), Some(EntityState::Unchanged));
+        assert!(tracker.entry_original(id).is_some());
+        assert_eq!(tracker.entry_modified(id), Some(&[][..]));
+        assert!(!tracker.entry_is_upsert(id));
+    }
+
+    #[test]
+    fn detect_changes_marks_modified() {
+        let mut tracker = ChangeTracker::new();
+        let original = EntitySnapshot::new(vec![
+            ("id", DbValue::I32(1)),
+            ("name", DbValue::String("old".into())),
+        ]);
+        let id = tracker.track(
+            TypeId::of::<u32>(),
+            "u32",
+            EntityState::Unchanged,
+            Some(original),
+            false,
+        );
+        let current = EntitySnapshot::new(vec![
+            ("id", DbValue::I32(1)),
+            ("name", DbValue::String("new".into())),
+        ]);
+        tracker.detect_changes(&[(id, current)]);
+        assert_eq!(tracker.entry_state(id), Some(EntityState::Modified));
+        let modified = tracker.entry_modified(id).unwrap();
+        assert_eq!(modified, &["name".to_string()]);
+    }
+
+    #[test]
+    fn detect_changes_noop_when_unchanged() {
+        let mut tracker = ChangeTracker::new();
+        let snap = EntitySnapshot::new(vec![("id", DbValue::I32(1))]);
+        let id = tracker.track(
+            TypeId::of::<u32>(),
+            "u32",
+            EntityState::Unchanged,
+            Some(snap.clone()),
+            false,
+        );
+        tracker.detect_changes(&[(id, snap)]);
+        assert_eq!(tracker.entry_state(id), Some(EntityState::Unchanged));
+    }
+
+    #[test]
+    fn accept_all_changes_transitions_and_updates_original() {
+        let mut tracker = ChangeTracker::new();
+        let id = tracker.track(TypeId::of::<u32>(), "u32", EntityState::Added, None, false);
+        let current = EntitySnapshot::new(vec![("id", DbValue::I32(10))]);
+        tracker.accept_all_changes(&[(id, current)]);
+        assert_eq!(tracker.entry_state(id), Some(EntityState::Unchanged));
+        assert!(tracker.entry_original(id).is_some());
+    }
+
+    #[test]
+    fn accept_all_changes_removes_deleted() {
+        let mut tracker = ChangeTracker::new();
+        let id = tracker.track(
+            TypeId::of::<u32>(),
+            "u32",
+            EntityState::Deleted,
+            None,
+            false,
+        );
+        tracker.accept_all_changes(&[]);
+        assert_eq!(tracker.entry_state(id), None);
+    }
+
+    #[test]
+    fn reject_all_changes_reverts_modified() {
+        let mut tracker = ChangeTracker::new();
+        let id = tracker.track(
+            TypeId::of::<u32>(),
+            "u32",
+            EntityState::Modified,
+            Some(EntitySnapshot::new(vec![("id", DbValue::I32(1))])),
+            false,
+        );
+        tracker.reject_all_changes();
+        assert_eq!(tracker.entry_state(id), Some(EntityState::Unchanged));
+    }
+
+    #[test]
+    fn reject_all_changes_removes_added() {
+        let mut tracker = ChangeTracker::new();
+        let id = tracker.track(TypeId::of::<u32>(), "u32", EntityState::Added, None, false);
+        tracker.reject_all_changes();
+        assert_eq!(tracker.entry_state(id), None);
     }
 }

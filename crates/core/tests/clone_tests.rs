@@ -35,7 +35,7 @@ async fn seed() -> DbContext {
     ctx.set::<CloneItem>();
     ctx.ensure_created().await.unwrap();
     for i in 0..5 {
-        ctx.set::<CloneItem>().add(CloneItem {
+        ctx.add::<CloneItem>(CloneItem {
             id: 0,
             name: format!("i{}", i),
             value: (i + 1) * 10,

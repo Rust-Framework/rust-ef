@@ -54,7 +54,7 @@ impl CreateWidgetHandler {
             id: 0,
             name: name.to_string(),
         };
-        self.ctx.set::<Widget>().add(widget);
+        self.ctx.add::<Widget>(widget);
         self.ctx.save_changes().await?;
         Ok(())
     }

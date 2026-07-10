@@ -25,17 +25,17 @@ async fn sql_query_maps_rows_to_entities() {
     ctx.ensure_created().await.expect("ensure_created");
 
     // Seed three rows.
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Alpha".into(),
         value: 1.0,
     });
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Bravo".into(),
         value: 2.0,
     });
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Charlie".into(),
         value: 3.0,
@@ -62,7 +62,7 @@ async fn sql_query_returns_empty_on_no_match() {
     ctx.set::<TestItem>();
     ctx.ensure_created().await.expect("ensure_created");
 
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Alpha".into(),
         value: 1.0,

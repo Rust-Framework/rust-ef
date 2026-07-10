@@ -46,7 +46,7 @@ async fn seed(ctx: &mut DbContext) {
     ];
 
     for (name, dept, salary) in &employees {
-        ctx.set::<WinEmployee>().add(WinEmployee {
+        ctx.add::<WinEmployee>(WinEmployee {
             emp_id: 0,
             name: (*name).into(),
             dept: (*dept).into(),

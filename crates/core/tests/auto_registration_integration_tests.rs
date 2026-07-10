@@ -99,11 +99,11 @@ async fn test_backward_compat_set_without_discover() {
 
     ctx.ensure_created().await.expect("ensure_created");
 
-    ctx.set::<DiscSimple>().add(DiscSimple {
+    ctx.add::<DiscSimple>(DiscSimple {
         id: 0,
         name: "alpha".into(),
     });
-    ctx.set::<DiscOther>().add(DiscOther { id: 0, value: 42 });
+    ctx.add::<DiscOther>(DiscOther { id: 0, value: 42 });
     ctx.save_changes().await.expect("save_changes");
 
     let simples = ctx

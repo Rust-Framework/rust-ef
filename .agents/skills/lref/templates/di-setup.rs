@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //   #[async_trait]
 //   impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
 //       async fn handle(&mut self, req: MyRequest) -> Result<MyResponse> {
-//           self.ctx.set::<Entity>().add(entity);
+//           self.ctx.add::<Entity>(entity);
 //           self.ctx.save_changes().await?;
 //           // ...
 //       }

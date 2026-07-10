@@ -31,19 +31,19 @@ async fn seed() -> DbContext {
     let mut ctx = make_ctx();
     ctx.set::<ProjItem>();
     ctx.ensure_created().await.unwrap();
-    ctx.set::<ProjItem>().add(ProjItem {
+    ctx.add::<ProjItem>(ProjItem {
         id: 0,
         name: "alpha".into(),
         value: 100,
         active: true,
     });
-    ctx.set::<ProjItem>().add(ProjItem {
+    ctx.add::<ProjItem>(ProjItem {
         id: 0,
         name: "beta".into(),
         value: 200,
         active: false,
     });
-    ctx.set::<ProjItem>().add(ProjItem {
+    ctx.add::<ProjItem>(ProjItem {
         id: 0,
         name: "gamma".into(),
         value: 300,

@@ -35,14 +35,14 @@ Handler 推荐使用 `get_owned()` 获取 owned `DbContext`，bare `T` 字段必
 `save_changes()` 后自增 ID 已填充到实体上，无需额外查询。
 ```rust
 // ❌ 错误：不必要的数据库往返
-ctx.set::<Blog>().add(blog);
+ctx.add::<Blog>(blog);
 ctx.save_changes().await?;
 let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q)
     .first_or_default().await?;
 let id = saved.unwrap().id;
 
 // ✅ 正确：直接用实体上的 id
-ctx.set::<Blog>().add(blog);
+ctx.add::<Blog>(blog);
 ctx.save_changes().await?;
 let id = blog.id; // 已自动填充！
 ```
@@ -57,7 +57,7 @@ let created = linq!(ctx.set::<Comment>(), |c: Comment|
 let last = created.into_iter().max_by_key(|c| c.id).unwrap();
 
 // ✅ 正确：直接用实体上的 id
-ctx.set::<Comment>().add(comment);
+ctx.add::<Comment>(comment);
 ctx.save_changes().await?;
 let id = comment.id; // 已自动填充
 ```
@@ -97,13 +97,13 @@ ctx.model().entity::<User>()
 
 ```rust
 // ❌ 不够精确：update() 标记整个实体为 Modified
-ctx.set::<Blog>().update(blog);
+ctx.update::<Blog>(blog);
 ctx.save_changes().await?;
 
 // ✅ 更好：detect_changes() 仅标记实际变更的字段
 blog.is_deleted = true;
 blog.updated_at = now;
-ctx.set::<Blog>().detect_changes();
+ctx.detect_changes();
 ctx.save_changes().await?;
 ```
 
@@ -119,7 +119,7 @@ blog.rating = 99;
 ctx.save_changes().await?;  // 没有任何 UPDATE！
 
 // ✅ 正确：显式标记修改
-ctx.set::<Blog>().detect_changes();  // 或 update(blog)
+ctx.detect_changes();  // 或 update(blog)
 ctx.save_changes().await?;
 ```
 
@@ -140,13 +140,13 @@ let expr = linq!(|b: Blog| b.rating > 5);
 ```rust
 // ❌ 性能极差，每次循环都开事务
 for blog in blogs {
-    ctx.set::<Blog>().add(blog);
+    ctx.add::<Blog>(blog);
     ctx.save_changes().await?;
 }
 
 // ✅ 正确：一次事务提交全部
 for blog in blogs {
-    ctx.set::<Blog>().add(blog);
+    ctx.add::<Blog>(blog);
 }
 ctx.save_changes().await?;
 ```

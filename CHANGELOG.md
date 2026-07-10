@@ -9,6 +9,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.0] — 2026-07-10 — 深度性能优化迭代（ChangeTracker 架构重设计 + EntitySnapshot）
+
+### Summary
+
+v1.8.0 是深度性能优化迭代，包含两项架构级变更和一项分配瓶颈消除：
+
+1. **EntitySnapshot 类型**（迭代 1）：`snapshot()` / `key_values()` 返回类型从
+   `HashMap<String, DbValue>` 改为 `EntitySnapshot`（`Box<[(&'static str, DbValue)]>`），
+   消除每次调用的 HashMap 分配 + N 个 String 键分配。22 个调用点全部适配。
+2. **ChangeTracker 单一跟踪源**（迭代 2，**Breaking Change**）：跟踪状态从 `DbSet`
+   内联移至 `ChangeTracker`，`DbSet` 仅持有 `entity + entry_id`。变更操作入口从
+   `db_set.add()` 移至 `ctx.add::<T>()`，符合 EFCore 模式。
+3. **sql_cache 移除**（迭代 3）：移除 per-row UPDATE 中命中率 ≈ 0% 的 `sql_cache`，
+   消除每行 2 String + 1 Vec 键分配。
+
+> **迁移指南**：详见 [`docs/v1.8-migration-guide.md`](docs/v1.8-migration-guide.md)
+
+### Added
+
+- **`EntitySnapshot` 类型**（`crates/core/src/entity_snapshot.rs`）：不可变实体快照，
+  内部用 `Box<[(&'static str, DbValue)]>`，单次堆分配，字段名为编译期 `&'static str`。
+  - `get(field)` — O(n) 线性查找（典型 5-10 字段，性能影响可忽略）
+  - `iter()` / `len()` / `is_empty()` — 不可变迭代器
+  - `PartialEq` — 顺序无关比较
+  - `From<Vec<(&'static str, DbValue)>>` / `Default` / `Debug` / `Clone`
+  - 8 个单元测试覆盖构造、查找、迭代、等值比较、克隆
+
+- **`DbContext` 变更操作方法**：`add` / `attach` / `update` / `upsert` /
+  `remove_at` / `remove_all` / `load_all` — 统一在 `DbContext` 上调用，
+  内部自动注册 `ChangeTracker` 状态。
+
+- **`bench_snapshot.rs` 基准测试**：直接基准 `entity.snapshot()` 和
+  `entity.key_values()` 的分配开销（5 字段 / 10 字段实体，批量 1000 实体）。
+
+- **迁移指南**（`docs/v1.8-migration-guide.md`）：涵盖 DbContext API 变更、
+  `snapshot()` / `key_values()` 返回类型变更、手动 `IEntitySnapshot` impl 迁移、
+  正则表达式批量替换表。
+
+### Changed — 架构重设计
+
+#### 迭代 1（P1）：EntitySnapshot 类型
+
+- **`entity.rs` trait 签名变更**：`IEntitySnapshot::snapshot()` 和
+  `IGetKeyValues::key_values()` 返回类型 `HashMap<String, DbValue>` → `EntitySnapshot`
+- **宏生成代码变更**（`macros/src/entity/gen.rs`）：`HashMap::new() + insert` →
+  `EntitySnapshot::new(vec![...])`
+- **22 个调用点适配**：`db_set.rs`、`executor_dml.rs`、`executor.rs`、
+  `navigation_loader.rs`、`model_builder.rs`、`set_ops.rs` 等
+
+#### 迭代 2（P1）：ChangeTracker 单一跟踪源
+
+- **`tracking.rs` 重设计**：删除 `PropertySnapshot`（String-based 死代码）；
+  `TrackerEntry` 改为 `{ id, type_id, type_name, state, original: Option<EntitySnapshot>,
+  modified_properties, is_upsert }`，存储在 `HashMap<u64, TrackerEntry>`
+- **`db_set.rs` 重设计**：`TrackedEntry<T>` → `DbSetEntry<T> { entity, entry_id }`，
+  移除 `state` / `original` / `modified_properties` / `is_upsert` 字段
+- **`set_ops.rs` 重设计**：`ErasedSetOps` 方法签名增加 `&ChangeTracker` /
+  `&mut ChangeTracker` 参数；`SetOps<E>` impl 通过 `entry_id` join DbSet 与 tracker
+- **`save_pipeline.rs` 更新**：所有 saver 方法调用传递 `&self.change_tracker`
+- **`context.rs` 更新**：新增 `ctx.add::<T>()` / `ctx.attach::<T>()` /
+  `ctx.update::<T>()` / `ctx.upsert::<T>()` / `ctx.remove_at::<T>()` /
+  `ctx.remove_all::<T>()` / `ctx.load_all::<T>()`
+- **`cascade.rs` 更新**：`resolve_delete_behavior` 移入（保持 set_ops.rs ≤500 行）
+
+#### 迭代 3（P2）：sql_cache 移除
+
+- **`executor_dml.rs`**：移除 `sql_cache: HashMap<(String, Vec<String>, String), String>`
+  及 `use std::collections::HashMap` import；per-row UPDATE 直接调用
+  `gen.update(table_name, &set_cols, &where_clause)`
+
+### Removed
+
+- **`save_one_set()` 函数**（`db_context/save_phases.rs`）：独立 `DbSet` 保存入口
+  已移除，统一使用 `DbContext::save_changes()`
+- **`PropertySnapshot` 结构体**（`tracking.rs`）：String-based 死代码
+- **`track_entity()` / `detect_changes_with_properties()` / `update_snapshot()`**
+  （`tracking.rs`）：String-based 死代码方法
+- **`TrackedEntry<T>` 结构体**（`db_set.rs`）：被 `DbSetEntry<T>` 替代
+- **`DbSet::add()` / `attach()` / `update()` / `upsert()` / `remove_at()` /
+  `remove_all()` / `detect_changes()` / `load_all()` 方法**：移至 `DbContext`
+- **`entries_with_state()` 方法**（`db_set.rs`）：通过 `change_tracker().entries()` 替代
+
+### Breaking Changes
+
+| 变更 | Before | After |
+|------|--------|-------|
+| 变更操作调用位置 | `ctx.set::<T>().add(e)` | `ctx.add::<T>(e)` |
+| snapshot() 返回类型 | `HashMap<String, DbValue>` | `EntitySnapshot` |
+| key_values() 返回类型 | `HashMap<String, DbValue>` | `EntitySnapshot` |
+| save_one_set | `save_one_set(&mut conn, ...)` | `ctx.save_changes()` |
+| ChangeTracker.track_entity | `track_entity(type_id, name, state)` | `track(type_id, name, state, None, false)` |
+| ChangeTracker.accept_all_changes | `accept_all_changes()` | `accept_all_changes(&[])` |
+| entries_with_state | `db_set.entries_with_state()` | `ctx.change_tracker().entries()` |
+
+---
+
 ## [1.7.0] — 2026-07-10 — 性能优化迭代（热路径堆分配消除）
 
 ### Summary

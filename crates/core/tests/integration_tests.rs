@@ -221,10 +221,10 @@ mod tests {
         assert!(!tracker.has_changes());
 
         let type_id = std::any::TypeId::of::<i32>();
-        tracker.track_entity(type_id, "i32", EntityState::Added);
+        tracker.track(type_id, "i32", EntityState::Added, None, false);
         assert!(tracker.has_changes());
 
-        tracker.accept_all_changes();
+        tracker.accept_all_changes(&[]);
         assert!(!tracker.has_changes());
     }
 }

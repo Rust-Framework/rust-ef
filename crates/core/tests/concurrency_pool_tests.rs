@@ -32,7 +32,7 @@ async fn concurrent_dbcontext_operations_share_pool() {
         let opts = options.clone();
         handles.push(tokio::spawn(async move {
             let mut ctx = DbContext::from_options(&opts).expect("ctx");
-            ctx.set::<TestItem>().add(TestItem {
+            ctx.add::<TestItem>(TestItem {
                 id: 0,
                 name: format!("Task-{i}"),
                 value: i as f64,

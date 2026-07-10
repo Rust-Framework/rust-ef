@@ -29,20 +29,18 @@ async fn cascade_update_ordering() {
             blog: BelongsTo::new(),
         }]),
     };
-    ctx.set::<CascadeBlog>().add(blog);
+    ctx.add::<CascadeBlog>(blog);
     ctx.save_changes().await.unwrap();
 
     // Query back and modify
     let mut blogs = ctx.set::<CascadeBlog>().query().to_list().await.unwrap();
     let blog_id = blogs[0].blog_id;
     blogs[0].url = "https://updated.example".into();
-    ctx.set::<CascadeBlog>()
-        .update(blogs.into_iter().next().unwrap());
+    ctx.update::<CascadeBlog>(blogs.into_iter().next().unwrap());
 
     let mut posts = ctx.set::<CascadePost>().query().to_list().await.unwrap();
     posts[0].title = "Updated Title".into();
-    ctx.set::<CascadePost>()
-        .update(posts.into_iter().next().unwrap());
+    ctx.update::<CascadePost>(posts.into_iter().next().unwrap());
 
     ctx.save_changes().await.unwrap();
 
@@ -77,13 +75,13 @@ async fn cascade_delete_reverse_order() {
             blog: BelongsTo::new(),
         }]),
     };
-    ctx.set::<CascadeBlog>().add(blog);
+    ctx.add::<CascadeBlog>(blog);
     ctx.save_changes().await.unwrap();
 
     // Mark entries for deletion (Post first, then Blog — reverse topo order
     // is handled by the save pipeline)
-    ctx.set::<CascadePost>().remove_at(0).unwrap();
-    ctx.set::<CascadeBlog>().remove_at(0).unwrap();
+    ctx.remove_at::<CascadePost>(0).unwrap();
+    ctx.remove_at::<CascadeBlog>(0).unwrap();
     ctx.save_changes().await.unwrap();
 
     // Verify tables are empty
@@ -122,7 +120,7 @@ async fn cascade_delete_loaded_children() {
             },
         ]),
     };
-    ctx.set::<CascadeBlog>().add(blog);
+    ctx.add::<CascadeBlog>(blog);
     ctx.save_changes().await.unwrap();
 
     // Re-query with include to populate HasMany, then mark Deleted
@@ -141,9 +139,8 @@ async fn cascade_delete_loaded_children() {
         "Posts should be loaded via include"
     );
 
-    ctx.set::<CascadeBlog>()
-        .attach(loaded.into_iter().next().unwrap());
-    ctx.set::<CascadeBlog>().remove_at(0).unwrap();
+    ctx.attach::<CascadeBlog>(loaded.into_iter().next().unwrap());
+    ctx.remove_at::<CascadeBlog>(0).unwrap();
     ctx.save_changes().await.unwrap();
 
     let blogs = ctx.set::<CascadeBlog>().query().to_list().await.unwrap();
@@ -184,11 +181,11 @@ async fn cascade_delete_untracked_children() {
             },
         ]),
     };
-    ctx.set::<CascadeBlog>().add(blog);
+    ctx.add::<CascadeBlog>(blog);
     ctx.save_changes().await.unwrap();
 
     // Mark blog Deleted without loading posts — direct DELETE SQL handles them
-    ctx.set::<CascadeBlog>().remove_at(0).unwrap();
+    ctx.remove_at::<CascadeBlog>(0).unwrap();
     ctx.save_changes().await.unwrap();
 
     let blogs = ctx.set::<CascadeBlog>().query().to_list().await.unwrap();
@@ -227,7 +224,7 @@ async fn cascade_delete_nested() {
             }]),
         }]),
     };
-    ctx.set::<CascadeNestBlog>().add(blog);
+    ctx.add::<CascadeNestBlog>(blog);
     ctx.save_changes().await.unwrap();
 
     // Re-query with nested include, then mark Deleted
@@ -244,9 +241,8 @@ async fn cascade_delete_nested() {
     assert_eq!(loaded[0].posts.len(), 1);
     assert_eq!(loaded[0].posts.items()[0].comments.len(), 1);
 
-    ctx.set::<CascadeNestBlog>()
-        .attach(loaded.into_iter().next().unwrap());
-    ctx.set::<CascadeNestBlog>().remove_at(0).unwrap();
+    ctx.attach::<CascadeNestBlog>(loaded.into_iter().next().unwrap());
+    ctx.remove_at::<CascadeNestBlog>(0).unwrap();
     ctx.save_changes().await.unwrap();
 
     let blogs = ctx
@@ -293,11 +289,11 @@ async fn cascade_delete_set_null() {
             blog: BelongsTo::new(),
         }]),
     };
-    ctx.set::<CascadeOptionalBlog>().add(blog);
+    ctx.add::<CascadeOptionalBlog>(blog);
     ctx.save_changes().await.unwrap();
 
     // Mark blog Deleted — SetNull should nullify FK, post should survive
-    ctx.set::<CascadeOptionalBlog>().remove_at(0).unwrap();
+    ctx.remove_at::<CascadeOptionalBlog>(0).unwrap();
     ctx.save_changes().await.unwrap();
 
     let blogs = ctx

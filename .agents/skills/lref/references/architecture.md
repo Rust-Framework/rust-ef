@@ -91,4 +91,3 @@ let mut logs: DbContext = provider.get_keyed_owned("logs");
 - `BelongsTo<T>`, `HasMany<T>`, `HasOne<T>`: NO trait bounds (pure containers)
 - `EntityTypeBuilder<T>`: NO `IEntityType` bound
 - `set::<T>()`: requires `IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow`
-- `save_one_set()`: requires `IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow`

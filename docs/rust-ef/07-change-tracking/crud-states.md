@@ -4,15 +4,15 @@
 
 | 状态 | 说明 | 对应操作 |
 |------|------|----------|
-| `Added` | 新实体，将在 SaveChanges 时 INSERT | `db_set.add(entity)` |
-| `Unchanged` | 从数据库加载，未修改 | `db_set.attach(entity)` |
-| `Modified` | 属性值与快照不同 | `db_set.update(entity)` 或 `detect_changes()` |
-| `Deleted` | 将在 SaveChanges 时 DELETE | `db_set.remove_at(index)` |
+| `Added` | 新实体，将在 SaveChanges 时 INSERT | `ctx.add::<T>(entity)` |
+| `Unchanged` | 从数据库加载，未修改 | `ctx.attach::<T>(entity)` |
+| `Modified` | 属性值与快照不同 | `ctx.update::<T>(entity)` 或 `detect_changes()` |
+| `Deleted` | 将在 SaveChanges 时 DELETE | `ctx.remove_at::<T>(index)` |
 
 ## Add（新增）
 
 ```rust
-ctx.set::<Blog>().add(Blog {
+ctx.add::<Blog>(Blog {
     blog_id: 0,  // 自增主键占位
     url: "https://new.blog".into(),
     rating: 5,
@@ -26,7 +26,7 @@ ctx.save_changes().await?;  // 执行 INSERT
 ```rust
 // 从外部加载的数据，标记为 Unchanged 以便后续 DetectChanges
 let blog = load_from_cache().await?;
-ctx.set::<Blog>().attach(blog);
+ctx.attach::<Blog>(blog);
 ```
 
 ## Update（修改）
@@ -35,21 +35,22 @@ ctx.set::<Blog>().attach(blog);
 let mut blog = ctx.set::<Blog>().query().find(1).await?.unwrap();
 blog.rating = 10;
 
-ctx.set::<Blog>().update(blog);
+ctx.update::<Blog>(blog);
 ctx.save_changes().await?;  // 执行 UPDATE
 ```
 
 ## Remove（删除）
 
 ```rust
-let mut set = ctx.set::<Blog>();
-let blogs = set.query().to_list().await?;
+let blogs = ctx.set::<Blog>().query().to_list().await?;
+ctx.set::<Blog>().clear_entries();
 
-for (i, blog) in blogs.iter().enumerate() {
+for blog in blogs {
     if blog.rating < 2 {
-        set.remove_at(i)?;
+        ctx.attach::<Blog>(blog);
     }
 }
+ctx.remove_all::<Blog>();
 
 ctx.save_changes().await?;  // 执行 DELETE
 ```

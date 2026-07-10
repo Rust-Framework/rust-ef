@@ -47,7 +47,7 @@ async fn main() -> Result<(), EFError> {
     }
 
     println!("[1] Adding a new blog...");
-    ctx.set::<Blog>().add(Blog {
+    ctx.add::<Blog>(Blog {
         blog_id: 0,
         url: "https://devblogs.microsoft.com/dotnet".into(),
         rating: 5,
@@ -62,14 +62,14 @@ async fn main() -> Result<(), EFError> {
     let blog_id = blogs.first().map(|b| b.blog_id).unwrap_or(1);
 
     println!("[3] Adding posts for blog_id={blog_id}...");
-    ctx.set::<Post>().add(Post {
+    ctx.add::<Post>(Post {
         post_id: 0,
         title: "Announcing EF Core 9".into(),
         content: Some("EF Core 9 brings significant performance improvements...".into()),
         blog_id,
         blog: BelongsTo::new(),
     });
-    ctx.set::<Post>().add(Post {
+    ctx.add::<Post>(Post {
         post_id: 0,
         title: "Getting Started with EF Core".into(),
         content: Some("This guide walks through your first EF Core app.".into()),

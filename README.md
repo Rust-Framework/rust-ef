@@ -238,7 +238,7 @@ let affected = ctx
 let mut blog = ctx.set::<Blog>().query().find(1).await?.unwrap();
 blog.rating = 10;
 
-ctx.set::<Blog>().update(blog);
+ctx.update::<Blog>(blog);
 ctx.save_changes().await?;
 ```
 
@@ -298,7 +298,7 @@ pub struct MyHandler {
 #[async_trait]
 impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
     async fn handle(&mut self, req: MyRequest) -> Result<MyResponse> {
-        self.ctx.set::<Blog>().add(blog);
+        self.ctx.add::<Blog>(blog);
         self.ctx.save_changes().await?;
         // ...
     }
@@ -323,7 +323,7 @@ let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 
 // �?Create flow: check �?insert �?save �?re-query by PK (for navigation)
 let mut blog = req.to_entity(uid, now);
-ctx.set::<Blog>().add(blog);
+ctx.add::<Blog>(blog);
 ctx.save_changes().await?;
 // blog.id is now populated �?no need to re-query just for the ID
 
@@ -341,13 +341,13 @@ let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.id == blog.id;
 
 ```rust
 // �?WRONG: id is already on the entity
-ctx.set::<Blog>().add(blog);
+ctx.add::<Blog>(blog);
 ctx.save_changes().await?;
 let saved = linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q).first_or_default().await?;
 let id = saved.unwrap().id;
 
 // �?CORRECT: use the entity directly
-ctx.set::<Blog>().add(blog);
+ctx.add::<Blog>(blog);
 ctx.save_changes().await?;
 let id = blog.id; // already populated!
 ```
@@ -400,7 +400,7 @@ pub struct MyHandler {
 #[async_trait]
 impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
     async fn handle(&mut self, req: MyRequest) -> Result<MyResponse> {
-        self.ctx.set::<Blog>().add(blog);
+        self.ctx.add::<Blog>(blog);
         self.ctx.save_changes().await?;
         // ...
     }
@@ -411,12 +411,12 @@ impl IRequestHandler<MyRequest, MyResponse> for MyHandler {
 
 ```rust
 // �?LESS PRECISE: update() marks the entire entity as Modified
-ctx.set::<Blog>().update(blog);
+ctx.update::<Blog>(blog);
 ctx.save_changes().await?;
 
 // �?BETTER: detect_changes() only marks actually changed fields
 blog.is_deleted = true;
-ctx.set::<Blog>().detect_changes();
+ctx.detect_changes();
 ctx.save_changes().await?;
 ```
 

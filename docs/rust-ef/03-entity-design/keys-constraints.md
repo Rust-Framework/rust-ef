@@ -35,7 +35,7 @@ impl IGetKeyValues for OrderLine {
 INSERT 后，`save_changes()` 会自动通过 `RETURNING` 语句回填自增主键值：
 
 ```rust
-ctx.set::<Blog>().add(Blog { blog_id: 0, .. });
+ctx.add::<Blog>(Blog { blog_id: 0, .. });
 ctx.save_changes().await?;
 // blog_id 现在包含数据库生成的实际值
 ```

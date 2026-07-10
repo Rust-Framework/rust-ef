@@ -151,7 +151,7 @@ let user = User {
     username: form.username,
     password_hash: argon2::hash_password(&form.password, &salt)?,
 };
-ctx.set::<User>().add(user);
+ctx.add::<User>(user);
 ctx.save_changes().await?;
 ```
 

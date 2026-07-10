@@ -30,13 +30,13 @@ mod linq_tests {
         ctx.set::<LinqBlog>();
         ctx.ensure_created().await.unwrap();
 
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "https://dotnet.example".into(),
             rating: 8,
             active: true,
         });
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "https://low.example".into(),
             rating: 2,
@@ -60,13 +60,13 @@ mod linq_tests {
         let min_rating = 5;
         let expr = linq!(|b: LinqBlog| b.rating > min_rating);
 
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "high".into(),
             rating: 8,
             active: true,
         });
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "low".into(),
             rating: 2,
@@ -94,7 +94,7 @@ mod linq_tests {
         ctx.set::<LinqBlog>();
         ctx.ensure_created().await.unwrap();
 
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "https://dotnet.example".into(),
             rating: 8,
@@ -125,7 +125,7 @@ mod linq_tests {
         ctx.set::<LinqBlog>();
         ctx.ensure_created().await.unwrap();
 
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "x".into(),
             rating: 7,
@@ -146,19 +146,19 @@ mod linq_tests {
         ctx.set::<LinqBlog>();
         ctx.ensure_created().await.unwrap();
 
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "https://dotnet.example".into(),
             rating: 8,
             active: true,
         });
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "https://spam.example".into(),
             rating: 8,
             active: true,
         });
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "https://low.example".into(),
             rating: 2,
@@ -190,13 +190,13 @@ mod linq_tests {
         ctx.set::<LinqBlog>();
         ctx.ensure_created().await.unwrap();
 
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "b".into(),
             rating: 3,
             active: true,
         });
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "a".into(),
             rating: 9,
@@ -230,7 +230,7 @@ mod linq_tests {
         ctx.set::<LinqBlog>();
         ctx.ensure_created().await.unwrap();
 
-        ctx.set::<LinqBlog>().add(LinqBlog {
+        ctx.add::<LinqBlog>(LinqBlog {
             blog_id: 0,
             url: "x".into(),
             rating: 7,

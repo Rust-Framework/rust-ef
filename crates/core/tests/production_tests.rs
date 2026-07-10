@@ -162,7 +162,7 @@ mod production_tests {
     #[tokio::test]
     async fn test_concurrency_conflict_on_stale_token() {
         let (mut ctx, _provider) = setup_ctx().await;
-        ctx.set::<VersionedItem>().add(VersionedItem {
+        ctx.add::<VersionedItem>(VersionedItem {
             id: 0,
             name: "alpha".into(),
             row_version: 1,
@@ -173,7 +173,7 @@ mod production_tests {
         assert_eq!(loaded.len(), 1);
         let entity = loaded.remove(0);
         ctx.set::<VersionedItem>().clear_entries();
-        ctx.set::<VersionedItem>().attach(entity);
+        ctx.attach::<VersionedItem>(entity);
         ctx.set::<VersionedItem>()
             .tracked_entries_mut()
             .next()
@@ -189,7 +189,7 @@ mod production_tests {
         .await
         .unwrap();
 
-        ctx.set::<VersionedItem>().detect_changes();
+        ctx.detect_changes();
         let result = ctx.save_changes().await;
         assert!(matches!(result, Err(EFError::ConcurrencyConflict(..))));
     }
@@ -197,14 +197,14 @@ mod production_tests {
     #[tokio::test]
     async fn test_save_changes_rollback_on_failure() {
         let (mut ctx, provider) = setup_ctx().await;
-        ctx.set::<VersionedItem>().add(VersionedItem {
+        ctx.add::<VersionedItem>(VersionedItem {
             id: 0,
             name: "will_commit".into(),
             row_version: 1,
         });
         ctx.save_changes().await.unwrap();
 
-        ctx.set::<VersionedItem>().add(VersionedItem {
+        ctx.add::<VersionedItem>(VersionedItem {
             id: 0,
             name: "second".into(),
             row_version: 1,
@@ -221,13 +221,13 @@ mod production_tests {
             .find(|e| e.name == "will_commit")
             .unwrap();
         ctx.set::<VersionedItem>().clear_entries();
-        ctx.set::<VersionedItem>().attach(stale);
+        ctx.attach::<VersionedItem>(stale);
         ctx.set::<VersionedItem>()
             .tracked_entries_mut()
             .next()
             .unwrap()
             .name = "updated".into();
-        ctx.set::<VersionedItem>().detect_changes();
+        ctx.detect_changes();
 
         let mut conn = provider.get_connection().await.unwrap();
         conn.execute(
@@ -422,7 +422,7 @@ mod production_tests {
         let options = builder.build();
         let mut ctx = DbContext::from_options(&options).unwrap();
 
-        ctx.set::<UserRole>().add(UserRole {
+        ctx.add::<UserRole>(UserRole {
             user_id: 1,
             role_id: 2,
             label: "admin".into(),
@@ -433,8 +433,8 @@ mod production_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].label, "admin");
 
-        ctx.set::<UserRole>().attach(rows[0].clone());
-        ctx.set::<UserRole>().remove_at(0).unwrap();
+        ctx.attach::<UserRole>(rows[0].clone());
+        ctx.remove_at::<UserRole>(0).unwrap();
         ctx.save_changes().await.unwrap();
         assert_eq!(ctx.set::<UserRole>().query().count().await.unwrap(), 0);
     }
@@ -466,7 +466,7 @@ mod production_tests {
     #[tokio::test]
     async fn test_exists_by_id() {
         let (mut ctx, _provider) = setup_ctx().await;
-        ctx.set::<VersionedItem>().add(VersionedItem {
+        ctx.add::<VersionedItem>(VersionedItem {
             id: 0,
             name: "exists".into(),
             row_version: 1,

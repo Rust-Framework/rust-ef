@@ -146,11 +146,11 @@ async fn interceptor_sees_pending_entries_from_dbset() {
     // Before save, the interceptor has seen nothing.
     assert!(seen.lock().unwrap().is_none());
 
-    ctx.set::<Item>().add(Item {
+    ctx.add::<Item>(Item {
         id: 0,
         name: "alpha".into(),
     });
-    ctx.set::<Item>().add(Item {
+    ctx.add::<Item>(Item {
         id: 0,
         name: "beta".into(),
     });

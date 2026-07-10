@@ -37,7 +37,7 @@ impl IRequestHandler<CreateBlogRequest, BlogModel> for BlogHandler {
 
         // 2. Insert
         let mut blog = req.to_entity(uid, now);
-        self.ctx.set::<Blog>().add(blog);
+        self.ctx.add::<Blog>(blog);
         self.ctx.save_changes().await?;
         // blog.id is now populated with the auto_increment value
 
@@ -99,7 +99,7 @@ impl IRequestHandler<UpdateBlogRequest, BlogModel> for BlogHandler {
         blog.content = req.content;
 
         // 3. Save (detect_changes only marks actually changed fields)
-        self.ctx.set::<Blog>().detect_changes();
+        self.ctx.detect_changes();
         self.ctx.save_changes().await?;
 
         // 4. Re-query with navigation includes (by PRIMARY KEY)
@@ -126,7 +126,7 @@ impl IRequestHandler<DeleteBlogRequest, String> for BlogHandler {
         // 2. Soft delete: mark + detect_changes + save
         blog.is_deleted = true;
         blog.updated_at = chrono::Utc::now().timestamp();
-        self.ctx.set::<Blog>().detect_changes();
+        self.ctx.detect_changes();
         self.ctx.save_changes().await?;
 
         Ok(format!("Deleted blog {}", req.id))

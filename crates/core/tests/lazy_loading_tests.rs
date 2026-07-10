@@ -60,7 +60,7 @@ async fn seed_data(ctx: &mut DbContext) {
     ctx.set::<LazyPost>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<LazyBlog>().add(LazyBlog {
+    ctx.add::<LazyBlog>(LazyBlog {
         blog_id: 0,
         url: "https://lazy.example".into(),
         posts: HasMany::new(),
@@ -69,13 +69,13 @@ async fn seed_data(ctx: &mut DbContext) {
 
     let blog_id = ctx.set::<LazyBlog>().query().to_list().await.unwrap()[0].blog_id;
 
-    ctx.set::<LazyPost>().add(LazyPost {
+    ctx.add::<LazyPost>(LazyPost {
         post_id: 0,
         title: "Post A".into(),
         blog_id,
         blog: BelongsTo::new(),
     });
-    ctx.set::<LazyPost>().add(LazyPost {
+    ctx.add::<LazyPost>(LazyPost {
         post_id: 0,
         title: "Post B".into(),
         blog_id,

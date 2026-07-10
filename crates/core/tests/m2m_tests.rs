@@ -76,13 +76,13 @@ mod m2m_tests {
         ctx.ensure_created().await.unwrap();
 
         if use_through_attr {
-            ctx.set::<StudentThrough>().add(StudentThrough {
+            ctx.add::<StudentThrough>(StudentThrough {
                 student_id: 0,
                 name: "Alice".into(),
                 courses: HasMany::new(),
             });
         } else {
-            ctx.set::<Student>().add(Student {
+            ctx.add::<Student>(Student {
                 student_id: 0,
                 name: "Alice".into(),
                 courses: HasMany::new(),
@@ -96,11 +96,11 @@ mod m2m_tests {
             ctx.set::<Student>().query().to_list().await.unwrap()[0].student_id
         };
 
-        ctx.set::<Course>().add(Course {
+        ctx.add::<Course>(Course {
             course_id: 0,
             title: "Rust 101".into(),
         });
-        ctx.set::<Course>().add(Course {
+        ctx.add::<Course>(Course {
             course_id: 0,
             title: "ORM Design".into(),
         });
@@ -108,23 +108,23 @@ mod m2m_tests {
         let courses = ctx.set::<Course>().query().to_list().await.unwrap();
 
         if use_through_attr {
-            ctx.set::<EnrollmentThrough>().add(EnrollmentThrough {
+            ctx.add::<EnrollmentThrough>(EnrollmentThrough {
                 enrollment_id: 0,
                 student_id,
                 course_id: courses[0].course_id,
             });
-            ctx.set::<EnrollmentThrough>().add(EnrollmentThrough {
+            ctx.add::<EnrollmentThrough>(EnrollmentThrough {
                 enrollment_id: 0,
                 student_id,
                 course_id: courses[1].course_id,
             });
         } else {
-            ctx.set::<Enrollment>().add(Enrollment {
+            ctx.add::<Enrollment>(Enrollment {
                 enrollment_id: 0,
                 student_id,
                 course_id: courses[0].course_id,
             });
-            ctx.set::<Enrollment>().add(Enrollment {
+            ctx.add::<Enrollment>(Enrollment {
                 enrollment_id: 0,
                 student_id,
                 course_id: courses[1].course_id,

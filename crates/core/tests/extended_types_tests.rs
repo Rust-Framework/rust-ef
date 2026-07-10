@@ -81,7 +81,7 @@ async fn chrono_uuid_decimal_round_trip() {
     ctx.ensure_created().await.expect("ensure_created");
 
     let original = sample_transaction();
-    ctx.set::<Transaction>().add(original.clone());
+    ctx.add::<Transaction>(original.clone());
     ctx.save_changes().await.expect("save");
 
     let rows = ctx
@@ -117,7 +117,7 @@ async fn multiple_transactions_query() {
         tx.name = format!("Payment-{}", i);
         tx.amount = rust_decimal::Decimal::new((i + 1) as i64 * 1000, 2);
         tx.reference_id = uuid::Uuid::new_v4();
-        ctx.set::<Transaction>().add(tx);
+        ctx.add::<Transaction>(tx);
     }
     ctx.save_changes().await.expect("save");
 
@@ -152,7 +152,7 @@ async fn datetime_filter_query() {
         .unwrap()
         .with_timezone(&chrono::Utc);
 
-    ctx.set::<Transaction>().add(Transaction {
+    ctx.add::<Transaction>(Transaction {
         id: 0,
         name: "Early".into(),
         created_at: early,
@@ -164,7 +164,7 @@ async fn datetime_filter_query() {
         reference_id: uuid::Uuid::new_v4(),
         amount: rust_decimal::Decimal::new(100, 2),
     });
-    ctx.set::<Transaction>().add(Transaction {
+    ctx.add::<Transaction>(Transaction {
         id: 0,
         name: "Late".into(),
         created_at: late,
@@ -195,11 +195,11 @@ async fn update_with_chrono_fields() {
     let mut ctx = make_ctx();
     ctx.ensure_created().await.expect("ensure_created");
 
-    ctx.set::<Transaction>().add(sample_transaction());
+    ctx.add::<Transaction>(sample_transaction());
     ctx.save_changes().await.expect("save");
 
     // Load, modify, save
-    ctx.set::<Transaction>().load_all().await.expect("load");
+    ctx.load_all::<Transaction>().await.expect("load");
     let new_time = chrono::DateTime::parse_from_rfc3339("2027-01-01T00:00:00Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
@@ -207,7 +207,7 @@ async fn update_with_chrono_fields() {
         tx.created_at = new_time;
         tx.amount = rust_decimal::Decimal::new(99999, 2);
     }
-    ctx.set::<Transaction>().detect_changes();
+    ctx.detect_changes();
     let result = ctx.save_changes().await.expect("update save");
     assert_eq!(result.updated, 1, "1 row should be updated");
 

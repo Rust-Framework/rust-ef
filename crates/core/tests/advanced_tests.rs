@@ -272,10 +272,10 @@ mod advanced_tests {
     fn test_change_tracker_states() {
         let mut tracker = rust_ef::tracking::ChangeTracker::new();
         let type_id = std::any::TypeId::of::<i32>();
-        tracker.track_entity(type_id, "UserRole", EntityState::Added);
+        tracker.track(type_id, "UserRole", EntityState::Added, None, false);
         assert!(tracker.has_changes());
         assert_eq!(tracker.count_by_state(EntityState::Added), 1);
-        tracker.accept_all_changes();
+        tracker.accept_all_changes(&[]);
         assert!(!tracker.has_changes());
     }
 }

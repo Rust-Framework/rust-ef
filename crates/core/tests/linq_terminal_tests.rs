@@ -33,7 +33,7 @@ async fn seed(count: usize) -> DbContext {
     ctx.set::<TermItem>();
     ctx.ensure_created().await.unwrap();
     for i in 0..count {
-        ctx.set::<TermItem>().add(TermItem {
+        ctx.add::<TermItem>(TermItem {
             id: 0,
             name: format!("i{}", i),
             value: (i as i32 + 1) * 10,

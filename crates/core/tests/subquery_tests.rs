@@ -68,7 +68,7 @@ async fn seed() -> DbContext {
     ];
 
     for (url, posts) in &blogs {
-        ctx.set::<SubBlog>().add(SubBlog {
+        ctx.add::<SubBlog>(SubBlog {
             blog_id: 0,
             url: (*url).into(),
             posts: HasMany::new(),
@@ -79,7 +79,7 @@ async fn seed() -> DbContext {
         let blog_id = inserted.last().unwrap().blog_id;
 
         for (title, published) in posts {
-            ctx.set::<SubPost>().add(SubPost {
+            ctx.add::<SubPost>(SubPost {
                 post_id: 0,
                 title: (*title).into(),
                 blog_id,

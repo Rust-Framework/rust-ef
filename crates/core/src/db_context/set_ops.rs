@@ -1,14 +1,22 @@
 //! Type-erased set operations — bridges `DbContext::save_changes()` and
 //! concrete `DbSet<T>` instances via `Box<dyn ErasedSetOps>`.
+//!
+//! All tracking state lives in `ChangeTracker`; `DbSet` holds only typed
+//! entities + `entry_id`. These methods join the two by `entry_id`.
 
-use crate::cascade::{CascadeDeleteAction, CascadeDeleteDirective, DrainedChild};
-use crate::db_set::{DbSet, TrackedEntry};
+use crate::cascade::{
+    resolve_delete_behavior, CascadeDeleteAction, CascadeDeleteDirective, DrainedChild,
+};
+use crate::db_set::DbSet;
 use crate::entity::{
     EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
 };
+use crate::entity_snapshot::EntitySnapshot;
 use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, NavigationKind};
 use crate::provider::{IAsyncConnection, IDatabaseProvider};
+use crate::relations::DeleteBehavior;
+use crate::tracking::ChangeTracker;
 use std::any::{Any, TypeId};
 
 use super::save_phases::{
@@ -17,18 +25,23 @@ use super::save_phases::{
 
 #[async_trait::async_trait]
 pub(crate) trait ErasedSetOps: Send + Sync {
-    fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync));
-    /// Accepts all pending changes in the set: Added/Modified → Unchanged
-    /// (with refreshed snapshots), Deleted entries removed. Called after a
-    /// successful `save_changes` commit so tracked entities retain their
-    /// DB-generated PKs and can be compared against future modifications.
-    fn accept_all_changes(&self, raw_set: &mut (dyn Any + Send + Sync + 'static));
-    /// Collects type-erased views of all pending entries in the set, used to
-    /// build `SaveChangesContext` from the real save data source (`DbSet.entries`)
-    /// rather than the legacy (empty) `change_tracker`.
+    /// Detects changes by comparing current entity snapshots against the
+    /// tracker's stored originals, transitioning `Unchanged` → `Modified`.
+    fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync), tracker: &mut ChangeTracker);
+
+    /// Accepts all pending changes: Added/Modified → Unchanged (with refreshed
+    /// originals), Deleted entries removed from both DbSet and tracker.
+    fn accept_all_changes(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync + 'static),
+        tracker: &mut ChangeTracker,
+    );
+
+    /// Collects type-erased views of all tracked entries, joined by `entry_id`.
     fn collect_entries(
         &self,
         raw_set: &(dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
     ) -> Vec<crate::tracking::EntityEntryView>;
 
     // ── Cascade pipeline methods ──
@@ -38,19 +51,20 @@ pub(crate) trait ErasedSetOps: Send + Sync {
     fn drain_cascade_children(
         &self,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> Vec<DrainedChild>;
 
-    /// Adds a cascade-drained child (type-erased) to this set as Added.
-    /// Returns the new entry index, or `None` if the type doesn't match.
+    /// Adds a cascade-drained child (type-erased) to this set as Added (or
+    /// Unchanged if it already has a PK). Returns the new entry index.
     fn add_cascade_child(
         &self,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &mut ChangeTracker,
         child: Box<dyn Any + Send + Sync>,
     ) -> Option<usize>;
 
-    /// Reads the first PK value (as i64) of the entry at `idx`. Used after
-    /// INSERT + backfill to read the principal PK for FK fixup.
+    /// Reads the first PK value (as i64) of the entry at `idx`.
     fn get_pk_at(&self, raw_set: &(dyn Any + Send + Sync), idx: usize) -> Option<i64>;
 
     /// Sets the FK field on the entry at `idx` pointing to `target_type`.
@@ -68,6 +82,7 @@ pub(crate) trait ErasedSetOps: Send + Sync {
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> EFResult<usize>;
 
@@ -77,6 +92,7 @@ pub(crate) trait ErasedSetOps: Send + Sync {
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> EFResult<usize>;
 
@@ -86,6 +102,7 @@ pub(crate) trait ErasedSetOps: Send + Sync {
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> EFResult<usize>;
 
@@ -95,15 +112,16 @@ pub(crate) trait ErasedSetOps: Send + Sync {
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> EFResult<usize>;
 
     /// Drains HasMany children from Deleted entries and collects direct DELETE
-    /// directives for untracked dependents. `processed` tracks already-handled
-    /// entries to avoid duplicate directives across drain loop iterations.
+    /// directives for untracked dependents.
     fn drain_cascade_deleted_children(
         &self,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
         processed: &mut std::collections::HashSet<(TypeId, usize)>,
     ) -> (Vec<DrainedChild>, Vec<CascadeDeleteDirective>);
@@ -113,6 +131,7 @@ pub(crate) trait ErasedSetOps: Send + Sync {
     fn add_cascade_deleted_child(
         &self,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &mut ChangeTracker,
         child: Box<dyn Any + Send + Sync>,
     ) -> Option<usize>;
 }
@@ -140,19 +159,49 @@ where
         + Sync
         + 'static,
 {
-    fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync)) {
-        if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
-            db_set.detect_changes();
-        }
+    fn detect_changes(&self, raw_set: &mut (dyn Any + Send + Sync), tracker: &mut ChangeTracker) {
+        let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() else {
+            return;
+        };
+        let snapshots: Vec<(u64, EntitySnapshot)> = db_set
+            .entries
+            .iter()
+            .map(|e| (e.entry_id, e.entity.snapshot()))
+            .collect();
+        tracker.detect_changes(&snapshots);
     }
-    fn accept_all_changes(&self, raw_set: &mut (dyn Any + Send + Sync + 'static)) {
-        if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
-            db_set.accept_all_changes();
-        }
+
+    fn accept_all_changes(
+        &self,
+        raw_set: &mut (dyn Any + Send + Sync + 'static),
+        tracker: &mut ChangeTracker,
+    ) {
+        let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() else {
+            return;
+        };
+        // Collect Deleted entry_ids before mutating the DbSet.
+        let deleted_ids: Vec<u64> = db_set
+            .entries
+            .iter()
+            .filter(|e| tracker.entry_state(e.entry_id) == Some(EntityState::Deleted))
+            .map(|e| e.entry_id)
+            .collect();
+        db_set
+            .entries
+            .retain(|e| !deleted_ids.contains(&e.entry_id));
+        // Refresh tracker originals from post-save entity snapshots.
+        let snapshots: Vec<(u64, EntitySnapshot)> = db_set
+            .entries
+            .iter()
+            .map(|e| (e.entry_id, e.entity.snapshot()))
+            .collect();
+        tracker.accept_all_changes(&snapshots);
     }
+
     fn collect_entries(
         &self,
         raw_set: &(dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
     ) -> Vec<crate::tracking::EntityEntryView> {
         let Some(db_set) = raw_set.downcast_ref::<DbSet<E>>() else {
             return Vec::new();
@@ -161,10 +210,13 @@ where
         db_set
             .entries
             .iter()
-            .map(|e| crate::tracking::EntityEntryView {
-                type_id: TypeId::of::<E>(),
-                type_name: type_name.clone(),
-                state: e.state,
+            .filter_map(|e| {
+                let state = tracker.entry_state(e.entry_id)?;
+                Some(crate::tracking::EntityEntryView {
+                    type_id: TypeId::of::<E>(),
+                    type_name: type_name.clone(),
+                    state,
+                })
             })
             .collect()
     }
@@ -172,6 +224,7 @@ where
     fn drain_cascade_children(
         &self,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> Vec<DrainedChild> {
         let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() else {
@@ -179,7 +232,10 @@ where
         };
         let mut result = Vec::new();
         for (entry_idx, entry) in db_set.entries.iter_mut().enumerate() {
-            if entry.state != EntityState::Added || entry.is_upsert {
+            if tracker.entry_state(entry.entry_id) != Some(EntityState::Added) {
+                continue;
+            }
+            if tracker.entry_is_upsert(entry.entry_id) {
                 continue;
             }
             for nav in &meta.navigations {
@@ -217,6 +273,7 @@ where
     fn add_cascade_child(
         &self,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &mut ChangeTracker,
         child: Box<dyn Any + Send + Sync>,
     ) -> Option<usize> {
         let db_set = raw_set.downcast_mut::<DbSet<E>>()?;
@@ -228,12 +285,14 @@ where
             .map(|(_, v)| v.clone())
             .and_then(|v| v.try_into().ok())
             .unwrap_or(0);
-        let entity = *child;
-        if pk > 0 {
-            db_set.attach(entity);
+        let type_name = E::entity_meta().type_name.to_string();
+        let (state, original) = if pk > 0 {
+            (EntityState::Unchanged, Some(child.snapshot()))
         } else {
-            db_set.add(entity);
-        }
+            (EntityState::Added, None)
+        };
+        let entry_id = tracker.track(TypeId::of::<E>(), &type_name, state, original, false);
+        db_set.push_entry(*child, entry_id);
         Some(db_set.entries.len() - 1)
     }
 
@@ -268,12 +327,13 @@ where
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> EFResult<usize> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
             .ok_or_else(|| EFError::configuration("SetOps type mismatch in insert_added"))?;
-        insert_added_phase(conn, provider, db_set, meta).await
+        insert_added_phase(conn, provider, db_set, tracker, meta).await
     }
 
     async fn upsert_added(
@@ -281,12 +341,13 @@ where
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> EFResult<usize> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
             .ok_or_else(|| EFError::configuration("SetOps type mismatch in upsert_added"))?;
-        upsert_added_phase(conn, provider, db_set, meta).await
+        upsert_added_phase(conn, provider, db_set, tracker, meta).await
     }
 
     async fn update_modified(
@@ -294,13 +355,14 @@ where
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> EFResult<usize> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
             .ok_or_else(|| EFError::configuration("SetOps type mismatch in update_modified"))?;
         let query_filter = db_set.query_filter().cloned();
-        update_modified_phase(conn, provider, db_set, meta, query_filter.as_ref()).await
+        update_modified_phase(conn, provider, db_set, tracker, meta, query_filter.as_ref()).await
     }
 
     async fn delete_deleted(
@@ -308,23 +370,23 @@ where
         conn: &mut (dyn IAsyncConnection + Send),
         provider: &dyn IDatabaseProvider,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
     ) -> EFResult<usize> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
             .ok_or_else(|| EFError::configuration("SetOps type mismatch in delete_deleted"))?;
         let query_filter = db_set.query_filter().cloned();
-        delete_deleted_phase(conn, provider, db_set, meta, query_filter.as_ref()).await
+        delete_deleted_phase(conn, provider, db_set, tracker, meta, query_filter.as_ref()).await
     }
 
     fn drain_cascade_deleted_children(
         &self,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
         meta: &EntityTypeMeta,
         processed: &mut std::collections::HashSet<(TypeId, usize)>,
     ) -> (Vec<DrainedChild>, Vec<CascadeDeleteDirective>) {
-        use crate::relations::DeleteBehavior;
-
         let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() else {
             return (Vec::new(), Vec::new());
         };
@@ -332,15 +394,13 @@ where
         let mut directives = Vec::new();
 
         for (entry_idx, entry) in db_set.entries.iter_mut().enumerate() {
-            if entry.state != EntityState::Deleted {
+            if tracker.entry_state(entry.entry_id) != Some(EntityState::Deleted) {
                 continue;
             }
-            // Skip already-processed entries (prevents duplicate directives)
             if !processed.insert((TypeId::of::<E>(), entry_idx)) {
                 continue;
             }
 
-            // Get principal PK for directives
             let principal_pk: i64 = entry
                 .entity
                 .key_values()
@@ -353,7 +413,6 @@ where
             for nav in &meta.navigations {
                 match nav.kind {
                     NavigationKind::ManyToMany => {
-                        // M2M: always delete join table rows, don't delete related entities
                         if let (Some(table), Some(fk_col), Some(pk)) = (
                             nav.through_table.as_ref(),
                             nav.through_parent_fk.as_ref(),
@@ -371,7 +430,6 @@ where
                         let behavior = resolve_delete_behavior(nav);
                         match behavior {
                             DeleteBehavior::Cascade => {
-                                // Drain loaded children + collect DELETE directive for untracked
                                 if let Some(items) =
                                     entry.entity.drain_has_many(nav.field_name.as_ref())
                                 {
@@ -388,7 +446,6 @@ where
                                         });
                                     }
                                 }
-                                // Also collect direct DELETE for untracked dependents
                                 if let (Some(table), Some(fk_col), Some(pk)) = (
                                     nav.related_table.as_ref(),
                                     nav.fk_column.as_ref(),
@@ -403,7 +460,6 @@ where
                                 }
                             }
                             DeleteBehavior::SetNull => {
-                                // Don't drain children; just set FK to NULL
                                 if let (Some(table), Some(fk_col), Some(pk)) = (
                                     nav.related_table.as_ref(),
                                     nav.fk_column.as_ref(),
@@ -417,14 +473,10 @@ where
                                     });
                                 }
                             }
-                            DeleteBehavior::Restrict | DeleteBehavior::NoAction => {
-                                // No cascade — skip
-                            }
+                            DeleteBehavior::Restrict | DeleteBehavior::NoAction => {}
                         }
                     }
-                    NavigationKind::BelongsTo | NavigationKind::HasOne => {
-                        // Not applicable for cascade delete
-                    }
+                    NavigationKind::BelongsTo | NavigationKind::HasOne => {}
                 }
             }
         }
@@ -434,6 +486,7 @@ where
     fn add_cascade_deleted_child(
         &self,
         raw_set: &mut (dyn Any + Send + Sync),
+        tracker: &mut ChangeTracker,
         child: Box<dyn Any + Send + Sync>,
     ) -> Option<usize> {
         let db_set = raw_set.downcast_mut::<DbSet<E>>()?;
@@ -449,44 +502,15 @@ where
             return None;
         }
         let original = child.snapshot();
-        db_set.entries.push(TrackedEntry {
-            entity: *child,
-            state: EntityState::Deleted,
-            original: Some(original),
-            modified_properties: Vec::new(),
-            is_upsert: false,
-        });
+        let type_name = E::entity_meta().type_name.to_string();
+        let entry_id = tracker.track(
+            TypeId::of::<E>(),
+            &type_name,
+            EntityState::Deleted,
+            Some(original),
+            false,
+        );
+        db_set.push_entry(*child, entry_id);
         Some(db_set.entries.len() - 1)
     }
-}
-
-/// Resolves the effective `DeleteBehavior` for a navigation, applying
-/// EFCore-style defaults when `delete_behavior` is `None`:
-/// - ManyToMany → Cascade (join rows are always pruned)
-/// - required FK (non-nullable type, e.g. `i32`) → Cascade
-/// - optional FK (nullable type, e.g. `Option<i32>`) → Restrict
-pub(crate) fn resolve_delete_behavior(
-    nav: &crate::metadata::NavigationMeta,
-) -> crate::relations::DeleteBehavior {
-    use crate::relations::DeleteBehavior;
-    if let Some(b) = nav.delete_behavior {
-        return b;
-    }
-    if nav.kind == NavigationKind::ManyToMany {
-        return DeleteBehavior::Cascade;
-    }
-    if let Some(meta_fn) = nav.related_entity_meta {
-        let child_meta = meta_fn();
-        if let Some(fk_prop) = child_meta.properties.iter().find(|p| p.is_foreign_key) {
-            // Determine nullability from the Rust type name: `Option<T>` is
-            // nullable, everything else (i32, i64, String, ...) is not.
-            let is_nullable = fk_prop.type_name.contains("Option");
-            return if is_nullable {
-                DeleteBehavior::Restrict
-            } else {
-                DeleteBehavior::Cascade
-            };
-        }
-    }
-    DeleteBehavior::Cascade
 }

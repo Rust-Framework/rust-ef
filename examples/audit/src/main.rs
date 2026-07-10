@@ -176,7 +176,7 @@ where
             doc.updated_at = now;
         }
     }
-    ctx.set::<Document>().detect_changes();
+    ctx.detect_changes();
 }
 
 /// Drains captured audit events and writes them to the `audit_log` table.
@@ -205,7 +205,7 @@ async fn flush_audit_log(
         entry.0 += 1;
     }
     for ((entity_type, action), (count, ts)) in summary {
-        ctx.set::<AuditLog>().add(AuditLog {
+        ctx.add::<AuditLog>(AuditLog {
             id: 0,
             entity_type,
             action: action.to_string(),
@@ -250,14 +250,14 @@ async fn main() -> EFResult<()> {
     // -- Step 1: Insert documents with timestamps --
     println!("[1] Inserting documents with created_at / updated_at...");
     let now = now_epoch();
-    ctx.set::<Document>().add(Document {
+    ctx.add::<Document>(Document {
         id: 0,
         title: "Design Doc: Query Pipeline".into(),
         body: "Outlines the linq! macro expansion...".into(),
         created_at: now,
         updated_at: now,
     });
-    ctx.set::<Document>().add(Document {
+    ctx.add::<Document>(Document {
         id: 0,
         title: "Design Doc: Migration Engine".into(),
         body: "Covers snapshot diffing and SQL generation...".into(),
@@ -273,7 +273,7 @@ async fn main() -> EFResult<()> {
 
     // -- Step 2: Update one document (load → modify → stamp → save) --
     println!("[2] Updating 'Design Doc: Query Pipeline'...");
-    ctx.set::<Document>().load_all().await?;
+    ctx.load_all::<Document>().await?;
     {
         let target = "Design Doc: Query Pipeline".to_string();
         for doc in ctx.set::<Document>().tracked_entries_mut() {

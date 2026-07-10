@@ -6,8 +6,8 @@
 // ✅ 正确：query() 不修改 DbSet 状态
 let all = ctx.set::<Blog>().query().to_list().await?;
 
-// ✅ 正确：add() 修改 DbSet 状态
-ctx.set::<Blog>().add(blog);
+// ✅ 正确：add() 修改 DbContext 跟踪状态
+ctx.add::<Blog>(blog);
 ```
 
 ## 2. 修改实体后忘记调用 `update()`
@@ -19,7 +19,7 @@ blog.rating = 99;
 ctx.save_changes().await?;  // 没有任何 UPDATE！
 
 // ✅ 正确：显式标记修改
-ctx.set::<Blog>().update(blog);
+ctx.update::<Blog>(blog);
 ctx.save_changes().await?;
 ```
 
@@ -67,13 +67,13 @@ ctx.ensure_created().await?;  // 元数据已就绪，直接建表
 ```rust
 // ❌ 性能极差，每次循环都开事务
 for blog in blogs {
-    ctx.set::<Blog>().add(blog);
+    ctx.add::<Blog>(blog);
     ctx.save_changes().await?;
 }
 
 // ✅ 正确：一次事务提交全部
 for blog in blogs {
-    ctx.set::<Blog>().add(blog);
+    ctx.add::<Blog>(blog);
 }
 ctx.save_changes().await?;
 ```

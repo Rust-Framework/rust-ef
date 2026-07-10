@@ -108,7 +108,7 @@ let blog = Blog {
     category_id: 1,
     category: BelongsTo::default(),
 };
-ctx.set::<Blog>().add(blog);
+ctx.add::<Blog>(blog);
 ctx.save_changes().await?;
 // blog.id 已自动填充数据库生成的 ID
 
@@ -118,7 +118,7 @@ let mut blog = {
     query.find(1).await?.unwrap()
 };
 blog.title = "新标题".into();
-ctx.set::<Blog>().detect_changes();  // 仅标记变更字段
+ctx.detect_changes();  // 仅标记变更字段
 ctx.save_changes().await?;
 
 // === 删除（软删除推荐用全局查询过滤器，见第二层）===
@@ -127,7 +127,7 @@ let mut blog = {
     query.find(1).await?.unwrap()
 };
 blog.is_deleted = true;
-ctx.set::<Blog>().detect_changes();
+ctx.detect_changes();
 ctx.save_changes().await?;
 ```
 

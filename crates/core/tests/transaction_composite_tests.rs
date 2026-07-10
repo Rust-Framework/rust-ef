@@ -78,7 +78,7 @@ async fn test_save_changes_rolls_back_on_error() {
         .unwrap();
 
     // Phase 1: pre-seed a UniqueItem with code "X" (this commits).
-    ctx.set::<UniqueItem>().add(UniqueItem {
+    ctx.add::<UniqueItem>(UniqueItem {
         id: 0,
         code: "X".into(),
     });
@@ -88,11 +88,11 @@ async fn test_save_changes_rolls_back_on_error() {
     // save_changes call. The GoodItem insert runs first (succeeds within the
     // transaction), then the duplicate UniqueItem insert hits the UNIQUE
     // constraint → save_changes rolls back the entire transaction.
-    ctx.set::<GoodItem>().add(GoodItem {
+    ctx.add::<GoodItem>(GoodItem {
         id: 0,
         name: "should-be-rolled-back".into(),
     });
-    ctx.set::<UniqueItem>().add(UniqueItem {
+    ctx.add::<UniqueItem>(UniqueItem {
         id: 0,
         code: "X".into(), // duplicate — triggers UNIQUE violation
     });
@@ -135,11 +135,11 @@ async fn test_save_changes_commits_all_on_success() {
     ctx.set::<UniqueItem>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<GoodItem>().add(GoodItem {
+    ctx.add::<GoodItem>(GoodItem {
         id: 0,
         name: "alpha".into(),
     });
-    ctx.set::<UniqueItem>().add(UniqueItem {
+    ctx.add::<UniqueItem>(UniqueItem {
         id: 0,
         code: "Y".into(),
     });
@@ -162,7 +162,7 @@ async fn test_composite_pk_insert_and_find_by_key() {
     ctx.set::<Enrollment>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<Enrollment>().add(Enrollment {
+    ctx.add::<Enrollment>(Enrollment {
         student_id: 100,
         course_id: 200,
         grade: "A".into(),
@@ -190,7 +190,7 @@ async fn test_composite_pk_find_by_key_returns_none_for_partial_match() {
     ctx.set::<Enrollment>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<Enrollment>().add(Enrollment {
+    ctx.add::<Enrollment>(Enrollment {
         student_id: 100,
         course_id: 200,
         grade: "A".into(),
@@ -220,7 +220,7 @@ async fn test_composite_pk_update() {
     ctx.ensure_created().await.unwrap();
 
     // Insert
-    ctx.set::<Enrollment>().add(Enrollment {
+    ctx.add::<Enrollment>(Enrollment {
         student_id: 100,
         course_id: 200,
         grade: "B".into(),
@@ -228,7 +228,7 @@ async fn test_composite_pk_update() {
     ctx.save_changes().await.unwrap();
 
     // Load, modify, save (must reload via load_all to track for update)
-    ctx.set::<Enrollment>().load_all().await.unwrap();
+    ctx.load_all::<Enrollment>().await.unwrap();
     ctx.set::<Enrollment>()
         .tracked_entries_mut()
         .next()
@@ -257,12 +257,12 @@ async fn test_composite_pk_delete() {
     ctx.ensure_created().await.unwrap();
 
     // Insert two rows
-    ctx.set::<Enrollment>().add(Enrollment {
+    ctx.add::<Enrollment>(Enrollment {
         student_id: 100,
         course_id: 200,
         grade: "A".into(),
     });
-    ctx.set::<Enrollment>().add(Enrollment {
+    ctx.add::<Enrollment>(Enrollment {
         student_id: 100,
         course_id: 300,
         grade: "B".into(),
@@ -270,14 +270,13 @@ async fn test_composite_pk_delete() {
     ctx.save_changes().await.unwrap();
 
     // Load and delete one
-    ctx.set::<Enrollment>().load_all().await.unwrap();
+    ctx.load_all::<Enrollment>().await.unwrap();
     let idx = ctx
         .set::<Enrollment>()
         .tracked_entries()
         .position(|e| e.course_id == 200)
         .expect("find row to delete");
-    ctx.set::<Enrollment>()
-        .remove_at(idx)
+    ctx.remove_at::<Enrollment>(idx)
         .expect("remove_at marks as Deleted");
     ctx.save_changes().await.unwrap();
 

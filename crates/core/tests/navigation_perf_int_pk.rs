@@ -309,7 +309,7 @@ async fn test_has_many_large_result_set() {
 
     // Seed 50 parents.
     for p in 0..50 {
-        ctx.set::<PerfParent>().add(PerfParent {
+        ctx.add::<PerfParent>(PerfParent {
             id: 0,
             name: format!("parent-{}", p),
             children: HasMany::new(),
@@ -329,7 +329,7 @@ async fn test_has_many_large_result_set() {
     // Seed 10 children per parent (500 children total).
     for parent in &parents {
         for c in 0..10 {
-            ctx.set::<PerfChild>().add(PerfChild {
+            ctx.add::<PerfChild>(PerfChild {
                 id: 0,
                 parent_id: parent.id,
                 label: format!("child-{}-{}", parent.id, c),
@@ -369,7 +369,7 @@ async fn test_many_to_many_large_join() {
     let mut ctx = make_ctx().await;
 
     for p in 0..100 {
-        ctx.set::<PerfParent>().add(PerfParent {
+        ctx.add::<PerfParent>(PerfParent {
             id: 0,
             name: format!("p-{}", p),
             children: HasMany::new(),
@@ -386,7 +386,7 @@ async fn test_many_to_many_large_join() {
     assert_eq!(parents.len(), 100);
 
     for parent in &parents {
-        ctx.set::<PerfChild>().add(PerfChild {
+        ctx.add::<PerfChild>(PerfChild {
             id: 0,
             parent_id: parent.id,
             label: format!("c-{}", parent.id),

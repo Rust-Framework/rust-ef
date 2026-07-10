@@ -186,7 +186,7 @@ async fn make_ctx() -> DbContext {
 async fn test_batch_insert_multiple_rows() {
     let mut ctx = make_ctx().await;
     for i in 0..10 {
-        ctx.set::<BatchItem>().add(BatchItem {
+        ctx.add::<BatchItem>(BatchItem {
             id: 0,
             name: format!("item-{}", i),
             value: i as f64,
@@ -216,7 +216,7 @@ async fn test_batch_insert_large_set_auto_batches() {
     // executor must split this into 2 batches (300 + 200).
     let mut ctx = make_ctx().await;
     for i in 0..500 {
-        ctx.set::<BatchItem>().add(BatchItem {
+        ctx.add::<BatchItem>(BatchItem {
             id: 0,
             name: format!("row-{}", i),
             value: i as f64,
@@ -235,7 +235,7 @@ async fn test_batch_insert_large_set_auto_batches() {
 async fn test_batch_delete_multiple_rows() {
     let mut ctx = make_ctx().await;
     for i in 0..10 {
-        ctx.set::<BatchItem>().add(BatchItem {
+        ctx.add::<BatchItem>(BatchItem {
             id: 0,
             name: format!("del-{}", i),
             value: i as f64,
@@ -254,9 +254,9 @@ async fn test_batch_delete_multiple_rows() {
     assert_eq!(items.len(), 10);
     ctx.set::<BatchItem>().clear_entries();
     for item in items {
-        ctx.set::<BatchItem>().attach(item);
+        ctx.attach::<BatchItem>(item);
     }
-    ctx.set::<BatchItem>().remove_all();
+    ctx.remove_all::<BatchItem>();
 
     let deleted = ctx.save_changes().await.expect("delete");
     assert_eq!(deleted.deleted, 10, "save_changes should report 10 deleted");
@@ -282,7 +282,7 @@ async fn test_batch_delete_with_query_filter() {
 
     // INSERTs ignore query filters, so both tenants can be seeded.
     for i in 0..5 {
-        ctx.set::<BatchItem>().add(BatchItem {
+        ctx.add::<BatchItem>(BatchItem {
             id: 0,
             name: format!("t1-{}", i),
             value: i as f64,
@@ -290,7 +290,7 @@ async fn test_batch_delete_with_query_filter() {
         });
     }
     for i in 0..5 {
-        ctx.set::<BatchItem>().add(BatchItem {
+        ctx.add::<BatchItem>(BatchItem {
             id: 0,
             name: format!("t2-{}", i),
             value: i as f64,
@@ -315,9 +315,9 @@ async fn test_batch_delete_with_query_filter() {
     // Mark all visible (tenant_id=1) rows as deleted and save.
     ctx.set::<BatchItem>().clear_entries();
     for item in t1_items {
-        ctx.set::<BatchItem>().attach(item);
+        ctx.attach::<BatchItem>(item);
     }
-    ctx.set::<BatchItem>().remove_all();
+    ctx.remove_all::<BatchItem>();
 
     let deleted = ctx.save_changes().await.expect("delete");
     assert_eq!(

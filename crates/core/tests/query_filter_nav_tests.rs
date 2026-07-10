@@ -88,7 +88,7 @@ async fn make_ctx() -> DbContext {
 async fn hasmany_navigation_respects_tenant_filter() {
     let mut ctx = make_ctx().await;
 
-    ctx.set::<NavTenantBlog>().add(NavTenantBlog {
+    ctx.add::<NavTenantBlog>(NavTenantBlog {
         blog_id: 0,
         url: "https://tenant.example".into(),
         posts: HasMany::new(),
@@ -103,14 +103,14 @@ async fn hasmany_navigation_respects_tenant_filter() {
         .blog_id;
 
     // Insert posts across two tenants. INSERTs are not filtered.
-    ctx.set::<NavTenantPost>().add(NavTenantPost {
+    ctx.add::<NavTenantPost>(NavTenantPost {
         post_id: 0,
         title: "own-tenant".into(),
         blog_id,
         tenant_id: 1,
         comments: HasMany::new(),
     });
-    ctx.set::<NavTenantPost>().add(NavTenantPost {
+    ctx.add::<NavTenantPost>(NavTenantPost {
         post_id: 0,
         title: "other-tenant".into(),
         blog_id,
@@ -147,7 +147,7 @@ async fn hasmany_navigation_without_filter_returns_all() {
     ctx.set::<NavTenantComment>();
     ctx.ensure_created().await.expect("ensure_created");
 
-    ctx.set::<NavTenantBlog>().add(NavTenantBlog {
+    ctx.add::<NavTenantBlog>(NavTenantBlog {
         blog_id: 0,
         url: "https://nofilter.example".into(),
         posts: HasMany::new(),
@@ -161,14 +161,14 @@ async fn hasmany_navigation_without_filter_returns_all() {
         .expect("query blog")[0]
         .blog_id;
 
-    ctx.set::<NavTenantPost>().add(NavTenantPost {
+    ctx.add::<NavTenantPost>(NavTenantPost {
         post_id: 0,
         title: "t1".into(),
         blog_id,
         tenant_id: 1,
         comments: HasMany::new(),
     });
-    ctx.set::<NavTenantPost>().add(NavTenantPost {
+    ctx.add::<NavTenantPost>(NavTenantPost {
         post_id: 0,
         title: "t2".into(),
         blog_id,
@@ -193,7 +193,7 @@ async fn hasmany_navigation_without_filter_returns_all() {
 async fn nested_include_respects_tenant_filter() {
     let mut ctx = make_ctx().await;
 
-    ctx.set::<NavTenantBlog>().add(NavTenantBlog {
+    ctx.add::<NavTenantBlog>(NavTenantBlog {
         blog_id: 0,
         url: "https://nested-tenant.example".into(),
         posts: HasMany::new(),
@@ -208,7 +208,7 @@ async fn nested_include_respects_tenant_filter() {
         .blog_id;
 
     // Insert a same-tenant post.
-    ctx.set::<NavTenantPost>().add(NavTenantPost {
+    ctx.add::<NavTenantPost>(NavTenantPost {
         post_id: 0,
         title: "own-post".into(),
         blog_id,
@@ -225,13 +225,13 @@ async fn nested_include_respects_tenant_filter() {
         .post_id;
 
     // Insert comments across two tenants on the same post.
-    ctx.set::<NavTenantComment>().add(NavTenantComment {
+    ctx.add::<NavTenantComment>(NavTenantComment {
         comment_id: 0,
         text: "own-tenant-comment".into(),
         post_id,
         tenant_id: 1,
     });
-    ctx.set::<NavTenantComment>().add(NavTenantComment {
+    ctx.add::<NavTenantComment>(NavTenantComment {
         comment_id: 0,
         text: "other-tenant-comment".into(),
         post_id,

@@ -9,10 +9,11 @@ mod save_phases;
 mod save_pipeline;
 mod set_ops;
 
+pub(crate) use crate::cascade::resolve_delete_behavior;
 pub use context::DbContext;
 pub use options::{DbContextOptions, DbContextOptionsBuilder};
 pub use save_phases::{
-    delete_deleted_phase, insert_added_phase, save_one_set, update_modified_phase,
-    upsert_added_phase, SaveChangesResult,
+    delete_deleted_phase, insert_added_phase, update_modified_phase, upsert_added_phase,
+    SaveChangesResult,
 };
-pub(crate) use set_ops::{resolve_delete_behavior, ErasedSetOps, SetOps};
+pub(crate) use set_ops::{ErasedSetOps, SetOps};

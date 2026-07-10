@@ -28,7 +28,7 @@
 //!
 //! // Owned: fresh instance, direct &mut self access — no locks needed.
 //! let mut ctx: DbContext = provider.get_owned().expect("DbContext");
-//! ctx.set::<Blog>().add(blog);
+//! ctx.add::<Blog>(blog);
 //! ctx.save_changes().await?;
 //! ```
 //!
@@ -48,7 +48,7 @@
 //! #[async_trait]
 //! impl IRequestHandler<CreateBlogRequest, BlogModel> for CreateBlogHandler {
 //!     async fn handle(&mut self, req: CreateBlogRequest) -> Result<BlogModel> {
-//!         self.ctx.set::<Blog>().add(blog);
+//!         self.ctx.add::<Blog>(blog);
 //!         self.ctx.save_changes().await?;
 //!         // ...
 //!     }

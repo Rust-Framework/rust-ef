@@ -36,7 +36,7 @@ async fn cascade_insert_blog_with_posts() {
             },
         ]),
     };
-    ctx.set::<CascadeBlog>().add(blog);
+    ctx.add::<CascadeBlog>(blog);
     ctx.save_changes().await.unwrap();
 
     let blogs = ctx.set::<CascadeBlog>().query().to_list().await.unwrap();
@@ -70,7 +70,7 @@ async fn cascade_empty_has_many_noop() {
         url: "https://empty.example".into(),
         posts: HasMany::new(),
     };
-    ctx.set::<CascadeBlog>().add(blog);
+    ctx.add::<CascadeBlog>(blog);
     ctx.save_changes().await.unwrap();
 
     let blogs = ctx.set::<CascadeBlog>().query().to_list().await.unwrap();

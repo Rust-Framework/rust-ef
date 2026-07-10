@@ -1,17 +1,19 @@
 //! Save pipeline phase functions, cascade drain helpers, and result type.
 //!
-//! - `save_one_set` + 4 phase functions: per-DbSet DML execution
 //! - `drain_cascade_adds` / `drain_cascade_deletes`: extracted from
 //!   `save_changes` to keep `save_pipeline.rs` under 500 lines
+//! - 4 phase functions: per-DbSet DML execution, joining DbSet entries
+//!   with ChangeTracker state by `entry_id`
 //! - `SaveChangesResult`: save outcome summary
 
 use crate::change_executor::ChangeExecutor;
 use crate::db_set::DbSet;
-use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
+use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IGetKeyValues};
 use crate::entity_snapshot::EntitySnapshot;
 use crate::error::{EFError, EFResult};
 use crate::metadata::EntityTypeMeta;
 use crate::provider::{IAsyncConnection, IDatabaseProvider};
+use crate::tracking::ChangeTracker;
 use std::any::TypeId;
 use std::collections::HashMap;
 
@@ -23,9 +25,6 @@ use crate::cascade::{CascadeDeleteDirective, DrainedChild, FixupLink};
 
 impl super::DbContext {
     /// Iteratively drains HasMany/M2M children from Added principals.
-    /// Drained children are added to their target DbSet as Added (if new) or
-    /// attached as Unchanged (if existing). Repeats until no new children are
-    /// extracted (handles arbitrary depth).
     pub(super) fn drain_cascade_adds(
         &mut self,
         type_ids: &[TypeId],
@@ -50,7 +49,11 @@ impl super::DbContext {
                             type_id
                         ))
                     })?;
-                all_drained.extend(saver.drain_cascade_children(set.as_mut(), meta));
+                all_drained.extend(saver.drain_cascade_children(
+                    set.as_mut(),
+                    &self.change_tracker,
+                    meta,
+                ));
             }
             if all_drained.is_empty() {
                 break;
@@ -69,9 +72,11 @@ impl super::DbContext {
                         child.child_type_id
                     ))
                 })?;
-                if let Some(child_idx) =
-                    child_saver.add_cascade_child(child_set.as_mut(), child.child)
-                {
+                if let Some(child_idx) = child_saver.add_cascade_child(
+                    child_set.as_mut(),
+                    &mut self.change_tracker,
+                    child.child,
+                ) {
                     if let Some(link) = fixup_links.iter_mut().find(|l| {
                         l.parent_type_id == child.parent_type_id
                             && l.parent_entry_idx == child.parent_entry_idx
@@ -124,8 +129,12 @@ impl super::DbContext {
                             type_id
                         ))
                     })?;
-                let (drained, directives) =
-                    saver.drain_cascade_deleted_children(set.as_mut(), meta, processed);
+                let (drained, directives) = saver.drain_cascade_deleted_children(
+                    set.as_mut(),
+                    &self.change_tracker,
+                    meta,
+                    processed,
+                );
                 all_drained_deleted.extend(drained);
                 delete_directives.extend(directives);
             }
@@ -146,7 +155,11 @@ impl super::DbContext {
                         child.child_type_id
                     ))
                 })?;
-                child_saver.add_cascade_deleted_child(child_set.as_mut(), child.child);
+                child_saver.add_cascade_deleted_child(
+                    child_set.as_mut(),
+                    &mut self.change_tracker,
+                    child.child,
+                );
             }
         }
         Ok(delete_directives)
@@ -154,55 +167,49 @@ impl super::DbContext {
 }
 
 // ---------------------------------------------------------------------------
-// Per-DbSet phase functions
+// Per-DbSet phase functions — join DbSet entries with ChangeTracker by entry_id
 // ---------------------------------------------------------------------------
-
-#[allow(clippy::type_complexity)]
-pub async fn save_one_set<E>(
-    conn: &mut dyn IAsyncConnection,
-    provider: &dyn IDatabaseProvider,
-    db_set: &mut DbSet<E>,
-    meta: &EntityTypeMeta,
-) -> EFResult<(usize, usize, usize)>
-where
-    E: IEntityType + IEntitySnapshot + IGetKeyValues + IFromRow,
-{
-    let query_filter = db_set.query_filter().cloned();
-    let ac = insert_added_phase(conn, provider, db_set, meta).await?;
-    let ac_upsert = upsert_added_phase(conn, provider, db_set, meta).await?;
-    let uc = update_modified_phase(conn, provider, db_set, meta, query_filter.as_ref()).await?;
-    let dc = delete_deleted_phase(conn, provider, db_set, meta, query_filter.as_ref()).await?;
-    Ok((ac + ac_upsert, uc, dc))
-}
 
 /// Phase 1a: INSERT Added (non-upsert) entities, then backfill generated PKs.
 pub async fn insert_added_phase<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
     db_set: &mut DbSet<E>,
+    tracker: &ChangeTracker,
     meta: &EntityTypeMeta,
 ) -> EFResult<usize>
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues,
 {
-    let added: Vec<(&E, &EntityTypeMeta)> = db_set
-        .tracked_by_state(EntityState::Added)
-        .into_iter()
-        .filter(|(_, _, _, is_upsert)| !*is_upsert)
-        .map(|(e, _, _, _)| (e, meta))
+    let added_indices: Vec<usize> = db_set
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| tracker.entry_state(e.entry_id) == Some(EntityState::Added))
+        .filter(|(_, e)| !tracker.entry_is_upsert(e.entry_id))
+        .map(|(i, _)| i)
         .collect();
-    if added.is_empty() {
+    if added_indices.is_empty() {
         return Ok(0);
     }
-    let added_count = added.len();
-    let mut generated_keys: Vec<i64> = vec![0; added_count];
-    let inserted = ChangeExecutor::execute_inserts(conn, provider, &added, |idx, key| {
+    let added_refs: Vec<(&E, &EntityTypeMeta)> = added_indices
+        .iter()
+        .map(|&i| (&db_set.entries[i].entity, meta))
+        .collect();
+    let mut generated_keys: Vec<i64> = vec![0; added_indices.len()];
+    let inserted = ChangeExecutor::execute_inserts(conn, provider, &added_refs, |idx, key| {
         if idx < generated_keys.len() {
             generated_keys[idx] = key;
         }
     })
     .await?;
-    db_set.backfill_added_keys(&generated_keys);
+    for (i, &entry_idx) in added_indices.iter().enumerate() {
+        if let Some(&key) = generated_keys.get(i) {
+            if key != 0 {
+                db_set.entries[entry_idx].entity.set_auto_increment_key(key);
+            }
+        }
+    }
     Ok(inserted)
 }
 
@@ -210,17 +217,19 @@ where
 pub async fn upsert_added_phase<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
-    db_set: &mut DbSet<E>,
+    db_set: &DbSet<E>,
+    tracker: &ChangeTracker,
     meta: &EntityTypeMeta,
 ) -> EFResult<usize>
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues,
 {
     let upserts: Vec<(&E, &EntityTypeMeta)> = db_set
-        .tracked_by_state(EntityState::Added)
-        .into_iter()
-        .filter(|(_, _, _, is_upsert)| *is_upsert)
-        .map(|(e, _, _, _)| (e, meta))
+        .entries
+        .iter()
+        .filter(|e| tracker.entry_state(e.entry_id) == Some(EntityState::Added))
+        .filter(|e| tracker.entry_is_upsert(e.entry_id))
+        .map(|e| (&e.entity, meta))
         .collect();
     if upserts.is_empty() {
         return Ok(0);
@@ -229,11 +238,11 @@ where
 }
 
 /// Phase 2: UPDATE Modified entities (partial update via modified_properties).
-#[allow(clippy::type_complexity)]
 pub async fn update_modified_phase<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
-    db_set: &mut DbSet<E>,
+    db_set: &DbSet<E>,
+    tracker: &ChangeTracker,
     meta: &EntityTypeMeta,
     query_filter: Option<&crate::query::BoolExpr>,
 ) -> EFResult<usize>
@@ -241,9 +250,14 @@ where
     E: IEntityType + IEntitySnapshot + IGetKeyValues,
 {
     let modified: Vec<(&E, &EntityTypeMeta, Option<&EntitySnapshot>, &[String])> = db_set
-        .tracked_by_state(EntityState::Modified)
-        .into_iter()
-        .map(|(e, orig, mods, _)| (e, meta, orig, mods))
+        .entries
+        .iter()
+        .filter(|e| tracker.entry_state(e.entry_id) == Some(EntityState::Modified))
+        .map(|e| {
+            let original = tracker.entry_original(e.entry_id);
+            let modified_props = tracker.entry_modified(e.entry_id).unwrap_or(&[]);
+            (&e.entity, meta, original, modified_props)
+        })
         .collect();
     if modified.is_empty() {
         return Ok(0);
@@ -252,11 +266,11 @@ where
 }
 
 /// Phase 3: DELETE Deleted entities.
-#[allow(clippy::type_complexity)]
 pub async fn delete_deleted_phase<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
-    db_set: &mut DbSet<E>,
+    db_set: &DbSet<E>,
+    tracker: &ChangeTracker,
     meta: &EntityTypeMeta,
     query_filter: Option<&crate::query::BoolExpr>,
 ) -> EFResult<usize>
@@ -264,9 +278,13 @@ where
     E: IEntityType + IEntitySnapshot + IGetKeyValues,
 {
     let deleted: Vec<(&E, &EntityTypeMeta, Option<&EntitySnapshot>)> = db_set
-        .tracked_by_state(EntityState::Deleted)
-        .into_iter()
-        .map(|(e, orig, _, _)| (e, meta, orig))
+        .entries
+        .iter()
+        .filter(|e| tracker.entry_state(e.entry_id) == Some(EntityState::Deleted))
+        .map(|e| {
+            let original = tracker.entry_original(e.entry_id);
+            (&e.entity, meta, original)
+        })
         .collect();
     if deleted.is_empty() {
         return Ok(0);

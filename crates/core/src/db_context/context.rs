@@ -15,7 +15,9 @@
 //! across threads (aligned with EFCore).
 
 use crate::db_set::DbSet;
-use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use crate::entity::{
+    EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
+};
 use crate::error::{EFError, EFResult};
 use crate::interceptor::InterceptorPipeline;
 use crate::metadata::EntityTypeMeta;
@@ -159,11 +161,13 @@ impl DbContext {
     pub fn detect_changes(&mut self) {
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         for type_id in type_ids {
-            if let Some(set) = self.sets.get_mut(&type_id) {
-                if let Some(saver) = self.savers.get(&type_id) {
-                    saver.detect_changes(set.as_mut());
-                }
-            }
+            let Some(set) = self.sets.get_mut(&type_id) else {
+                continue;
+            };
+            let Some(saver) = self.savers.get(&type_id) else {
+                continue;
+            };
+            saver.detect_changes(set.as_mut(), &mut self.change_tracker);
         }
     }
 
@@ -303,7 +307,7 @@ impl DbContext {
     ///
     /// ```rust,ignore
     /// ctx.use_transaction(|ctx| Box::pin(async move {
-    ///     ctx.set::<Blog>().add(blog);
+    ///     ctx.add::<Blog>(blog);
     ///     ctx.save_changes().await?;
     ///     Ok(())
     /// })).await?;
@@ -335,5 +339,186 @@ impl DbContext {
                 Err(e)
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Entity mutation methods — coordinate DbSet + ChangeTracker
+// ---------------------------------------------------------------------------
+
+impl DbContext {
+    /// Ensures the entity type is registered (saver, metadata, model builder).
+    /// Returns `(type_id, type_name)`.
+    fn ensure_registered<T>(&mut self) -> (TypeId, String)
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+    {
+        let type_id = TypeId::of::<T>();
+        self.savers
+            .entry(type_id)
+            .or_insert_with(|| Box::new(SetOps::<T>::new()));
+        self.entity_metas
+            .entry(type_id)
+            .or_insert_with(T::entity_meta);
+        if !self.model_builder.has_entity(type_id) {
+            self.model_builder.register_entity_meta(T::entity_meta());
+        }
+        let type_name = self.entity_metas[&type_id].type_name.to_string();
+        (type_id, type_name)
+    }
+
+    /// Adds a new entity in `Added` state. The entity will be INSERTed during
+    /// `save_changes()`.
+    pub fn add<T>(&mut self, entity: T)
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+    {
+        let (type_id, type_name) = self.ensure_registered::<T>();
+        let entry_id =
+            self.change_tracker
+                .track(type_id, &type_name, EntityState::Added, None, false);
+        self.set::<T>().push_entry(entity, entry_id);
+    }
+
+    /// Attaches an existing entity in `Unchanged` state with a snapshot for
+    /// future change detection.
+    pub fn attach<T>(&mut self, entity: T)
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+    {
+        let (type_id, type_name) = self.ensure_registered::<T>();
+        let snapshot = entity.snapshot();
+        let entry_id = self.change_tracker.track(
+            type_id,
+            &type_name,
+            EntityState::Unchanged,
+            Some(snapshot),
+            false,
+        );
+        self.set::<T>().push_entry(entity, entry_id);
+    }
+
+    /// Marks an entity as `Modified` — all fields will be UPDATEd during
+    /// `save_changes()`.
+    pub fn update<T>(&mut self, entity: T)
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+    {
+        let (type_id, type_name) = self.ensure_registered::<T>();
+        let entry_id =
+            self.change_tracker
+                .track(type_id, &type_name, EntityState::Modified, None, false);
+        self.set::<T>().push_entry(entity, entry_id);
+    }
+
+    /// Marks an entity for upsert (INSERT ... ON CONFLICT DO UPDATE).
+    pub fn upsert<T>(&mut self, entity: T)
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+    {
+        let (type_id, type_name) = self.ensure_registered::<T>();
+        let entry_id =
+            self.change_tracker
+                .track(type_id, &type_name, EntityState::Added, None, true);
+        self.set::<T>().push_entry(entity, entry_id);
+    }
+
+    /// Marks the entity at the given index as `Deleted`.
+    pub fn remove_at<T>(&mut self, index: usize) -> EFResult<()>
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+    {
+        let entry_id = self
+            .set::<T>()
+            .entry_id_at(index)
+            .ok_or_else(|| EFError::not_found("Entity not found at the given index".to_string()))?;
+        self.change_tracker
+            .set_state(entry_id, EntityState::Deleted);
+        Ok(())
+    }
+
+    /// Marks all entities of type `T` as `Deleted`.
+    pub fn remove_all<T>(&mut self)
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+    {
+        let entry_ids: Vec<u64> = self.set::<T>().entries.iter().map(|e| e.entry_id).collect();
+        for entry_id in entry_ids {
+            self.change_tracker
+                .set_state(entry_id, EntityState::Deleted);
+        }
+    }
+
+    /// Loads all rows from the database into the DbSet as `Unchanged`.
+    /// Clears existing entries and tracker state for type `T` first.
+    pub async fn load_all<T>(&mut self) -> EFResult<()>
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IFromRow
+            + INavigationSetter
+            + crate::entity::ILazyInit
+            + Send
+            + Sync
+            + 'static,
+    {
+        let type_id = TypeId::of::<T>();
+        let items = self.set::<T>().query().to_list().await?;
+        self.set::<T>().clear_entries();
+        self.change_tracker.clear_by_type(type_id);
+        for item in items {
+            self.attach::<T>(item);
+        }
+        Ok(())
     }
 }

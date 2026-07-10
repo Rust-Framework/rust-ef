@@ -41,7 +41,7 @@ async fn count_items(ctx: &mut DbContext) -> i64 {
 }
 
 async fn add_item(ctx: &mut DbContext, name: &str) {
-    ctx.set::<TxnItem>().add(TxnItem {
+    ctx.add::<TxnItem>(TxnItem {
         id: 0,
         name: name.into(),
     });

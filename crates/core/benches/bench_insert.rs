@@ -39,7 +39,7 @@ async fn fresh_ctx() -> DbContext {
 async fn insert_n(n: usize) {
     let mut ctx = fresh_ctx().await;
     for i in 0..n {
-        ctx.set::<BenchWidget>().add(BenchWidget {
+        ctx.add::<BenchWidget>(BenchWidget {
             id: 0,
             name: format!("widget-{i}"),
             value: i as f64 * 1.5,

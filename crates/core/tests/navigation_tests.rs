@@ -56,7 +56,7 @@ mod navigation_tests {
         ctx.set::<NavPost>();
         ctx.ensure_created().await.unwrap();
 
-        ctx.set::<NavBlog>().add(NavBlog {
+        ctx.add::<NavBlog>(NavBlog {
             blog_id: 0,
             url: "https://test.example".into(),
             posts: HasMany::new(),
@@ -66,14 +66,14 @@ mod navigation_tests {
         let blogs = ctx.set::<NavBlog>().query().to_list().await.unwrap();
         let blog_id = blogs[0].blog_id;
 
-        ctx.set::<NavPost>().add(NavPost {
+        ctx.add::<NavPost>(NavPost {
             post_id: 0,
             title: "First".into(),
             blog_id,
             blog: BelongsTo::new(),
             comments: HasMany::new(),
         });
-        ctx.set::<NavPost>().add(NavPost {
+        ctx.add::<NavPost>(NavPost {
             post_id: 0,
             title: "Second".into(),
             blog_id,
@@ -110,7 +110,7 @@ mod navigation_tests {
         ctx.set::<NavComment>();
         ctx.ensure_created().await.unwrap();
 
-        ctx.set::<NavBlog>().add(NavBlog {
+        ctx.add::<NavBlog>(NavBlog {
             blog_id: 0,
             url: "https://nested.example".into(),
             posts: HasMany::new(),
@@ -118,7 +118,7 @@ mod navigation_tests {
         ctx.save_changes().await.unwrap();
         let blog_id = ctx.set::<NavBlog>().query().to_list().await.unwrap()[0].blog_id;
 
-        ctx.set::<NavPost>().add(NavPost {
+        ctx.add::<NavPost>(NavPost {
             post_id: 0,
             title: "Post A".into(),
             blog_id,
@@ -128,12 +128,12 @@ mod navigation_tests {
         ctx.save_changes().await.unwrap();
         let post_id = ctx.set::<NavPost>().query().to_list().await.unwrap()[0].post_id;
 
-        ctx.set::<NavComment>().add(NavComment {
+        ctx.add::<NavComment>(NavComment {
             comment_id: 0,
             text: "Great post".into(),
             post_id,
         });
-        ctx.set::<NavComment>().add(NavComment {
+        ctx.add::<NavComment>(NavComment {
             comment_id: 0,
             text: "Thanks".into(),
             post_id,

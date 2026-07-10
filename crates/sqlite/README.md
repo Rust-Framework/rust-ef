@@ -63,31 +63,25 @@ let rows = conn.query(
 
 ```rust
 use lref::prelude::*;
-use lref_provider_sqlite::SqliteProvider;
-use std::sync::Arc;
+use lref::db_context::{DbContext, DbContextOptionsBuilder};
+use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
 
 #[tokio::main]
 async fn main() -> Result<(), EFError> {
-    let provider = Arc::new(SqliteProvider::new_in_memory()?);
+    let mut builder = DbContextOptionsBuilder::new();
+    builder.use_sqlite_in_memory();
+    let mut ctx = DbContext::from_options(&builder.build())?;
 
-    // Create table
-    let engine = lref::migration::MigrationEngine::new(
-        lref::migration::MigrationDialect::Sqlite
-    );
-    let migration = engine.generate("init", &[Blog::entity_meta()], &None)?;
-    provider.execute_migration_command(&migration.up_sql).await?;
-
-    // CRUD operations via DbSet
-    let mut db_set = DbSet::<Blog>::with_provider("blogs", provider.clone());
+    // 建表
+    ctx.set::<Blog>();
+    ctx.ensure_created().await?;
 
     // INSERT
-    db_set.add(Blog { blog_id: 0, url: "https://example.com".into(), rating: 5, posts: HasMany::new() });
-    lref::db_context::save_one_set(...).await?;
+    ctx.add::<Blog>(Blog { blog_id: 0, url: "https://example.com".into(), rating: 5, posts: HasMany::new() });
+    ctx.save_changes().await?;
 
     // SELECT
-    let blogs = db_set.query()
-        .filter_column("rating", ">", 3)
-        .to_list().await?;
+    let blogs = ctx.set::<Blog>().query().to_list().await?;
 
     Ok(())
 }

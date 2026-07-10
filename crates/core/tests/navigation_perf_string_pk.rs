@@ -300,7 +300,7 @@ async fn test_string_pk_has_many_include() {
     let mut ctx = make_string_pk_ctx().await;
 
     for code in &["p1", "p2", "p3"] {
-        ctx.set::<StringPkParent>().add(StringPkParent {
+        ctx.add::<StringPkParent>(StringPkParent {
             code: (*code).to_string(),
             name: format!("parent-{}", code),
             children: HasMany::new(),
@@ -310,7 +310,7 @@ async fn test_string_pk_has_many_include() {
 
     for code in &["p1", "p2", "p3"] {
         for c in 0..2 {
-            ctx.set::<StringPkChild>().add(StringPkChild {
+            ctx.add::<StringPkChild>(StringPkChild {
                 id: 0,
                 parent_code: (*code).to_string(),
                 label: format!("{}-{}", code, c),

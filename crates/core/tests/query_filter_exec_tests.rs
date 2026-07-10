@@ -159,7 +159,7 @@ async fn make_ctx() -> DbContext {
 /// Helper: insert a row with the given id/tenant_id/name via DbContext.
 /// INSERT ignores query filters, so cross-tenant inserts succeed here.
 async fn insert_row(ctx: &mut DbContext, id: i32, tenant_id: i32, name: &str) {
-    ctx.set::<TenantItem>().add(TenantItem {
+    ctx.add::<TenantItem>(TenantItem {
         id,
         tenant_id,
         name: name.into(),
@@ -172,7 +172,7 @@ async fn update_across_tenant_filtered_out() {
     let mut ctx = make_ctx().await;
     insert_row(&mut ctx, 10, 2, "other-tenant").await;
 
-    ctx.set::<TenantItem>().update(TenantItem {
+    ctx.update::<TenantItem>(TenantItem {
         id: 10,
         tenant_id: 2,
         name: "tampered".into(),
@@ -191,12 +191,12 @@ async fn delete_across_tenant_filtered_out() {
     let mut ctx = make_ctx().await;
     insert_row(&mut ctx, 20, 2, "other-tenant").await;
 
-    ctx.set::<TenantItem>().attach(TenantItem {
+    ctx.attach::<TenantItem>(TenantItem {
         id: 20,
         tenant_id: 2,
         name: "other-tenant".into(),
     });
-    ctx.set::<TenantItem>().remove_at(0).expect("mark deleted");
+    ctx.remove_at::<TenantItem>(0).expect("mark deleted");
     let err = ctx.save_changes().await.unwrap_err();
     match err {
         EFError::ConcurrencyConflict(msg, _) => {
@@ -211,7 +211,7 @@ async fn update_within_tenant_succeeds() {
     let mut ctx = make_ctx().await;
     insert_row(&mut ctx, 30, 1, "own-tenant").await;
 
-    ctx.set::<TenantItem>().update(TenantItem {
+    ctx.update::<TenantItem>(TenantItem {
         id: 30,
         tenant_id: 1,
         name: "renamed".into(),

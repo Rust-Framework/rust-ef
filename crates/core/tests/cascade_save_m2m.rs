@@ -33,7 +33,7 @@ async fn cascade_insert_many_to_many() {
             },
         ]),
     };
-    ctx.set::<CascadeStudent>().add(student);
+    ctx.add::<CascadeStudent>(student);
     ctx.save_changes().await.unwrap();
 
     let students = ctx.set::<CascadeStudent>().query().to_list().await.unwrap();
@@ -80,11 +80,11 @@ async fn cascade_delete_m2m_join_rows() {
             title: "Math".into(),
         }]),
     };
-    ctx.set::<CascadeStudent>().add(student);
+    ctx.add::<CascadeStudent>(student);
     ctx.save_changes().await.unwrap();
 
     // Mark student Deleted — M2M join rows should be deleted, course preserved
-    ctx.set::<CascadeStudent>().remove_at(0).unwrap();
+    ctx.remove_at::<CascadeStudent>(0).unwrap();
     ctx.save_changes().await.unwrap();
 
     let students = ctx.set::<CascadeStudent>().query().to_list().await.unwrap();

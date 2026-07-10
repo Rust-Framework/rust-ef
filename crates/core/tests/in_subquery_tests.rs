@@ -44,12 +44,12 @@ async fn seed(ctx: &mut DbContext) {
     ctx.ensure_created().await.unwrap();
 
     // Two blogs.
-    ctx.set::<SubBlog>().add(SubBlog {
+    ctx.add::<SubBlog>(SubBlog {
         blog_id: 0,
         url: "https://a.example".into(),
         posts: HasMany::new(),
     });
-    ctx.set::<SubBlog>().add(SubBlog {
+    ctx.add::<SubBlog>(SubBlog {
         blog_id: 0,
         url: "https://b.example".into(),
         posts: HasMany::new(),
@@ -60,13 +60,13 @@ async fn seed(ctx: &mut DbContext) {
     let blog_a = blogs[0].blog_id;
 
     // Blog A has 2 posts; Blog B has 0 posts.
-    ctx.set::<SubPost>().add(SubPost {
+    ctx.add::<SubPost>(SubPost {
         post_id: 0,
         title: "A1".into(),
         blog_id: blog_a,
         blog: BelongsTo::new(),
     });
-    ctx.set::<SubPost>().add(SubPost {
+    ctx.add::<SubPost>(SubPost {
         post_id: 0,
         title: "A2".into(),
         blog_id: blog_a,
@@ -172,7 +172,7 @@ async fn test_in_subquery_empty_subquery_result() {
     ctx.set::<SubPost>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<SubBlog>().add(SubBlog {
+    ctx.add::<SubBlog>(SubBlog {
         blog_id: 0,
         url: "https://empty.example".into(),
         posts: HasMany::new(),
@@ -197,7 +197,7 @@ async fn test_not_in_subquery_empty_subquery_result() {
     ctx.set::<SubPost>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<SubBlog>().add(SubBlog {
+    ctx.add::<SubBlog>(SubBlog {
         blog_id: 0,
         url: "https://empty.example".into(),
         posts: HasMany::new(),

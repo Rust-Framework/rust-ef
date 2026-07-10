@@ -141,7 +141,7 @@ where
         }
     }
     // detect_changes compares current snapshot vs original → marks as Modified
-    ctx.set::<Article>().detect_changes();
+    ctx.detect_changes();
 }
 
 // ---------------------------------------------------------------------------
@@ -156,19 +156,19 @@ async fn main() -> EFResult<()> {
 
     // -- Step 1: Insert articles --
     println!("[1] Inserting articles...");
-    ctx.set::<Article>().add(Article {
+    ctx.add::<Article>(Article {
         id: 0,
         title: "Getting Started with rust-ef".into(),
         body: "An introduction to the ORM...".into(),
         is_deleted: false,
     });
-    ctx.set::<Article>().add(Article {
+    ctx.add::<Article>(Article {
         id: 0,
         title: "Advanced Query Patterns".into(),
         body: "Explore linq! macro forms A/B/C...".into(),
         is_deleted: false,
     });
-    ctx.set::<Article>().add(Article {
+    ctx.add::<Article>(Article {
         id: 0,
         title: "Soft Delete Best Practices".into(),
         body: "Use global filters + manual flagging...".into(),
@@ -192,7 +192,7 @@ async fn main() -> EFResult<()> {
     // `save_changes()` in Step 1 also cleared the tracker. To modify entities
     // via the change tracker, we must first load them as tracked (Unchanged).
     // `load_all()` queries (filter applied) and attaches each row.
-    ctx.set::<Article>().load_all().await?;
+    ctx.load_all::<Article>().await?;
     {
         let target_title = "Advanced Query Patterns".to_string();
         soft_delete_entries(&mut ctx, |a| a.title == target_title);

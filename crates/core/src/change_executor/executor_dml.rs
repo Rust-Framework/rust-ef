@@ -6,7 +6,6 @@ use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, PropertyMeta};
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
 use crate::query::{collect_bool_expr_values, compile_bool_expr, BoolExpr};
-use std::collections::HashMap;
 
 use super::executor::ChangeExecutor;
 
@@ -199,7 +198,6 @@ impl ChangeExecutor {
         E: IEntityType + IEntitySnapshot + IGetKeyValues,
     {
         let mut updated = 0;
-        let mut sql_cache: HashMap<(String, Vec<String>, String), String> = HashMap::new();
 
         // Hoist metadata-derived collections outside the per-entity loop —
         // all entities share the same EntityTypeMeta (same type E), so
@@ -255,14 +253,7 @@ impl ChangeExecutor {
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
 
-            let sql = sql_cache
-                .entry((
-                    table_name.to_string(),
-                    set_cols.iter().map(|s| (*s).to_string()).collect(),
-                    where_clause.clone(),
-                ))
-                .or_insert_with(|| gen.update(table_name, &set_cols, &where_clause))
-                .clone();
+            let sql = gen.update(table_name, &set_cols, &where_clause);
 
             let mut params: Vec<DbValue> = set_props
                 .iter()

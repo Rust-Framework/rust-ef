@@ -34,7 +34,7 @@ async fn seed() -> DbContext {
         .iter()
         .enumerate()
     {
-        ctx.set::<LbItem>().add(LbItem {
+        ctx.add::<LbItem>(LbItem {
             id: 0,
             name: (*name).into(),
             value: *value,

@@ -53,7 +53,7 @@ async fn seeded_ctx(n_blogs: usize, posts_per_blog: usize) -> DbContext {
     ctx.ensure_created().await.expect("ensure_created");
 
     for b in 0..n_blogs {
-        ctx.set::<BenchBlog>().add(BenchBlog {
+        ctx.add::<BenchBlog>(BenchBlog {
             blog_id: 0,
             url: format!("https://blog-{b}.example"),
             posts: HasMany::new(),
@@ -70,7 +70,7 @@ async fn seeded_ctx(n_blogs: usize, posts_per_blog: usize) -> DbContext {
         .expect("blogs");
     for blog in &blogs {
         for p in 0..posts_per_blog {
-            ctx.set::<BenchPost>().add(BenchPost {
+            ctx.add::<BenchPost>(BenchPost {
                 post_id: 0,
                 title: format!("post-{}-{}", blog.blog_id, p),
                 blog_id: blog.blog_id,

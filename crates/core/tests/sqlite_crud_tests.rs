@@ -10,10 +10,15 @@ mod sqlite_crud {
     use rust_ef::error::EFResult;
     use rust_ef::linq;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
-    use rust_ef::migration::{MigrationDialect, MigrationEngine};
-    use rust_ef::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
-    use rust_ef_sqlite::SqliteProvider;
-    use std::sync::Arc;
+    use rust_ef::provider::DbValue;
+
+    fn make_ctx() -> rust_ef::db_context::DbContext {
+        use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+        use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
+        let mut builder = DbContextOptionsBuilder::new();
+        builder.use_sqlite_in_memory();
+        DbContext::from_options(&builder.build()).expect("ctx")
+    }
 
     // -----------------------------------------------------------------------
     // Test entity: a minimal entity without derive (manual impl for test isolation)
@@ -148,78 +153,36 @@ mod sqlite_crud {
     }
 
     // -----------------------------------------------------------------------
-    // Helper: create table via migration engine
-    // -----------------------------------------------------------------------
-
-    async fn create_table(provider: &SqliteProvider, _table_name: &str) -> EFResult<()> {
-        let engine = MigrationEngine::new(MigrationDialect::Sqlite);
-        let meta = TestItem::entity_meta();
-        let migration = engine.generate("init", &[meta], &None)?;
-
-        // Create migration history table first, then run migration
-        let history_sql =
-            rust_ef::migration::create_migration_history_table_sql(MigrationDialect::Sqlite);
-        provider.execute_migration_command(&history_sql).await?;
-
-        // Strip out the history INSERT (it's a separate statement at the end)
-        let ddl = migration
-            .up_sql
-            .lines()
-            .filter(|l| !l.starts_with("INSERT INTO"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        provider.execute_migration_command(&ddl).await
-    }
-
-    // -----------------------------------------------------------------------
     // Tests
     // -----------------------------------------------------------------------
 
     #[tokio::test]
     async fn test_insert_and_query() {
-        let provider = SqliteProvider::new_in_memory().expect("create sqlite provider");
-        let arc_provider = Arc::new(provider);
+        let mut ctx = make_ctx();
+        ctx.set::<TestItem>();
+        ctx.ensure_created().await.expect("ensure_created");
 
-        create_table(&arc_provider, "test_items")
-            .await
-            .expect("create table");
-
-        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
-            "test_items",
-            arc_provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        );
-
-        // Insert
-        db_set.add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "Alpha".into(),
             value: 1.0,
         });
-        db_set.add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "Beta".into(),
             value: 2.0,
         });
-        assert_eq!(db_set.len(), 2);
 
-        // Save
-        let mut conn: Box<dyn IAsyncConnection> =
-            arc_provider.get_connection().await.expect("get connection");
-        conn.begin_transaction().await.expect("begin tx");
-        let (added, _, _) = rust_ef::db_context::save_one_set(
-            &mut *conn,
-            &*arc_provider,
-            &mut db_set,
-            &TestItem::entity_meta(),
-        )
-        .await
-        .expect("save");
-        conn.commit_transaction().await.expect("commit");
-        assert_eq!(added, 2);
-        db_set.clear_entries();
+        let result = ctx.save_changes().await.expect("save");
+        assert_eq!(result.added, 2);
 
-        // Query back
-        let items = db_set.query().to_list().await.expect("query to_list");
+        ctx.set::<TestItem>().clear_entries();
+        let items = ctx
+            .set::<TestItem>()
+            .query()
+            .to_list()
+            .await
+            .expect("query to_list");
         assert_eq!(items.len(), 2);
 
         let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
@@ -229,44 +192,31 @@ mod sqlite_crud {
 
     #[tokio::test]
     async fn test_filter_with_in_operator() {
-        let provider = Arc::new(SqliteProvider::new_in_memory().expect("create db"));
-        create_table(&provider, "test_items").await.unwrap();
+        let mut ctx = make_ctx();
+        ctx.set::<TestItem>();
+        ctx.ensure_created().await.expect("ensure_created");
 
-        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
-            "test_items",
-            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        );
-        db_set.add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "A".into(),
             value: 1.0,
         });
-        db_set.add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "B".into(),
             value: 2.0,
         });
-        db_set.add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "C".into(),
             value: 3.0,
         });
-
-        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
-        conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(
-            &mut *conn,
-            &*provider,
-            &mut db_set,
-            &TestItem::entity_meta(),
-        )
-        .await
-        .unwrap();
-        conn.commit_transaction().await.unwrap();
-        db_set.clear_entries();
+        ctx.save_changes().await.unwrap();
+        ctx.set::<TestItem>().clear_entries();
 
         // Query with linq filter
-        let items = db_set
+        let items = ctx
+            .set::<TestItem>()
             .filter(linq!(TestItem, |t| t.value > 1.5))
             .to_list()
             .await
@@ -274,7 +224,8 @@ mod sqlite_crud {
         assert_eq!(items.len(), 2);
 
         // Query with IS NULL via linq
-        let items_null = db_set
+        let items_null = ctx
+            .set::<TestItem>()
             .filter(linq!(TestItem, |t| t.value.is_null()))
             .to_list()
             .await
@@ -282,7 +233,8 @@ mod sqlite_crud {
         assert_eq!(items_null.len(), 0);
 
         // Query with IS NOT NULL via linq
-        let items_not_null = db_set
+        let items_not_null = ctx
+            .set::<TestItem>()
             .filter(linq!(TestItem, |t| t.name.is_not_null()))
             .to_list()
             .await
@@ -292,82 +244,71 @@ mod sqlite_crud {
 
     #[tokio::test]
     async fn test_limit_and_offset() {
-        let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
-        create_table(&provider, "test_items").await.unwrap();
+        let mut ctx = make_ctx();
+        ctx.set::<TestItem>();
+        ctx.ensure_created().await.expect("ensure_created");
 
-        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
-            "test_items",
-            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        );
         for i in 0..10 {
-            db_set.add(TestItem {
+            ctx.add::<TestItem>(TestItem {
                 id: 0,
                 name: format!("Item{}", i),
                 value: i as f64,
             });
         }
-        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
-        conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(
-            &mut *conn,
-            &*provider,
-            &mut db_set,
-            &TestItem::entity_meta(),
-        )
-        .await
-        .unwrap();
-        conn.commit_transaction().await.unwrap();
-        db_set.clear_entries();
+        ctx.save_changes().await.unwrap();
+        ctx.set::<TestItem>().clear_entries();
 
         // Test take
-        let items = db_set.query().take(3).to_list().await.unwrap();
+        let items = ctx
+            .set::<TestItem>()
+            .query()
+            .take(3)
+            .to_list()
+            .await
+            .unwrap();
         assert_eq!(items.len(), 3);
 
         // Test skip + take
-        let items = db_set.query().skip(8).take(5).to_list().await.unwrap();
+        let items = ctx
+            .set::<TestItem>()
+            .query()
+            .skip(8)
+            .take(5)
+            .to_list()
+            .await
+            .unwrap();
         assert_eq!(items.len(), 2);
     }
 
     #[tokio::test]
     async fn test_count_and_any() {
-        let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
-        create_table(&provider, "test_items").await.unwrap();
+        let mut ctx = make_ctx();
+        ctx.set::<TestItem>();
+        ctx.ensure_created().await.expect("ensure_created");
 
-        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
-            "test_items",
-            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        );
         for i in 0..5 {
-            db_set.add(TestItem {
+            ctx.add::<TestItem>(TestItem {
                 id: 0,
                 name: "X".into(),
                 value: i as f64,
             });
         }
-        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
-        conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(
-            &mut *conn,
-            &*provider,
-            &mut db_set,
-            &TestItem::entity_meta(),
-        )
-        .await
-        .unwrap();
-        conn.commit_transaction().await.unwrap();
-        db_set.clear_entries();
+        ctx.save_changes().await.unwrap();
+        ctx.set::<TestItem>().clear_entries();
 
-        let count = db_set.query().count().await.unwrap();
+        let count = ctx.set::<TestItem>().query().count().await.unwrap();
         assert_eq!(count, 5);
 
-        let any = db_set
+        let any = ctx
+            .set::<TestItem>()
             .filter(linq!(TestItem, |t| t.value == 3))
             .any()
             .await
             .unwrap();
         assert!(any);
 
-        let any_none = db_set
+        let any_none = ctx
+            .set::<TestItem>()
             .filter(linq!(TestItem, |t| t.value == 99))
             .any()
             .await
@@ -377,87 +318,80 @@ mod sqlite_crud {
 
     #[tokio::test]
     async fn test_update_and_delete() {
-        let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
-        create_table(&provider, "test_items").await.unwrap();
+        let mut ctx = make_ctx();
+        ctx.set::<TestItem>();
+        ctx.ensure_created().await.expect("ensure_created");
 
-        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
-            "test_items",
-            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        );
-        db_set.add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "ToUpdate".into(),
             value: 10.0,
         });
-        db_set.add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "ToDelete".into(),
             value: 20.0,
         });
+        ctx.save_changes().await.unwrap();
+        ctx.set::<TestItem>().clear_entries();
 
-        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
-        conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(
-            &mut *conn,
-            &*provider,
-            &mut db_set,
-            &TestItem::entity_meta(),
-        )
-        .await
-        .unwrap();
-        conn.commit_transaction().await.unwrap();
-        db_set.clear_entries();
-
-        // Load entities from DB, then modify
-        let items = db_set.query().to_list().await.unwrap();
+        // Load from DB, modify, and update
+        let items = ctx.set::<TestItem>().query().to_list().await.unwrap();
         let mut item_to_update = items
             .iter()
             .find(|i| i.name == "ToUpdate")
             .cloned()
             .unwrap();
         item_to_update.value = 99.0;
-        db_set.add(item_to_update); // Add as new (in real use, this would be Modified state)
+        ctx.update::<TestItem>(item_to_update);
+        ctx.save_changes().await.expect("update save");
 
-        // Requery to verify state
-        let items = db_set.query().to_list().await.unwrap();
-        assert_eq!(items.len(), 2);
+        // Load, attach, and delete
+        ctx.set::<TestItem>().clear_entries();
+        let items = ctx.set::<TestItem>().query().to_list().await.unwrap();
+        let item_to_delete = items
+            .iter()
+            .find(|i| i.name == "ToDelete")
+            .cloned()
+            .unwrap();
+        ctx.attach::<TestItem>(item_to_delete);
+        ctx.remove_at::<TestItem>(0).expect("remove_at");
+        ctx.save_changes().await.expect("delete save");
+
+        // Verify: 1 item remains, and it's the updated one
+        ctx.set::<TestItem>().clear_entries();
+        let items = ctx.set::<TestItem>().query().to_list().await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "ToUpdate");
+        assert!(
+            (items[0].value - 99.0).abs() < f64::EPSILON,
+            "value should be 99.0, got {}",
+            items[0].value
+        );
     }
 
     #[tokio::test]
     async fn test_aggregation_queries() {
-        let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
-        create_table(&provider, "test_items").await.unwrap();
+        let mut ctx = make_ctx();
+        ctx.set::<TestItem>();
+        ctx.ensure_created().await.expect("ensure_created");
 
-        let mut db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
-            "test_items",
-            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        );
         for i in 1..=5 {
-            db_set.add(TestItem {
+            ctx.add::<TestItem>(TestItem {
                 id: 0,
                 name: "Agg".into(),
                 value: i as f64,
             });
         }
-        let mut conn: Box<dyn IAsyncConnection> = provider.get_connection().await.unwrap();
-        conn.begin_transaction().await.unwrap();
-        rust_ef::db_context::save_one_set(
-            &mut *conn,
-            &*provider,
-            &mut db_set,
-            &TestItem::entity_meta(),
-        )
-        .await
-        .unwrap();
-        conn.commit_transaction().await.unwrap();
-        db_set.clear_entries();
+        ctx.save_changes().await.unwrap();
+        ctx.set::<TestItem>().clear_entries();
 
-        let sum = linq!(db_set.query(), |b: TestItem| true; sum b.value)
+        let sum = linq!(ctx.set::<TestItem>().query(), |b: TestItem| true; sum b.value)
             .await
             .unwrap();
         assert!((sum - 15.0).abs() < 0.01, "sum should be 15.0, got {}", sum);
 
-        let avg = linq!(db_set.query(), |b: TestItem| true; avg b.value)
+        let avg = linq!(ctx.set::<TestItem>().query(), |b: TestItem| true; avg b.value)
             .await
             .unwrap();
         assert!((avg - 3.0).abs() < 0.01, "avg should be 3.0, got {}", avg);
@@ -465,24 +399,25 @@ mod sqlite_crud {
 
     #[tokio::test]
     async fn test_empty_result_handling() {
-        let provider = Arc::new(SqliteProvider::new_in_memory().unwrap());
-        create_table(&provider, "test_items").await.unwrap();
+        let mut ctx = make_ctx();
+        ctx.set::<TestItem>();
+        ctx.ensure_created().await.expect("ensure_created");
 
-        let db_set = rust_ef::db_set::DbSet::<TestItem>::with_provider(
-            "test_items",
-            provider.clone() as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        );
-
-        let items = db_set.query().to_list().await.unwrap();
+        let items = ctx.set::<TestItem>().query().to_list().await.unwrap();
         assert!(items.is_empty());
 
-        let count = db_set.query().count().await.unwrap();
+        let count = ctx.set::<TestItem>().query().count().await.unwrap();
         assert_eq!(count, 0);
 
-        let any = db_set.query().any().await.unwrap();
+        let any = ctx.set::<TestItem>().query().any().await.unwrap();
         assert!(!any);
 
-        let first = db_set.query().first_or_default().await.unwrap();
+        let first = ctx
+            .set::<TestItem>()
+            .query()
+            .first_or_default()
+            .await
+            .unwrap();
         assert!(first.is_none());
     }
 
@@ -498,7 +433,7 @@ mod sqlite_crud {
         ctx.set::<TestItem>();
 
         ctx.ensure_created().await.expect("ensure_created");
-        ctx.set::<TestItem>().add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "Created".into(),
             value: 1.0,

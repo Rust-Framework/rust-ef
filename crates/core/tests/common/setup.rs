@@ -42,12 +42,12 @@ pub async fn run_crud_lifecycle(
     reset_schema(&*provider, dialect).await?;
 
     let mut ctx = db_context_with_provider(provider);
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Alpha".into(),
         value: 1.0,
     });
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Beta".into(),
         value: 2.0,
@@ -63,13 +63,13 @@ pub async fn run_crud_lifecycle(
         .find(|i| i.name == "Alpha")
         .expect("Alpha row");
     ctx.set::<TestItem>().clear_entries();
-    ctx.set::<TestItem>().attach(one);
+    ctx.attach::<TestItem>(one);
     ctx.set::<TestItem>()
         .tracked_entries_mut()
         .next()
         .unwrap()
         .name = "AlphaUpdated".into();
-    ctx.set::<TestItem>().detect_changes();
+    ctx.detect_changes();
     let updated = ctx.save_changes().await?;
     assert_eq!(updated.updated, 1);
 
@@ -77,13 +77,13 @@ pub async fn run_crud_lifecycle(
     assert!(after_update.iter().any(|i| i.name == "AlphaUpdated"));
 
     ctx.set::<TestItem>().clear_entries();
-    ctx.set::<TestItem>().attach(
+    ctx.attach::<TestItem>(
         after_update
             .into_iter()
             .find(|i| i.name == "Beta")
             .expect("Beta row"),
     );
-    ctx.set::<TestItem>().remove_at(0).unwrap();
+    ctx.remove_at::<TestItem>(0).unwrap();
     let deleted = ctx.save_changes().await?;
     assert_eq!(deleted.deleted, 1);
     assert_eq!(ctx.set::<TestItem>().query().count().await?, 1);
@@ -99,17 +99,17 @@ pub async fn run_filter_with_in_operator(
     use rust_ef::linq;
     reset_schema(&*provider, dialect).await?;
     let mut ctx = db_context_with_provider(provider);
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "A".into(),
         value: 1.0,
     });
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "B".into(),
         value: 2.0,
     });
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "C".into(),
         value: 3.0,
@@ -147,7 +147,7 @@ pub async fn run_limit_and_offset(
     reset_schema(&*provider, dialect).await?;
     let mut ctx = db_context_with_provider(provider);
     for i in 0..10 {
-        ctx.set::<TestItem>().add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: format!("Item{}", i),
             value: i as f64,
@@ -178,7 +178,7 @@ pub async fn run_count_and_any(
     reset_schema(&*provider, dialect).await?;
     let mut ctx = db_context_with_provider(provider);
     for i in 0..5 {
-        ctx.set::<TestItem>().add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "X".into(),
             value: i as f64,
@@ -214,7 +214,7 @@ pub async fn run_aggregation_queries(
     reset_schema(&*provider, dialect).await?;
     let mut ctx = db_context_with_provider(provider);
     for i in 1..=5 {
-        ctx.set::<TestItem>().add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: "Agg".into(),
             value: i as f64,
@@ -267,7 +267,7 @@ pub async fn run_ensure_created_and_deleted(
     ctx.set::<TestItem>();
     ctx.ensure_created().await?;
 
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Created".into(),
         value: 1.0,

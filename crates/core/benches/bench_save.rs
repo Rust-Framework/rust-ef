@@ -32,7 +32,7 @@ async fn seeded_ctx(n: usize) -> DbContext {
     ctx.ensure_created().await.expect("ensure_created");
 
     for i in 0..n {
-        ctx.set::<BenchSaveWidget>().add(BenchSaveWidget {
+        ctx.add::<BenchSaveWidget>(BenchSaveWidget {
             id: 0,
             name: format!("widget-{i}"),
             value: i as f64,
@@ -57,7 +57,7 @@ async fn batch_update(n: usize) {
         .expect("load");
     ctx.set::<BenchSaveWidget>().clear_entries();
     for item in items {
-        ctx.set::<BenchSaveWidget>().attach(item);
+        ctx.attach::<BenchSaveWidget>(item);
     }
 
     // Modify every entity.
@@ -65,7 +65,7 @@ async fn batch_update(n: usize) {
         entry.value += 1.0;
     }
 
-    ctx.set::<BenchSaveWidget>().detect_changes();
+    ctx.detect_changes();
     let result = ctx.save_changes().await.expect("save");
     assert_eq!(result.updated, n, "all rows should be updated");
 }
@@ -83,10 +83,10 @@ async fn batch_delete(n: usize) {
         .expect("load");
     ctx.set::<BenchSaveWidget>().clear_entries();
     for item in items {
-        ctx.set::<BenchSaveWidget>().attach(item);
+        ctx.attach::<BenchSaveWidget>(item);
     }
 
-    ctx.set::<BenchSaveWidget>().remove_all();
+    ctx.remove_all::<BenchSaveWidget>();
     let result = ctx.save_changes().await.expect("save");
     assert_eq!(result.deleted, n, "all rows should be deleted");
 }

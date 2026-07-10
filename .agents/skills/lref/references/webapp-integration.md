@@ -242,7 +242,7 @@ impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHan
         // 3. 构造实体并插入
         let now = chrono::Utc::now().timestamp();
         let mut blog = req.to_entity(uid, now);
-        self.ctx.set::<Blog>().add(blog);
+        self.ctx.add::<Blog>(blog);
         self.ctx.save_changes().await?;
         // blog.id 已自动填充——无需回查
 
@@ -284,7 +284,7 @@ impl IRequestHandler<UpdateBlogPostRequest, BlogPostModel> for UpdateBlogPostHan
         req.apply_to(&mut blog, uid, now);
 
         // 4. 保存（detect_changes 仅标记实际变更的字段）
-        self.ctx.set::<Blog>().detect_changes();
+        self.ctx.detect_changes();
         self.ctx.save_changes().await?;
 
         // 5. 回查导航属性（按主键）
@@ -323,7 +323,7 @@ impl IRequestHandler<DeleteBlogPostRequest, String> for DeleteBlogPostHandler {
         blog.is_deleted = true;
         blog.updated_at = chrono::Utc::now().timestamp();
         blog.updated_id = Some(uid);
-        self.ctx.set::<Blog>().detect_changes();
+        self.ctx.detect_changes();
         self.ctx.save_changes().await?;
 
         Ok(format!("Deleted blog {}", req.slug))
@@ -423,7 +423,7 @@ impl IRequestHandler<CreateBlogPostRequest, BlogPostModel> for CreateBlogPostHan
 
 ```rust
 // 新增后，id 已可用
-ctx.set::<Blog>().add(blog);
+ctx.add::<Blog>(blog);
 ctx.save_changes().await?;
 println!("新 ID: {}", blog.id); // 已填充
 // 需要导航属性时，按主键回查
@@ -481,7 +481,7 @@ let query = ctx.set::<Article>().query();
 let mut article = query.find(id).await?.unwrap();
 article.is_deleted = true;
 article.updated_at = now;
-ctx.set::<Article>().detect_changes();  // 仅标记变更字段
+ctx.detect_changes();  // 仅标记变更字段
 ctx.save_changes().await?;
 ```
 

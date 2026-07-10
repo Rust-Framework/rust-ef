@@ -5,9 +5,9 @@
 ## 事务行为
 
 ```rust
-ctx.set::<Blog>().add(blog1);
-ctx.set::<Post>().add(post1);
-ctx.set::<Blog>().update(blog2);
+ctx.add::<Blog>(blog1);
+ctx.add::<Post>(post1);
+ctx.update::<Blog>(blog2);
 
 // 以下所有操作在一个事务内执行：
 // INSERT INTO blogs ...

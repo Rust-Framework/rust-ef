@@ -7,7 +7,7 @@
 `save_changes()` 内部会自动调用 `detect_changes()`：
 
 ```rust
-ctx.set::<Blog>().attach(blog);  // 记录快照
+ctx.attach::<Blog>(blog);  // 记录快照
 blog.rating = 99;                 // 修改属性
 
 // save_changes 内部自动 detect_changes，发现差异后生成 UPDATE
@@ -29,7 +29,7 @@ for blog in modified {
 
 ## 快照机制
 
-`attach()` 时，`DbSet` 会调用 `entity.snapshot()` 保存一份 `HashMap<String, DbValue>`。`detect_changes()` 对比当前 `snapshot()` 与原始值，若不同则标记为 `Modified`。
+`attach()` 时，`DbContext` 会调用 `entity.snapshot()` 保存一份 `EntitySnapshot`。`detect_changes()` 对比当前 `snapshot()` 与原始值，若不同则标记为 `Modified`。
 
 ## 设计要点
 

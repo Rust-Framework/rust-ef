@@ -35,7 +35,7 @@ async fn seeded_ctx(n: usize) -> DbContext {
     ctx.set::<BenchWidget>();
     ctx.ensure_created().await.expect("ensure_created");
     for i in 0..n {
-        ctx.set::<BenchWidget>().add(BenchWidget {
+        ctx.add::<BenchWidget>(BenchWidget {
             id: 0,
             name: format!("widget-{i}"),
             value: i as f64 * 1.5,

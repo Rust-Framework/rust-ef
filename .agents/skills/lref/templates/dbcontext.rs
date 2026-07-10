@@ -30,7 +30,7 @@ async fn main() -> Result<(), EFError> {
     ctx.ensure_created().await?;
 
     // --- 5. Use entity sets ---
-    ctx.set::<Blog>().add(Blog {
+    ctx.add::<Blog>(Blog {
         id: 0,
         slug: "hello-world".into(),
         title: "Hello World".into(),

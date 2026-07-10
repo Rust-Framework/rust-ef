@@ -5,7 +5,7 @@
 ## 创建（Create）
 
 ```rust
-ctx.set::<Blog>().add(Blog {
+ctx.add::<Blog>(Blog {
     blog_id: 0,          // 自增主键，INSERT 后自动回填
     url: "https://example.com".into(),
     rating: 5,
@@ -36,22 +36,23 @@ let blog = ctx.set::<Blog>().query().find(1).await?;
 let mut blog = ctx.set::<Blog>().query().find(1).await?.unwrap();
 blog.rating = 10;
 
-ctx.set::<Blog>().update(blog);
+ctx.update::<Blog>(blog);
 ctx.save_changes().await?;
 ```
 
 ## 删除（Delete）
 
 ```rust
-let mut set = ctx.set::<Blog>();
-let blogs = set.query().to_list().await?;
+let blogs = ctx.set::<Blog>().query().to_list().await?;
+ctx.set::<Blog>().clear_entries();
 
 // 按条件标记删除
-for (i, blog) in blogs.iter().enumerate() {
+for blog in blogs {
     if blog.rating < 2 {
-        set.remove_at(i)?;
+        ctx.attach::<Blog>(blog);
     }
 }
+ctx.remove_all::<Blog>();
 
 ctx.save_changes().await?;
 ```

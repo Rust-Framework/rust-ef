@@ -1,0 +1,7 @@
+﻿cmd : cmd.exe execution failed with exit code: 101
+At line:15 char:6158
++ ... pgrep\bin'; cmd /c "cargo check --workspace --all-targets --message-f ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [__Safe-Rm-Invoke-Cmd], Exception
+    + FullyQualifiedErrorId : CmdExecutionFailed,__Safe-Rm-Invoke-Cmd
+ 

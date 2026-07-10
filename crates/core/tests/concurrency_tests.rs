@@ -37,7 +37,7 @@ async fn seed_one() -> (DbContext, ConcItem) {
     ctx.set::<ConcItem>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<ConcItem>().add(ConcItem {
+    ctx.add::<ConcItem>(ConcItem {
         id: 0,
         name: "alpha".into(),
         row_version: 1,
@@ -78,7 +78,7 @@ async fn test_update_conflict_stale_token() {
     let (mut ctx, item) = seed_one().await;
 
     ctx.set::<ConcItem>().clear_entries();
-    ctx.set::<ConcItem>().attach(item);
+    ctx.attach::<ConcItem>(item);
 
     // Modify the entity — bump name and row_version (app-level token increment)
     ctx.set::<ConcItem>()
@@ -93,7 +93,7 @@ async fn test_update_conflict_stale_token() {
         .await
         .unwrap();
 
-    ctx.set::<ConcItem>().detect_changes();
+    ctx.detect_changes();
     let result = ctx.save_changes().await;
     assert!(
         matches!(result, Err(EFError::ConcurrencyConflict(..))),
@@ -106,8 +106,8 @@ async fn test_delete_conflict_stale_token() {
     let (mut ctx, item) = seed_one().await;
 
     ctx.set::<ConcItem>().clear_entries();
-    ctx.set::<ConcItem>().attach(item);
-    ctx.set::<ConcItem>().remove_at(0).unwrap();
+    ctx.attach::<ConcItem>(item);
+    ctx.remove_at::<ConcItem>(0).unwrap();
 
     // Simulate another writer bumping row_version in the database.
     let mut conn = ctx.provider().get_connection().await.unwrap();
@@ -127,7 +127,7 @@ async fn test_update_succeeds_no_concurrent_modification() {
     let (mut ctx, item) = seed_one().await;
 
     ctx.set::<ConcItem>().clear_entries();
-    ctx.set::<ConcItem>().attach(item);
+    ctx.attach::<ConcItem>(item);
 
     // Modify name and increment row_version (app-level token strategy).
     {
@@ -136,7 +136,7 @@ async fn test_update_succeeds_no_concurrent_modification() {
         entry.row_version += 1;
     }
 
-    ctx.set::<ConcItem>().detect_changes();
+    ctx.detect_changes();
     ctx.save_changes().await.unwrap();
 
     // Verify the update persisted.
@@ -151,8 +151,8 @@ async fn test_delete_succeeds_no_concurrent_modification() {
     let (mut ctx, item) = seed_one().await;
 
     ctx.set::<ConcItem>().clear_entries();
-    ctx.set::<ConcItem>().attach(item);
-    ctx.set::<ConcItem>().remove_at(0).unwrap();
+    ctx.attach::<ConcItem>(item);
+    ctx.remove_at::<ConcItem>(0).unwrap();
 
     ctx.save_changes().await.unwrap();
 
@@ -167,7 +167,7 @@ async fn test_update_after_token_refresh() {
     let (mut ctx, item) = seed_one().await;
 
     ctx.set::<ConcItem>().clear_entries();
-    ctx.set::<ConcItem>().attach(item);
+    ctx.attach::<ConcItem>(item);
     ctx.set::<ConcItem>()
         .tracked_entries_mut()
         .next()
@@ -180,7 +180,7 @@ async fn test_update_after_token_refresh() {
         .await
         .unwrap();
 
-    ctx.set::<ConcItem>().detect_changes();
+    ctx.detect_changes();
     let result = ctx.save_changes().await;
     assert!(matches!(result, Err(EFError::ConcurrencyConflict(..))));
 
@@ -197,13 +197,13 @@ async fn test_update_after_token_refresh() {
         .unwrap();
     assert_eq!(fresh.row_version, 99, "fresh load should see bumped token");
 
-    ctx.set::<ConcItem>().attach(fresh);
+    ctx.attach::<ConcItem>(fresh);
     {
         let entry = ctx.set::<ConcItem>().tracked_entries_mut().next().unwrap();
         entry.name = "delta".into();
         entry.row_version += 1; // 99 → 100
     }
-    ctx.set::<ConcItem>().detect_changes();
+    ctx.detect_changes();
     ctx.save_changes().await.unwrap();
 
     let rows = ctx.set::<ConcItem>().query().to_list().await.unwrap();

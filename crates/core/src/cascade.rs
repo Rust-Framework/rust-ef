@@ -7,6 +7,8 @@
 //! - [`FixupLink`]: records the parent→child association for post-INSERT FK
 //!   fixup (one-to-many) or join-row insertion (M2M).
 
+use crate::metadata::{NavigationKind, NavigationMeta};
+use crate::relations::DeleteBehavior;
 use std::any::{Any, TypeId};
 
 /// A child entity drained from a principal's HasMany navigation, with the
@@ -87,4 +89,34 @@ pub struct CascadeDeleteDirective {
     pub principal_pk: i64,
     /// The action to perform.
     pub action: CascadeDeleteAction,
+}
+
+// ---------------------------------------------------------------------------
+// Delete behavior resolution
+// ---------------------------------------------------------------------------
+
+/// Resolves the effective `DeleteBehavior` for a navigation, applying
+/// EFCore-style defaults when `delete_behavior` is `None`:
+/// - ManyToMany → Cascade (join rows are always pruned)
+/// - required FK (non-nullable type, e.g. `i32`) → Cascade
+/// - optional FK (nullable type, e.g. `Option<i32>`) → Restrict
+pub fn resolve_delete_behavior(nav: &NavigationMeta) -> DeleteBehavior {
+    if let Some(b) = nav.delete_behavior {
+        return b;
+    }
+    if nav.kind == NavigationKind::ManyToMany {
+        return DeleteBehavior::Cascade;
+    }
+    if let Some(meta_fn) = nav.related_entity_meta {
+        let child_meta = meta_fn();
+        if let Some(fk_prop) = child_meta.properties.iter().find(|p| p.is_foreign_key) {
+            let is_nullable = fk_prop.type_name.contains("Option");
+            return if is_nullable {
+                DeleteBehavior::Restrict
+            } else {
+                DeleteBehavior::Cascade
+            };
+        }
+    }
+    DeleteBehavior::Cascade
 }

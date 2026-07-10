@@ -16,7 +16,7 @@ categories = ["database"]
 # and collapses native variants to their canonical string form in
 # `type_conversion.rs` (SQLite has no native TIMESTAMPTZ/UUID type — TEXT is
 # the correct storage, matching v1.0 behavior).
-rust-ef = { version = "1.7.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
+rust-ef = { version = "1.8.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 r2d2 = "0.8"

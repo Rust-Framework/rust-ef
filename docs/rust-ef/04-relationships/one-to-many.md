@@ -45,7 +45,7 @@ pub struct Post {
 
 ```rust
 // 创建父实体和子实体
-ctx.set::<Blog>().add(Blog {
+ctx.add::<Blog>(Blog {
     blog_id: 0,
     url: "https://example.com".into(),
     posts: HasMany::new(),
@@ -54,7 +54,7 @@ ctx.save_changes().await?;
 
 let blog_id = ctx.set::<Blog>().query().to_list().await?[0].blog_id;
 
-ctx.set::<Post>().add(Post {
+ctx.add::<Post>(Post {
     post_id: 0,
     title: "Hello".into(),
     blog_id,

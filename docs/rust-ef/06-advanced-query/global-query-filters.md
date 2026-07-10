@@ -97,13 +97,13 @@ ctx.model().has_query_filter::<Article>(
 );
 
 // 2) 软删除：载入 → 改字段 → 标记 → 保存
-ctx.set::<Article>().load_all().await?;
+ctx.load_all::<Article>().await?;
 for entry in ctx.set::<Article>().tracked_entries_mut() {
     if entry.title == "outdated" {
         entry.is_deleted = true;
     }
 }
-ctx.set::<Article>().detect_changes();
+ctx.detect_changes();
 ctx.save_changes().await?;   // 生成 UPDATE ... WHERE id=? AND is_deleted=false
 ```
 

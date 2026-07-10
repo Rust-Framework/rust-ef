@@ -10,7 +10,6 @@ mod common;
 
 use common::TestItem;
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
-use rust_ef::db_set::IDbSet;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 fn make_ctx() -> DbContext {
@@ -27,7 +26,7 @@ async fn partial_modify_sets_only_dirty_column() {
     ctx.ensure_created().await.expect("ensure_created");
 
     // Seed one row.
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Alpha".into(),
         value: 1.0,
@@ -38,7 +37,7 @@ async fn partial_modify_sets_only_dirty_column() {
     let items = ctx.set::<TestItem>().query().to_list().await.expect("load");
     let item = items.into_iter().next().expect("one row");
     ctx.set::<TestItem>().clear_entries();
-    ctx.set::<TestItem>().attach(item);
+    ctx.attach::<TestItem>(item);
 
     // Modify only `name`; leave `value` untouched.
     {
@@ -46,14 +45,14 @@ async fn partial_modify_sets_only_dirty_column() {
         entry.name = "Alpha2".into();
     }
 
-    ctx.set::<TestItem>().detect_changes();
+    ctx.detect_changes();
 
     // The entry should now be in Modified state.
     let states: Vec<_> = ctx
-        .set::<TestItem>()
-        .entries_with_state()
+        .change_tracker()
+        .entries()
         .into_iter()
-        .map(|(_, s)| s)
+        .map(|e| e.state)
         .collect();
     assert!(
         states.contains(&rust_ef::entity::EntityState::Modified),
@@ -86,7 +85,7 @@ async fn full_modify_when_no_detection() {
     ctx.set::<TestItem>();
     ctx.ensure_created().await.expect("ensure_created");
 
-    ctx.set::<TestItem>().add(TestItem {
+    ctx.add::<TestItem>(TestItem {
         id: 0,
         name: "Gamma".into(),
         value: 5.0,
@@ -101,7 +100,7 @@ async fn full_modify_when_no_detection() {
     // Directly mark as Modified without detect_changes — modified_properties
     // stays empty, so all non-PK columns are SET.
     ctx.set::<TestItem>().clear_entries();
-    ctx.set::<TestItem>().update(item);
+    ctx.update::<TestItem>(item);
     ctx.save_changes().await.expect("full modify save");
 
     let rows = ctx
@@ -129,7 +128,7 @@ async fn batch_insert_backfills_auto_increment_pk() {
 
     let names = ["Alpha", "Bravo", "Charlie", "Delta"];
     for name in names {
-        ctx.set::<TestItem>().add(TestItem {
+        ctx.add::<TestItem>(TestItem {
             id: 0,
             name: name.into(),
             value: 1.0,

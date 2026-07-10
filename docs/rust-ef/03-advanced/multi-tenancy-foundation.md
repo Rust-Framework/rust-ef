@@ -85,7 +85,7 @@ let blog = Blog {
     title: "My Blog".into(),
     ..
 };
-ctx.set::<Blog>().add(blog);
+ctx.add::<Blog>(blog);
 ctx.save_changes().await?;
 ```
 
@@ -165,7 +165,7 @@ async fn run() -> EFResult<()> {
     ctx.ensure_created().await?;
 
     // INSERT：手动设置 tenant_id
-    ctx.set::<Blog>().add(Blog {
+    ctx.add::<Blog>(Blog {
         id: 0,
         tenant_id: 1,
         title: "Tenant 1 Blog".into(),

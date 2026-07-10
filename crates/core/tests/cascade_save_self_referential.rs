@@ -36,7 +36,7 @@ async fn cascade_insert_self_referential_tree() {
             },
         ]),
     };
-    ctx.set::<CascadeCategory>().add(root);
+    ctx.add::<CascadeCategory>(root);
     ctx.save_changes().await.unwrap();
 
     let categories = ctx
@@ -95,7 +95,7 @@ async fn cascade_delete_self_referential() {
             },
         ]),
     };
-    ctx.set::<CascadeCategory>().add(root);
+    ctx.add::<CascadeCategory>(root);
     ctx.save_changes().await.unwrap();
 
     // Re-query with include to populate children, then mark Deleted
@@ -119,8 +119,8 @@ async fn cascade_delete_self_referential() {
 
     let root_idx = loaded.iter().position(|c| c.name == "Root").unwrap();
     let root_entity = loaded.into_iter().nth(root_idx).unwrap();
-    ctx.set::<CascadeCategory>().attach(root_entity);
-    ctx.set::<CascadeCategory>().remove_at(0).unwrap();
+    ctx.attach::<CascadeCategory>(root_entity);
+    ctx.remove_at::<CascadeCategory>(0).unwrap();
     ctx.save_changes().await.unwrap();
 
     let categories = ctx

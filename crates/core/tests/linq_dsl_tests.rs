@@ -55,7 +55,7 @@ async fn seed() -> DbContext {
     ctx.set::<DslPost>();
     ctx.ensure_created().await.unwrap();
 
-    ctx.set::<DslBlog>().add(DslBlog {
+    ctx.add::<DslBlog>(DslBlog {
         blog_id: 0,
         title: "Rust".into(),
         rating: 9,
@@ -64,7 +64,7 @@ async fn seed() -> DbContext {
         category: "tech".into(),
         posts: HasMany::new(),
     });
-    ctx.set::<DslBlog>().add(DslBlog {
+    ctx.add::<DslBlog>(DslBlog {
         blog_id: 0,
         title: "Async".into(),
         rating: 7,
@@ -73,7 +73,7 @@ async fn seed() -> DbContext {
         category: "tech".into(),
         posts: HasMany::new(),
     });
-    ctx.set::<DslBlog>().add(DslBlog {
+    ctx.add::<DslBlog>(DslBlog {
         blog_id: 0,
         title: "Cooking".into(),
         rating: 3,
@@ -86,13 +86,13 @@ async fn seed() -> DbContext {
 
     let blogs = ctx.set::<DslBlog>().query().to_list().await.unwrap();
     let tech_id = blogs[0].blog_id;
-    ctx.set::<DslPost>().add(DslPost {
+    ctx.add::<DslPost>(DslPost {
         post_id: 0,
         title: "P1".into(),
         blog_id: tech_id,
         blog: BelongsTo::new(),
     });
-    ctx.set::<DslPost>().add(DslPost {
+    ctx.add::<DslPost>(DslPost {
         post_id: 0,
         title: "P2".into(),
         blog_id: tech_id,

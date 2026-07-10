@@ -40,7 +40,7 @@ impl super::DbContext {
         let mut views: Vec<crate::tracking::EntityEntryView> = Vec::new();
         for (type_id, set) in &self.sets {
             if let Some(saver) = self.savers.get(type_id) {
-                views.extend(saver.collect_entries(set.as_ref()));
+                views.extend(saver.collect_entries(set.as_ref(), &self.change_tracker));
             }
         }
         SaveChangesContext::from_views(views)
@@ -60,7 +60,7 @@ impl super::DbContext {
             let Some(saver) = self.savers.get(type_id) else {
                 continue;
             };
-            saver.detect_changes(set.as_mut());
+            saver.detect_changes(set.as_mut(), &mut self.change_tracker);
         }
 
         let configured_metas: HashMap<TypeId, EntityTypeMeta> = self
@@ -126,7 +126,13 @@ impl super::DbContext {
                     .await;
             };
             let inserted = match saver
-                .insert_added(txn.conn(), &*self.provider, set.as_mut(), meta)
+                .insert_added(
+                    txn.conn(),
+                    &*self.provider,
+                    set.as_mut(),
+                    &self.change_tracker,
+                    meta,
+                )
                 .await
             {
                 Ok(n) => n,
@@ -309,7 +315,13 @@ impl super::DbContext {
                     .await;
             };
             let n = match saver
-                .upsert_added(txn.conn(), &*self.provider, set.as_mut(), meta)
+                .upsert_added(
+                    txn.conn(),
+                    &*self.provider,
+                    set.as_mut(),
+                    &self.change_tracker,
+                    meta,
+                )
                 .await
             {
                 Ok(n) => n,
@@ -345,7 +357,13 @@ impl super::DbContext {
                     .await;
             };
             let n = match saver
-                .update_modified(txn.conn(), &*self.provider, set.as_mut(), meta)
+                .update_modified(
+                    txn.conn(),
+                    &*self.provider,
+                    set.as_mut(),
+                    &self.change_tracker,
+                    meta,
+                )
                 .await
             {
                 Ok(n) => n,
@@ -396,7 +414,13 @@ impl super::DbContext {
                     .await;
             };
             let n = match saver
-                .delete_deleted(txn.conn(), &*self.provider, set.as_mut(), meta)
+                .delete_deleted(
+                    txn.conn(),
+                    &*self.provider,
+                    set.as_mut(),
+                    &self.change_tracker,
+                    meta,
+                )
                 .await
             {
                 Ok(n) => n,
@@ -434,7 +458,7 @@ impl super::DbContext {
                 }
             }
         }
-        self.change_tracker.accept_all_changes();
+        // --- Accept changes: refresh tracker originals, drop Deleted entries ---
         for type_id in &type_ids {
             let Some(saver) = self.savers.get(type_id) else {
                 continue;
@@ -442,7 +466,7 @@ impl super::DbContext {
             let Some(set) = self.sets.get_mut(type_id) else {
                 continue;
             };
-            saver.accept_all_changes(set.as_mut());
+            saver.accept_all_changes(set.as_mut(), &mut self.change_tracker);
         }
 
         let result_ctx = SaveChangesResultContext {

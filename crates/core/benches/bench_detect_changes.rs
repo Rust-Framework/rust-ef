@@ -32,7 +32,7 @@ async fn seeded_ctx(n: usize) -> DbContext {
     ctx.ensure_created().await.expect("ensure_created");
 
     for i in 0..n {
-        ctx.set::<BenchDetectWidget>().add(BenchDetectWidget {
+        ctx.add::<BenchDetectWidget>(BenchDetectWidget {
             id: 0,
             name: format!("widget-{i}"),
             value: i as f64,
@@ -57,7 +57,7 @@ async fn detect_changes_half_modified(n: usize) {
         .expect("load");
     ctx.set::<BenchDetectWidget>().clear_entries();
     for item in items {
-        ctx.set::<BenchDetectWidget>().attach(item);
+        ctx.attach::<BenchDetectWidget>(item);
     }
 
     let half = n / 2;
@@ -72,7 +72,7 @@ async fn detect_changes_half_modified(n: usize) {
     }
 
     // This is the operation under test.
-    ctx.set::<BenchDetectWidget>().detect_changes();
+    ctx.detect_changes();
 }
 
 fn bench_detect_changes(c: &mut Criterion) {
