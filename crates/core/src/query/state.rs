@@ -9,9 +9,10 @@
 
 use crate::provider::DbValue;
 
-use super::ast::{BoolExpr, FilterCondition, HavingExpr, IncludePath, JoinSpec, OrderBy};
+use super::ast::{BoolExpr, FilterCondition, IncludePath, JoinSpec, OrderBy};
 use super::compile::{build_where_clauses, compile_bool_expr, PortablePlaceholderGenerator};
 use super::cte::{CteSpec, SetOpSpec, SetOperator};
+use super::having_expr::HavingExpr;
 use super::window::WindowSpec;
 
 /// Accumulated intent for a single query.
