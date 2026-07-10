@@ -318,7 +318,7 @@ impl EFError {
 - [x] CHANGELOG.md 含 v1.6.0 条目
 - [x] 所有 crate 版本一致（1.6.0）
 - [x] `cargo publish --dry-run` 成功（macros + core）
-- [ ] git tag v1.6.0 已推送（待用户确认）
+- [x] git tag v1.6.0 已推送（6 crate 全部发布至 crates.io）
 
 ---
 
