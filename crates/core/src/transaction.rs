@@ -17,7 +17,7 @@
 //!   Registers the handle as ambient; `save_changes()` calls inside the
 //!   closure reuse the same transaction. Commits on `Ok`, rolls back on `Err`.
 
-use crate::error::EFResult;
+use crate::error::{EFError, EFResult};
 use crate::provider::{IAsyncConnection, IsolationLevel};
 use std::future::Future;
 use std::pin::Pin;
@@ -85,14 +85,18 @@ impl DbTransaction {
 impl ITransaction for DbTransaction {
     fn commit(self: Box<Self>) -> Pin<Box<dyn Future<Output = EFResult<()>> + Send + 'static>> {
         Box::pin(async move {
-            let mut conn = self.conn.expect("transaction already consumed");
+            let mut conn = self
+                .conn
+                .ok_or_else(|| EFError::transaction("transaction already consumed"))?;
             conn.commit_transaction().await
         })
     }
 
     fn rollback(self: Box<Self>) -> Pin<Box<dyn Future<Output = EFResult<()>> + Send + 'static>> {
         Box::pin(async move {
-            let mut conn = self.conn.expect("transaction already consumed");
+            let mut conn = self
+                .conn
+                .ok_or_else(|| EFError::transaction("transaction already consumed"))?;
             conn.rollback_transaction().await
         })
     }

@@ -54,11 +54,13 @@ impl super::DbContext {
         let _save_guard = crate::observability::SaveChangesGuard::new();
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         for type_id in &type_ids {
-            let set = self.sets.get_mut(type_id).unwrap();
-            self.savers
-                .get(type_id)
-                .unwrap()
-                .detect_changes(set.as_mut());
+            let Some(set) = self.sets.get_mut(type_id) else {
+                continue;
+            };
+            let Some(saver) = self.savers.get(type_id) else {
+                continue;
+            };
+            saver.detect_changes(set.as_mut());
         }
 
         let configured_metas: HashMap<TypeId, EntityTypeMeta> = self
@@ -102,12 +104,27 @@ impl super::DbContext {
             if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
                 continue;
             }
-            let saver = self.savers.get(type_id).expect("saver not registered");
-            let set = self.sets.get_mut(type_id).unwrap();
-            let meta = configured_metas
+            let Some(saver) = self.savers.get(type_id) else {
+                continue;
+            };
+            let Some(set) = self.sets.get_mut(type_id) else {
+                continue;
+            };
+            let Some(meta) = configured_metas
                 .get(type_id)
                 .or_else(|| self.entity_metas.get(type_id))
-                .expect("meta not found");
+            else {
+                return self
+                    .fail_save(
+                        txn,
+                        &save_ctx,
+                        EFError::configuration(format!(
+                            "entity metadata not found for {:?}",
+                            type_id
+                        )),
+                    )
+                    .await;
+            };
             let inserted = match saver
                 .insert_added(txn.conn(), &*self.provider, set.as_mut(), meta)
                 .await
@@ -129,8 +146,12 @@ impl super::DbContext {
             for link_idx in &link_indices {
                 let link = &fixup_links[*link_idx];
                 let parent_pk = {
-                    let parent_saver = self.savers.get(&link.parent_type_id).unwrap();
-                    let parent_set = self.sets.get(&link.parent_type_id).unwrap();
+                    let Some(parent_saver) = self.savers.get(&link.parent_type_id) else {
+                        continue;
+                    };
+                    let Some(parent_set) = self.sets.get(&link.parent_type_id) else {
+                        continue;
+                    };
                     parent_saver.get_pk_at(parent_set.as_ref(), link.parent_entry_idx)
                 };
                 let Some(pk) = parent_pk else {
@@ -138,8 +159,12 @@ impl super::DbContext {
                 };
 
                 {
-                    let child_saver = self.savers.get(&link.child_type_id).unwrap();
-                    let child_set = self.sets.get_mut(&link.child_type_id).unwrap();
+                    let Some(child_saver) = self.savers.get(&link.child_type_id) else {
+                        continue;
+                    };
+                    let Some(child_set) = self.sets.get_mut(&link.child_type_id) else {
+                        continue;
+                    };
                     for &child_idx in &link.child_entry_indices {
                         child_saver.set_fk_at(
                             child_set.as_mut(),
@@ -151,10 +176,12 @@ impl super::DbContext {
                 }
 
                 if link.child_type_id == link.parent_type_id {
-                    let child_meta = configured_metas
+                    let Some(child_meta) = configured_metas
                         .get(&link.child_type_id)
                         .or_else(|| self.entity_metas.get(&link.child_type_id))
-                        .unwrap();
+                    else {
+                        continue;
+                    };
                     let fk_col = child_meta
                         .properties
                         .iter()
@@ -169,8 +196,13 @@ impl super::DbContext {
                     if let Some(fk_col) = fk_col {
                         for &child_idx in &link.child_entry_indices {
                             let child_pk = {
-                                let child_saver = self.savers.get(&link.child_type_id).unwrap();
-                                let child_set = self.sets.get(&link.child_type_id).unwrap();
+                                let Some(child_saver) = self.savers.get(&link.child_type_id)
+                                else {
+                                    continue;
+                                };
+                                let Some(child_set) = self.sets.get(&link.child_type_id) else {
+                                    continue;
+                                };
                                 child_saver.get_pk_at(child_set.as_ref(), child_idx)
                             };
                             if let Some(child_pk) = child_pk {
@@ -201,13 +233,21 @@ impl super::DbContext {
             if link.through_table.is_none() {
                 continue;
             }
-            let table = link.through_table.as_ref().unwrap();
-            let parent_col = link.through_parent_fk_col.as_ref().unwrap();
-            let child_col = link.through_child_fk_col.as_ref().unwrap();
+            let (Some(table), Some(parent_col), Some(child_col)) = (
+                link.through_table.as_ref(),
+                link.through_parent_fk_col.as_ref(),
+                link.through_child_fk_col.as_ref(),
+            ) else {
+                continue;
+            };
 
             let parent_pk = {
-                let parent_saver = self.savers.get(&link.parent_type_id).unwrap();
-                let parent_set = self.sets.get(&link.parent_type_id).unwrap();
+                let Some(parent_saver) = self.savers.get(&link.parent_type_id) else {
+                    continue;
+                };
+                let Some(parent_set) = self.sets.get(&link.parent_type_id) else {
+                    continue;
+                };
                 parent_saver.get_pk_at(parent_set.as_ref(), link.parent_entry_idx)
             };
             let Some(parent_pk) = parent_pk else {
@@ -216,8 +256,12 @@ impl super::DbContext {
 
             let mut child_pks: Vec<i64> = Vec::new();
             {
-                let child_saver = self.savers.get(&link.child_type_id).unwrap();
-                let child_set = self.sets.get(&link.child_type_id).unwrap();
+                let Some(child_saver) = self.savers.get(&link.child_type_id) else {
+                    continue;
+                };
+                let Some(child_set) = self.sets.get(&link.child_type_id) else {
+                    continue;
+                };
                 for &child_idx in &link.child_entry_indices {
                     if let Some(child_pk) = child_saver.get_pk_at(child_set.as_ref(), child_idx) {
                         child_pks.push(child_pk);
@@ -244,12 +288,27 @@ impl super::DbContext {
             if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
                 continue;
             }
-            let saver = self.savers.get(type_id).expect("saver not registered");
-            let set = self.sets.get_mut(type_id).unwrap();
-            let meta = configured_metas
+            let Some(saver) = self.savers.get(type_id) else {
+                continue;
+            };
+            let Some(set) = self.sets.get_mut(type_id) else {
+                continue;
+            };
+            let Some(meta) = configured_metas
                 .get(type_id)
                 .or_else(|| self.entity_metas.get(type_id))
-                .expect("meta not found");
+            else {
+                return self
+                    .fail_save(
+                        txn,
+                        &save_ctx,
+                        EFError::configuration(format!(
+                            "entity metadata not found for {:?}",
+                            type_id
+                        )),
+                    )
+                    .await;
+            };
             let n = match saver
                 .upsert_added(txn.conn(), &*self.provider, set.as_mut(), meta)
                 .await
@@ -265,12 +324,27 @@ impl super::DbContext {
             if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
                 continue;
             }
-            let saver = self.savers.get(type_id).expect("saver not registered");
-            let set = self.sets.get_mut(type_id).unwrap();
-            let meta = configured_metas
+            let Some(saver) = self.savers.get(type_id) else {
+                continue;
+            };
+            let Some(set) = self.sets.get_mut(type_id) else {
+                continue;
+            };
+            let Some(meta) = configured_metas
                 .get(type_id)
                 .or_else(|| self.entity_metas.get(type_id))
-                .expect("meta not found");
+            else {
+                return self
+                    .fail_save(
+                        txn,
+                        &save_ctx,
+                        EFError::configuration(format!(
+                            "entity metadata not found for {:?}",
+                            type_id
+                        )),
+                    )
+                    .await;
+            };
             let n = match saver
                 .update_modified(txn.conn(), &*self.provider, set.as_mut(), meta)
                 .await
@@ -301,12 +375,27 @@ impl super::DbContext {
             if !self.sets.contains_key(type_id) || !self.savers.contains_key(type_id) {
                 continue;
             }
-            let saver = self.savers.get(type_id).expect("saver not registered");
-            let set = self.sets.get_mut(type_id).unwrap();
-            let meta = configured_metas
+            let Some(saver) = self.savers.get(type_id) else {
+                continue;
+            };
+            let Some(set) = self.sets.get_mut(type_id) else {
+                continue;
+            };
+            let Some(meta) = configured_metas
                 .get(type_id)
                 .or_else(|| self.entity_metas.get(type_id))
-                .expect("meta not found");
+            else {
+                return self
+                    .fail_save(
+                        txn,
+                        &save_ctx,
+                        EFError::configuration(format!(
+                            "entity metadata not found for {:?}",
+                            type_id
+                        )),
+                    )
+                    .await;
+            };
             let n = match saver
                 .delete_deleted(txn.conn(), &*self.provider, set.as_mut(), meta)
                 .await
@@ -348,8 +437,12 @@ impl super::DbContext {
         }
         self.change_tracker.accept_all_changes();
         for type_id in &type_ids {
-            let saver = self.savers.get(type_id).unwrap();
-            let set = self.sets.get_mut(type_id).unwrap();
+            let Some(saver) = self.savers.get(type_id) else {
+                continue;
+            };
+            let Some(set) = self.sets.get_mut(type_id) else {
+                continue;
+            };
             saver.accept_all_changes(set.as_mut());
         }
 

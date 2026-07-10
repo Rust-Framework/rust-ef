@@ -325,7 +325,11 @@ impl DbContext {
         let txn = self
             .ambient_transaction
             .take()
-            .expect("ambient_transaction set above");
+            .ok_or_else(|| {
+                EFError::transaction(
+                    "ambient_transaction was consumed during use_transaction closure",
+                )
+            })?;
         match result {
             Ok(r) => {
                 txn.commit().await?;

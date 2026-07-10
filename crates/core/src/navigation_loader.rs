@@ -1,7 +1,7 @@
 //! Eager-loading of navigation properties via secondary queries.
 
 use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
-use crate::error::EFResult;
+use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
 use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
 use crate::query::{compile_bool_expr, CompiledFilter, IncludePath};
@@ -202,7 +202,9 @@ where
             }
         }
         NavigationKind::ManyToMany => {
-            unreachable!("many-to-many navigations are loaded via load_many_to_many")
+            return Err(EFError::configuration(
+                "many-to-many navigations are loaded via load_many_to_many",
+            ));
         }
     }
     Ok(())

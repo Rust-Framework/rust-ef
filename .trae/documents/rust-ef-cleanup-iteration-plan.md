@@ -213,9 +213,9 @@
 将 HAVING 和分页测试拆为两个文件，或内联优化降到 500 以内（执行时根据实际内容选择）。
 
 **迭代 5 验证检查点**：
-- [ ] tests 目录无 .rs 文件 >500 行
-- [ ] `cargo test --workspace --all-features -- --skip postgres --skip mysql` 全通过
-- [ ] 测试数量不减少（`--list` 对比）
+- [x] tests 目录无 .rs 文件 >500 行
+- [x] `cargo test --workspace --all-features -- --skip postgres --skip mysql` 全通过
+- [x] 测试数量不减少（12+3+20=35 测试全部保留）
 
 ---
 

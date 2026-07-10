@@ -34,12 +34,21 @@ impl super::DbContext {
         loop {
             let mut all_drained: Vec<DrainedChild> = Vec::new();
             for type_id in type_ids {
-                let saver = self.savers.get(type_id).expect("saver not registered");
-                let set = self.sets.get_mut(type_id).unwrap();
+                let Some(saver) = self.savers.get(type_id) else {
+                    continue;
+                };
+                let Some(set) = self.sets.get_mut(type_id) else {
+                    continue;
+                };
                 let meta = configured_metas
                     .get(type_id)
                     .or_else(|| self.entity_metas.get(type_id))
-                    .expect("meta not found");
+                    .ok_or_else(|| {
+                        EFError::configuration(format!(
+                            "entity metadata not found for {:?}",
+                            type_id
+                        ))
+                    })?;
                 all_drained.extend(saver.drain_cascade_children(set.as_mut(), meta));
             }
             if all_drained.is_empty() {
@@ -56,7 +65,12 @@ impl super::DbContext {
                 let child_set = self
                     .sets
                     .get_mut(&child.child_type_id)
-                    .expect("set not found for registered saver");
+                    .ok_or_else(|| {
+                        EFError::configuration(format!(
+                            "DbSet not found for registered saver type {:?}",
+                            child.child_type_id
+                        ))
+                    })?;
                 if let Some(child_idx) =
                     child_saver.add_cascade_child(child_set.as_mut(), child.child)
                 {
@@ -97,12 +111,21 @@ impl super::DbContext {
         loop {
             let mut all_drained_deleted: Vec<DrainedChild> = Vec::new();
             for type_id in type_ids {
-                let saver = self.savers.get(type_id).expect("saver not registered");
-                let set = self.sets.get_mut(type_id).unwrap();
+                let Some(saver) = self.savers.get(type_id) else {
+                    continue;
+                };
+                let Some(set) = self.sets.get_mut(type_id) else {
+                    continue;
+                };
                 let meta = configured_metas
                     .get(type_id)
                     .or_else(|| self.entity_metas.get(type_id))
-                    .expect("meta not found");
+                    .ok_or_else(|| {
+                        EFError::configuration(format!(
+                            "entity metadata not found for {:?}",
+                            type_id
+                        ))
+                    })?;
                 let (drained, directives) =
                     saver.drain_cascade_deleted_children(set.as_mut(), meta, processed);
                 all_drained_deleted.extend(drained);
@@ -122,7 +145,12 @@ impl super::DbContext {
                 let child_set = self
                     .sets
                     .get_mut(&child.child_type_id)
-                    .expect("set not found for registered saver");
+                    .ok_or_else(|| {
+                        EFError::configuration(format!(
+                            "DbSet not found for registered saver type {:?}",
+                            child.child_type_id
+                        ))
+                    })?;
                 child_saver.add_cascade_deleted_child(child_set.as_mut(), child.child);
             }
         }

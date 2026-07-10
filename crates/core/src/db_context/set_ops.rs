@@ -6,7 +6,7 @@ use crate::db_set::{DbSet, TrackedEntry};
 use crate::entity::{
     EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
 };
-use crate::error::EFResult;
+use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, NavigationKind};
 use crate::provider::{IAsyncConnection, IDatabaseProvider};
 use std::any::{Any, TypeId};
@@ -270,7 +270,7 @@ where
     ) -> EFResult<usize> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
-            .expect("SetOps type mismatch");
+            .ok_or_else(|| EFError::configuration("SetOps type mismatch in insert_added"))?;
         insert_added_phase(conn, provider, db_set, meta).await
     }
 
@@ -283,7 +283,7 @@ where
     ) -> EFResult<usize> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
-            .expect("SetOps type mismatch");
+            .ok_or_else(|| EFError::configuration("SetOps type mismatch in upsert_added"))?;
         upsert_added_phase(conn, provider, db_set, meta).await
     }
 
@@ -296,7 +296,7 @@ where
     ) -> EFResult<usize> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
-            .expect("SetOps type mismatch");
+            .ok_or_else(|| EFError::configuration("SetOps type mismatch in update_modified"))?;
         let query_filter = db_set.query_filter().cloned();
         update_modified_phase(conn, provider, db_set, meta, query_filter.as_ref()).await
     }
@@ -310,7 +310,7 @@ where
     ) -> EFResult<usize> {
         let db_set = raw_set
             .downcast_mut::<DbSet<E>>()
-            .expect("SetOps type mismatch");
+            .ok_or_else(|| EFError::configuration("SetOps type mismatch in delete_deleted"))?;
         let query_filter = db_set.query_filter().cloned();
         delete_deleted_phase(conn, provider, db_set, meta, query_filter.as_ref()).await
     }
