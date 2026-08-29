@@ -9,9 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.8.1] — 2026-08-16 — crates.io 再发布对齐
+## [1.8.1] — 2026-08-16 — crates.io 再发布对齐 · Re-release alignment
 
-### Summary
+> **English** · **简体中文**
+
+### English
+
+On top of 1.8.0 (ChangeTracker architecture redesign + EntitySnapshot), the `rust-ef`
+crate family has been re-published to crates.io and is now managed under the
+`Rust-Framework` organization.
+
+### Changed
+
+- **crates.io re-publish**: `rust-ef` / `rust-ef-macros` / `rust-ef-sqlite` /
+  `rust-ef-postgres` / `rust-ef-mysql` aligned; repository metadata (`license`,
+  `repository`) aligned with the GitHub repo.
+- **Automated publishing**: new GitHub Actions `publish.yml` publishes crates in
+  dependency order on `v*` tag push.
+- **Docs landing page**: added `docs/README.md` bilingual navigation.
+
+> Maintenance release; the runtime API is unchanged.
+
+### 简体中文
 
 v1.8.1 为发布维护迭代，在 1.8.0（ChangeTracker 架构重设计 + EntitySnapshot）基础上
 将 `rust-ef` 全系 crate 重新发布到 crates.io，归入 `Rust-Framework` 组织统一管理。
