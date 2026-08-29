@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.1] — 2026-08-16 — crates.io 再发布对齐
+
+### Summary
+
+v1.8.1 为发布维护迭代，在 1.8.0（ChangeTracker 架构重设计 + EntitySnapshot）基础上
+将 `rust-ef` 全系 crate 重新发布到 crates.io，归入 `Rust-Framework` 组织统一管理。
+不改变运行时 API。
+
+### Changed
+
+- **crates.io 再发布**：`rust-ef` / `rust-ef-macros` / `rust-ef-sqlite` / `rust-ef-postgres`
+  / `rust-ef-mysql` 全系重新发布对齐；仓库元数据（`license`、`repository`）对齐 GitHub 仓库。
+- **自动化发布**：新增 GitHub Actions `publish.yml`，推送 `v*` tag 时按依赖顺序自动发布。
+- **文档落地页**：新增 `docs/README.md` 中英文档导航入口。
+
+---
+
 ## [1.8.0] — 2026-07-10 — 深度性能优化迭代（ChangeTracker 架构重设计 + EntitySnapshot）
 
 ### Summary
@@ -1417,6 +1434,7 @@ Project skeleton, workspace layout, and the `IDbContext` / `IDbSet<T>`
 ---
 
 [1.4.0]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.4.0
+[1.8.1]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.8.1
 [1.1.0]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.0.0
 [0.5]: https://github.com/Rust-Framework/rust-ef/releases/tag/v0.5
