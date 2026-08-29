@@ -16,3 +16,11 @@ docs/rust-ef/book/
 check_errors.txt
 fmt_output.txt
 *.log
+
+# IDE / AI agent helpers (do not publish)
+.trae/
+.agents/
+.idea/
+.vscode/
+*.swp
+*.swo

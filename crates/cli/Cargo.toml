@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CLI for Rust Entity Framework migrations"
+publish = false
 keywords = ["orm", "efcore", "migration", "cli"]
 categories = ["command-line-utilities"]
 

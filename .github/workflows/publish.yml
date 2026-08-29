@@ -1,0 +1,48 @@
+name: Publish to crates.io
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve tag version
+        id: tag
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish crates (dependency order)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          TAG_VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+            echo "::error::CRATES_IO_TOKEN / CARGO_REGISTRY_TOKEN secret is not set."
+            exit 1
+          fi
+          # Publish order: dependencies must appear before their dependents.
+          CRATES="rust-ef-macros rust-ef rust-ef-sqlite rust-ef-postgres rust-ef-mysql"
+          metadata="$(cargo metadata --no-deps --format-version 1)"
+          for name in $CRATES; do
+            version="$(printf '%s' "$metadata" \
+              | jq -r --arg n "$name" '.packages[] | select(.name==$n) | .version')"
+            if [ "$version" != "${TAG_VERSION}" ]; then
+              echo "::warning::skip $name (version $version != tag $TAG_VERSION)"
+              continue
+            fi
+            echo "::group::Publishing $name@$version"
+            cargo publish -p "$name" --token "${CARGO_REGISTRY_TOKEN}"
+            echo "::endgroup::"
+          done
