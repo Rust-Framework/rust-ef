@@ -16,7 +16,7 @@ resolver = "2"
 version = "1.8.0"
 edition = "2021"
 license = "MIT"
-repository = "https://gitcode.com/rf2026/rust-ef"
+repository = "https://github.com/Rust-Framework/rust-ef"
 authors = ["Start"]
 
 [workspace.dependencies]

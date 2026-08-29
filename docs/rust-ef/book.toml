@@ -8,8 +8,8 @@ src = "."
 [output.html]
 default-theme = "navy"
 preferred-dark-theme = "navy"
-git-repository-url = "https://gitcode.com/rf2026/rust-ef"
-edit-url-template = "https://gitcode.com/rf2026/rust-ef/edit/main/docs/rust-ef/{path}"
+git-repository-url = "https://github.com/Rust-Framework/rust-ef"
+edit-url-template = "https://github.com/Rust-Framework/rust-ef/edit/main/docs/rust-ef/{path}"
 no-section-label = false
 
 [output.html.search]

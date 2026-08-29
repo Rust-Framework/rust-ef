@@ -11,3 +11,8 @@ Cargo.lock
 
 # mdBook build output
 docs/rust-ef/book/
+
+# Local build/debug artifacts
+check_errors.txt
+fmt_output.txt
+*.log

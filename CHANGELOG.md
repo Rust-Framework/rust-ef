@@ -1416,12 +1416,12 @@ Project skeleton, workspace layout, and the `IDbContext` / `IDbSet<T>`
 
 ---
 
-[1.4.0]: https://gitcode.com/rf2026/rust-ef/releases/tag/v1.4.0
-[1.1.0]: https://gitcode.com/rf2026/rust-ef/releases/tag/v1.1.0
-[1.0.0]: https://gitcode.com/rf2026/rust-ef/releases/tag/v1.0.0
-[0.5]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.5
-[0.4]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.4
-[0.3.5]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.3.5
-[0.3]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.3
-[0.2]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.2
-[0.1]: https://gitcode.com/rf2026/rust-ef/releases/tag/v0.1
+[1.4.0]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.4.0
+[1.1.0]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.1.0
+[1.0.0]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.0.0
+[0.5]: https://github.com/Rust-Framework/rust-ef/releases/tag/v0.5
+[0.4]: https://github.com/Rust-Framework/rust-ef/releases/tag/v0.4
+[0.3.5]: https://github.com/Rust-Framework/rust-ef/releases/tag/v0.3.5
+[0.3]: https://github.com/Rust-Framework/rust-ef/releases/tag/v0.3
+[0.2]: https://github.com/Rust-Framework/rust-ef/releases/tag/v0.2
+[0.1]: https://github.com/Rust-Framework/rust-ef/releases/tag/v0.1

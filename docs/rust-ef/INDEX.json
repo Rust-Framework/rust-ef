@@ -6,7 +6,7 @@
     "description": "面向 Rust 开发者的 EF Core 风格 ORM 最佳实践指南，涵盖实体设计、LINQ 查询、变更跟踪、批量操作、事务迁移与 DI 集成。",
     "category": "orm",
     "tags": ["rust","orm","ef-core","database","linq"],
-    "repoUrl": "https://gitcode.com/rf2026/rust-ef",
+    "repoUrl": "https://github.com/Rust-Framework/rust-ef",
     "demoUrl": "",
     "featured": true,
     "sortOrder": 1,
