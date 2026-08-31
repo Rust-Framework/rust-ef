@@ -550,9 +550,9 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 
 ### 修复实现
 
-**CRITICAL bug 修复**（[query.rs:938-982](file:///e:/GitCode/RF/rust-ef/crates/core/src/query.rs#L938-L982)）：将 `.map()` 闭包改为 `for` 循环，引入 `running_idx: usize` 在 CTE 间累加。typed 模式下 `cte_idx` 从 `running_idx` 起始，编译完成后回写；raw 模式下按 `params.len()` 推进以保持与 `all_params()` 顺序一致。
+**CRITICAL bug 修复**（[query.rs:938-982](../crates/core/src/query.rs#L938-L982)）：将 `.map()` 闭包改为 `for` 循环，引入 `running_idx: usize` 在 CTE 间累加。typed 模式下 `cte_idx` 从 `running_idx` 起始，编译完成后回写；raw 模式下按 `params.len()` 推进以保持与 `all_params()` 顺序一致。
 
-**回归测试**（[cte_syntax_tests.rs:340-481](file:///e:/GitCode/RF/rust-ef/crates/core/tests/cte_syntax_tests.rs#L340-L481)）：4 个 PostgreSQL 方言测试，使用 `PgLikeGenerator` mock（无需 live PG）：
+**回归测试**（[cte_syntax_tests.rs:340-481](../crates/core/tests/cte_syntax_tests.rs#L340-L481)）：4 个 PostgreSQL 方言测试，使用 `PgLikeGenerator` mock（无需 live PG）：
 - `test_pg_single_typed_cte_uses_dollar_n` — 单 CTE 产出 `$1`
 - `test_pg_multiple_typed_ctes_contiguous_placeholders` — 双 CTE 产出 `$1, $2`（回归核心）
 - `test_pg_multi_cte_with_main_where_contiguous` — 三参数连续 `$1, $2, $3` 跨 CTE + 主 WHERE
