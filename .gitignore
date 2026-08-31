@@ -18,6 +18,7 @@ fmt_output.txt
 *.log
 
 # IDE / AI agent helpers (do not publish)
+.cursor/
 .trae/
 .agents/
 .idea/
