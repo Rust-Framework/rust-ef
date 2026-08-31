@@ -1,9 +1,9 @@
 {
   "meta": {
-    "title": "rust-ef",
+    "title": "Rust Entity Framework",
     "subtitle": "接口导向 · EF Core 风格 · DI 集成 ORM",
-    "docTitle": "rust-ef 开发者手册",
-    "description": "An EFCore-inspired ORM for Rust — DbContext, DbSet, LINQ queries, change tracking, migrations, and multi-database support with rust-dix DI integration.",
+    "docTitle": "Rust Entity Framework 开发者手册",
+    "description": "EF Core 风格的 Rust ORM — DbContext、linq! 宏、变更跟踪与多数据库支持，与 rust-dix DI 无缝集成。 | EF Core-inspired ORM for Rust — DbContext, LINQ queries, change tracking, migrations, and multi-database support.",
     "category": "orm",
     "tags": ["rust","orm","ef-core","database","linq"],
     "repoUrl": "https://github.com/Rust-Framework/rust-ef",
@@ -26,12 +26,12 @@
       "chapters": [
         {
           "id": "01-introduction",
-          "title": "认识 rust-ef",
+          "title": "认识 Rust Entity Framework",
           "subtitle": "框架定位、适用场景与生态全景",
           "sections": [
             {
               "id": "what-is-rust-ef",
-              "title": "什么是 rust-ef",
+              "title": "什么是 Rust Entity Framework",
               "summary": "框架定义、核心能力与设计目标",
               "readingTime": 8,
               "difficulty": "beginner"
