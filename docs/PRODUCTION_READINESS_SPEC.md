@@ -846,7 +846,7 @@ v1.4.0 生产硬化迭代完成后，本轮对 REF 框架进行 8 维度生产�
 
 #### 维度 4：易用性 (Usability) — ✅ 就绪
 
-- **现状**：`linq!` 宏 DSL、`#[derive(EntityType)]` 12+ 属性、DI 集成（rust-dix 0.6）、3 个示例（blog/soft_delete/audit）、mdBook 文档、CLI 工具
+- **现状**：`linq!` 宏 DSL、`#[derive(EntityType)]` 12+ 属性、DI 集成（rust-dix 0.7）、3 个示例（blog/soft_delete/audit）、mdBook 文档、CLI 工具
 - **优势**：类型安全 DSL 消除字符串 API；自动实体发现；DI 集成降低样板
 - **风险**：`linq!` 宏有学习曲线；scaffold 从现有 DB 反向生成能力有限；文档示例部分未进 doctest
 - **评级**：✅ 就绪
