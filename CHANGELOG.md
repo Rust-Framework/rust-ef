@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.2] — 2026-09-01 — rust-dix 0.7
+
+> **English** · **简体中文**
+
+### English
+
+#### Changed
+
+- **DI**: depend on `rust-dix 0.7` (inject diagnostics, built-in `ScopeFactory`, stricter async `build()`).
+
+### 简体中文
+
+#### 变更
+
+- **DI**：依赖升级到 `rust-dix 0.7`。
+
 ## [1.8.1] — 2026-08-16 — crates.io 再发布对齐 · Re-release alignment
 
 > **English** · **简体中文**

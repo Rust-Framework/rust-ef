@@ -17,7 +17,7 @@
 //! use rust_ef::db_context::DbContext;
 //! use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 //!
-//! // rust-dix 0.6+: `build()` returns `Arc<ServiceProvider>` directly,
+//! // rust-dix 0.7+: `build()` returns `Arc<ServiceProvider>` directly,
 //! // and `get_owned()` returns `Result<T, RdiError>`.
 //! let provider = ServiceCollection::new()
 //!     .add_dbcontext(|options| {
