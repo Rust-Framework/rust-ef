@@ -463,24 +463,42 @@ pub(super) fn parse_fields<'a>(
                             return Some(#col);
                         }
                     });
-                    ctx.set_fk_arms.push({
-                        let field_type_str = quote!(#field_type).to_string();
-                        let is_optional = field_type_str.starts_with("Option <")
-                            || field_type_str.starts_with("Option<");
-                        if is_optional {
-                            quote! {
-                                if target_type == std::any::TypeId::of::<#target_ident>() {
-                                    self.#field_name = Some(key as _);
+                    // Cascade fixup only applies when the principal PK is an
+                    // integer auto-increment key (`set_foreign_key(…, key: i64)`).
+                    // String/UUID FKs must not emit `key as _` (E0605).
+                    let field_type_str = quote!(#field_type).to_string();
+                    let compact = field_type_str.replace(' ', "");
+                    let is_integer_fk = matches!(
+                        compact.as_str(),
+                        "i8" | "i16" | "i32" | "i64"
+                            | "u8" | "u16" | "u32" | "u64"
+                            | "Option<i8>"
+                            | "Option<i16>"
+                            | "Option<i32>"
+                            | "Option<i64>"
+                            | "Option<u8>"
+                            | "Option<u16>"
+                            | "Option<u32>"
+                            | "Option<u64>"
+                    );
+                    if is_integer_fk {
+                        ctx.set_fk_arms.push({
+                            let is_optional = compact.starts_with("Option<");
+                            if is_optional {
+                                quote! {
+                                    if target_type == std::any::TypeId::of::<#target_ident>() {
+                                        self.#field_name = Some(key as _);
+                                    }
+                                }
+                            } else {
+                                quote! {
+                                    if target_type == std::any::TypeId::of::<#target_ident>() {
+                                        self.#field_name = key as _;
+                                    }
                                 }
                             }
-                        } else {
-                            quote! {
-                                if target_type == std::any::TypeId::of::<#target_ident>() {
-                                    self.#field_name = key as _;
-                                }
-                            }
-                        }
-                    });
+                        });
+                    }
                 }
             }
         }

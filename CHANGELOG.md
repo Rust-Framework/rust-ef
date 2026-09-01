@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.3] — 2026-09-01 — EntityType String FK compile fix
+
+> **English** · **简体中文**
+
+### English
+
+#### Fixed
+
+- **`#[derive(EntityType)]`**: `set_foreign_key` codegen no longer emits `key as _` for non-integer FK fields (e.g. `String` / UUID). Cascade auto-increment fixup arms are generated only for integer FK types, restoring compile for String-keyed entities such as docbit.
+
+### 简体中文
+
+#### 修复
+
+- **`#[derive(EntityType)]`**：非整数外键（如 `String`/UUID）不再生成 `i64 as _` 赋值；仅整数 FK 生成 cascade 回填臂，修复 docbit 等 String 主键实体的编译失败。
+
 ## [1.8.2] — 2026-09-01 — rust-dix 0.7
 
 > **English** · **简体中文**
