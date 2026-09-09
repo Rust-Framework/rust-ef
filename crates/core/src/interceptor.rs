@@ -1,4 +1,4 @@
-//! SaveChanges interceptor �?hooks into the DbContext lifecycle.
+//! SaveChanges interceptor — hooks into the DbContext lifecycle.
 //!
 //! Provides an interception pipeline analogous to EFCore's
 //! `ISaveChangesInterceptor`: before/after save, and on failure.
@@ -25,7 +25,7 @@ use crate::tracking::EntityEntryView;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// SaveChangesContext �?context passed to interceptor hooks
+// SaveChangesContext — context passed to interceptor hooks
 // ---------------------------------------------------------------------------
 
 /// Read-only snapshot of the save operation, passed to interceptors.
@@ -99,7 +99,7 @@ impl SaveChangesContext {
 }
 
 // ---------------------------------------------------------------------------
-// SaveChangesResultContext �?post-save context
+// SaveChangesResultContext — post-save context
 // ---------------------------------------------------------------------------
 
 /// Context passed to interceptors after a successful save.
@@ -118,7 +118,7 @@ impl SaveChangesResultContext {
 }
 
 // ---------------------------------------------------------------------------
-// ISaveChangesInterceptor �?the interceptor trait
+// ISaveChangesInterceptor — the interceptor trait
 // ---------------------------------------------------------------------------
 
 /// Interface for intercepting `save_changes()` operations.
@@ -129,7 +129,7 @@ impl SaveChangesResultContext {
 /// # Lifecycle
 ///
 /// ```text
-/// on_saving(ctx) �?[execute SQL] �?on_saved(ctx, result)
+/// on_saving(ctx) — [execute SQL] — on_saved(ctx, result)
 ///                                    on_save_failed(ctx, error)  (if error)
 /// ```
 #[async_trait::async_trait]
@@ -163,7 +163,7 @@ pub trait ISaveChangesInterceptor: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// InterceptorPipeline �?ordered chain of interceptors
+// InterceptorPipeline — ordered chain of interceptors
 // ---------------------------------------------------------------------------
 
 /// An ordered, immutable chain of save-changes interceptors.
@@ -200,7 +200,7 @@ impl InterceptorPipeline {
     }
 
     /// Runs all `on_save_failed` hooks. Errors from these hooks are
-    /// intentionally swallowed �?they must not mask the original error.
+    /// intentionally swallowed — they must not mask the original error.
     pub async fn on_save_failed(&self, ctx: &SaveChangesContext, error: &EFError) {
         for interceptor in &self.interceptors {
             interceptor.on_save_failed(ctx, error).await;

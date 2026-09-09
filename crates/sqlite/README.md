@@ -17,7 +17,7 @@ Implements `DatabaseProvider`, `SqlGenerator`, and `AsyncConnection` traits for 
 - SQLite-native parameterized queries (`?`)
 - Double-quoted identifier quoting (`"table_name"`)
 - Full CRUD, transactions, `AUTOINCREMENT`
-- Bundled SQLite (`features = ["bundled"]`)  - ?no system SQLite required
+- Bundled SQLite (`features = ["bundled"]`)  — no system SQLite required
 
 ---
 

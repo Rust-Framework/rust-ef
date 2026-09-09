@@ -1,4 +1,4 @@
-# lref �?Core ORM Crate
+# lref — Core ORM Crate
 
 [![Crates.io](https://img.shields.io/crates/v/lref)](https://crates.io/crates/lref)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
@@ -39,20 +39,20 @@ let mut ctx: DbContext = provider.get_owned().unwrap();
 
 ```
 lref/src/
-├── entity.rs       �?IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
-├── metadata.rs     �?EntityTypeMeta, PropertyMeta, NavigationMeta
-├── provider.rs     �?IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
-├── db_context.rs   �?DbContext, DbContextOptions
-├── db_set.rs       �?IDbSet<T>, DbSet<T>
-├── query.rs        �?IQueryable<T>, QueryBuilder<T>
-├── change_executor.rs �?ChangeExecutor (INSERT/UPDATE/DELETE)
-├── model_builder.rs   �?ModelBuilder, IEntityTypeConfiguration<T>
-├── tracking.rs     �?ChangeTracker (property-level snapshots)
-├── relations.rs    �?BelongsTo, HasMany, HasOne (no trait bounds)
-├── migration.rs    �?MigrationEngine
-├── di.rs           ?rust-dix integration (add_dbcontext / add_dbcontext_keyed)
-├── cache.rs        �?DbCache (Identity Map)
-└── error.rs        �?EFError, EFResult
+├── entity.rs       → IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
+├── metadata.rs     → EntityTypeMeta, PropertyMeta, NavigationMeta
+├── provider.rs     → IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
+├── db_context.rs   → DbContext, DbContextOptions
+├── db_set.rs       → IDbSet<T>, DbSet<T>
+├── query.rs        → IQueryable<T>, QueryBuilder<T>
+├── change_executor.rs → ChangeExecutor (INSERT/UPDATE/DELETE)
+├── model_builder.rs   → ModelBuilder, IEntityTypeConfiguration<T>
+├── tracking.rs     → ChangeTracker (property-level snapshots)
+├── relations.rs    → BelongsTo, HasMany, HasOne (no trait bounds)
+├── migration.rs    → MigrationEngine
+├── di.rs           → rust-dix integration (add_dbcontext / add_dbcontext_keyed)
+├── cache.rs        → DbCache (Identity Map)
+└── error.rs        → EFError, EFResult
 ```
 
 ---
@@ -146,13 +146,13 @@ let mut ctx: DbContext = provider.get_owned().unwrap();
 // let ctx: Arc<DbContext> = scope.get().unwrap();
 ```
 
-**Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider �?core stays fully decoupled.
+**Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider — core stays fully decoupled.
 
 ---
 
 ## QueryBuilder API
 
-All query operations go through the `linq!` macro �?the string-based APIs (`include_named` / `order_by("col")` / `sum("col")` / `find_by_id` etc.) have been removed. The macro expands to `#[doc(hidden)]` `*_internal` methods at compile time.
+All query operations go through the `linq!` macro — the string-based APIs (`include_named` / `order_by("col")` / `sum("col")` / `find_by_id` etc.) have been removed. The macro expands to `#[doc(hidden)]` `*_internal` methods at compile time.
 
 ```rust
 // Form A: filter closure (reusable BoolExpr or direct query)

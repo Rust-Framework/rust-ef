@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.4] — 2026-09-09 — Fix crates.io README mojibake
+
+> **English** · **简体中文**
+
+### English
+
+#### Fixed
+
+- **README / docs encoding**: replaced corrupted `U+FFFD` sequences in crate READMEs and Chinese docs with the intended `—` / `→` (and restored Chinese text), so crates.io no longer renders garbled `????` in package pages.
+
+### 简体中文
+
+#### 修复
+
+- **README / 文档编码**：清除 crate README 与中文文档中的损坏字符 `U+FFFD`，恢复为正确的 `—` / `→` 与中文文案，修复 crates.io 页面 README 乱码。
+
 ## [1.8.3] — 2026-09-01 — EntityType String FK compile fix
 
 > **English** · **简体中文**
