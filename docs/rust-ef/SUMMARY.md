@@ -88,6 +88,14 @@
 
 ---
 
+# 实战教程
+
+- [第十二章 实战教程](./12-tutorials/INDEX.md)
+  - [事务实战：转账、批量 DML 与业务回滚](./12-tutorials/transactions.md)
+  - [读写分离实战：主库写入、副本查询](./12-tutorials/read-write-splitting.md)
+
+---
+
 # 附录
 
 - [多租户基础](./03-advanced/multi-tenancy-foundation.md)

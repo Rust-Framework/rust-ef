@@ -182,4 +182,6 @@ let mut logs: DbContext = provider.get_keyed_owned("logs").unwrap();
 | 注意连接池限制 | 每个 key 都会创建一组连接，避免 key 爆炸 |
 | Owned 解析优先 | `get_keyed_owned()` / `#[inject(owned, key = "...")]` → `DbContext`，`&mut self` 访问 |
 
+> 需要完整的读写分离业务示例（handler、read-your-writes、副本延迟、只读账号、排错）时，继续阅读 [读写分离实战：主库写入、副本查询](../12-tutorials/read-write-splitting.md)。
+
 下一节：[SaveChanges 拦截器](save-changes-interceptors.md)

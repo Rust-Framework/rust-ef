@@ -168,4 +168,6 @@ ctx.use_transaction(|ctx| Box::pin(async move {
 | 跨多个 DbContext | 分布式事务当前版本未内置 |
 | 事务内不做 IO | 网络请求、文件操作会不可控地延长事务 |
 
+> 需要端到端业务代码（转账、批量 DML、测试与避坑）时，继续阅读 [事务实战：转账、批量 DML 与业务回滚](../12-tutorials/transactions.md)。
+
 下一节：[EnsureCreated 与 EnsureDeleted](ensure-created-deleted.md)
