@@ -9,6 +9,15 @@ pub struct MySqlConnection {
     slow_query_threshold: Option<std::time::Duration>,
 }
 
+fn isolation_sql(level: IsolationLevel) -> &'static str {
+    match level {
+        IsolationLevel::ReadUncommitted => "READ UNCOMMITTED",
+        IsolationLevel::ReadCommitted => "READ COMMITTED",
+        IsolationLevel::RepeatableRead => "REPEATABLE READ",
+        IsolationLevel::Serializable => "SERIALIZABLE",
+    }
+}
+
 impl MySqlConnection {
     pub(crate) fn new(conn: sqlx::pool::PoolConnection<sqlx::MySql>) -> Self {
         Self {
@@ -78,6 +87,13 @@ impl IAsyncConnection for MySqlConnection {
         self.execute("START TRANSACTION", &[]).await.map(|_| ())
     }
 
+    async fn begin_transaction_with(&mut self, level: IsolationLevel) -> EFResult<()> {
+        // MySQL only accepts SET TRANSACTION before the transaction starts.
+        let sql = format!("SET TRANSACTION ISOLATION LEVEL {}", isolation_sql(level));
+        self.execute(&sql, &[]).await?;
+        self.begin_transaction().await
+    }
+
     async fn commit_transaction(&mut self) -> EFResult<()> {
         self.execute("COMMIT", &[]).await.map(|_| ())
     }
@@ -105,15 +121,10 @@ impl IAsyncConnection for MySqlConnection {
     }
 
     async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()> {
-        let sql = format!(
-            "SET TRANSACTION ISOLATION LEVEL {}",
-            match level {
-                IsolationLevel::ReadUncommitted => "READ UNCOMMITTED",
-                IsolationLevel::ReadCommitted => "READ COMMITTED",
-                IsolationLevel::RepeatableRead => "REPEATABLE READ",
-                IsolationLevel::Serializable => "SERIALIZABLE",
-            }
-        );
+        // Legacy post-BEGIN API: keep the historical SQL. MySQL only applies
+        // it reliably before START TRANSACTION; use `begin_transaction_with`
+        // for the portable entry point.
+        let sql = format!("SET TRANSACTION ISOLATION LEVEL {}", isolation_sql(level));
         self.execute(&sql, &[]).await.map(|_| ())
     }
 

@@ -8,6 +8,45 @@ use rust_ef::provider::IAsyncConnection;
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 use tokio_postgres::NoTls;
 
+/// Options for a PostgreSQL provider.
+///
+/// Configured through the `use_postgres_with(connection_string, |options| { ... })`
+/// delegate; additional PostgreSQL settings can be added here without new
+/// `use_postgres_*` methods.
+#[derive(Clone)]
+pub struct PostgresOptions {
+    pub(crate) connection_string: String,
+    pub(crate) pool_size: Option<usize>,
+    pub(crate) tls: Option<PgTlsMode>,
+}
+
+impl PostgresOptions {
+    pub(crate) fn new(connection_string: impl Into<String>) -> Self {
+        Self {
+            connection_string: connection_string.into(),
+            pool_size: None,
+            tls: None,
+        }
+    }
+
+    /// Sets the connection pool size. `0` uses the provider default.
+    pub fn pool_size(&mut self, pool_size: usize) -> &mut Self {
+        self.pool_size = Some(pool_size);
+        self
+    }
+
+    /// Overrides the TLS mode.
+    pub fn tls(&mut self, tls: PgTlsMode) -> &mut Self {
+        self.tls = Some(tls);
+        self
+    }
+
+    /// Disables TLS (local development only).
+    pub fn insecure(&mut self) -> &mut Self {
+        self.tls(PgTlsMode::Disable)
+    }
+}
+
 pub struct PostgresProvider {
     pool: Pool,
     #[cfg(feature = "tracing")]

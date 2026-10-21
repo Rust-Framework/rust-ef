@@ -10,5 +10,5 @@ pub mod type_conversion;
 
 pub use connection::SqliteConnection;
 pub use di_extension::DbContextOptionsBuilderExt;
-pub use provider::SqliteProvider;
+pub use provider::{SqliteOptions, SqliteProvider};
 pub use sql_generator::SqliteSqlGenerator;

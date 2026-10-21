@@ -156,6 +156,20 @@ pub trait IAsyncConnection: Send + Sync {
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<DbValue>>>;
     /// Begins a transaction.
     async fn begin_transaction(&mut self) -> EFResult<()>;
+    /// Begins a transaction with the requested isolation level.
+    ///
+    /// The default implementation begins the transaction and then calls
+    /// [`set_transaction_isolation`](Self::set_transaction_isolation). Providers
+    /// whose database requires the isolation level *before* the transaction
+    /// starts (MySQL) override this method.
+    async fn begin_transaction_with(&mut self, level: IsolationLevel) -> EFResult<()> {
+        self.begin_transaction().await?;
+        if let Err(e) = self.set_transaction_isolation(level).await {
+            let _ = self.rollback_transaction().await;
+            return Err(e);
+        }
+        Ok(())
+    }
     /// Commits the current transaction.
     async fn commit_transaction(&mut self) -> EFResult<()>;
     /// Rolls back the current transaction.
@@ -167,7 +181,10 @@ pub trait IAsyncConnection: Send + Sync {
     /// Rolls back to the named savepoint, preserving the outer transaction.
     async fn rollback_to_savepoint(&mut self, name: &str) -> EFResult<()>;
     /// Sets the isolation level of the current transaction.
-    /// Must be called after `begin_transaction` and before any query.
+    ///
+    /// Provider-dependent: PostgreSQL accepts this after `BEGIN` and before the
+    /// first query; MySQL requires the level at `START TRANSACTION` time and
+    /// rejects this call. Prefer [`begin_transaction_with`](Self::begin_transaction_with).
     async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()>;
 
     /// Sets the slow query threshold for this connection.

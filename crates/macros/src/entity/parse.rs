@@ -470,8 +470,13 @@ pub(super) fn parse_fields<'a>(
                     let compact = field_type_str.replace(' ', "");
                     let is_integer_fk = matches!(
                         compact.as_str(),
-                        "i8" | "i16" | "i32" | "i64"
-                            | "u8" | "u16" | "u32" | "u64"
+                        "i8" | "i16"
+                            | "i32"
+                            | "i64"
+                            | "u8"
+                            | "u16"
+                            | "u32"
+                            | "u64"
                             | "Option<i8>"
                             | "Option<i16>"
                             | "Option<i32>"

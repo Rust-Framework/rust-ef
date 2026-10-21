@@ -71,7 +71,7 @@
 # 生产与工程化
 
 - [第九章 事务与迁移](./09-transactions-migrations/INDEX.md)
-  - [手动事务与 use_transaction](./09-transactions-migrations/manual-transactions.md)
+  - [手动事务：use_transaction 与 transaction](./09-transactions-migrations/manual-transactions.md)
   - [EnsureCreated 与 EnsureDeleted](./09-transactions-migrations/ensure-created-deleted.md)
   - [迁移引擎与种子数据](./09-transactions-migrations/migrations-seed.md)
 

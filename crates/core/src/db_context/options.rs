@@ -27,6 +27,10 @@ pub struct DbContextOptions {
     /// Defaults to `false` (opt-in) to preserve v1.0 eager-only behavior.
     pub(crate) lazy_loading_enabled: bool,
     pub(crate) context_key: Option<String>,
+    /// When `true`, a keyed context shares the default entity model instead of
+    /// filtering entities by `#[context(key)]`. Read/write replica contexts use
+    /// the same schema and should set this.
+    pub(crate) shared_entity_model: bool,
     /// Process-level cache of `discover_entities()` output, keyed by
     /// `context_key`. Shared across all `DbContext` instances created from
     /// the same `DbContextOptions` (which is `Arc`-shared per `add_dbcontext`
@@ -141,6 +145,7 @@ impl Default for DbContextOptions {
             interceptors: Vec::new(),
             lazy_loading_enabled: false,
             context_key: None,
+            shared_entity_model: false,
             metadata_cache: Arc::new(crate::metadata_cache::MetadataCache::new()),
             #[cfg(feature = "tracing")]
             slow_query_threshold: None,
@@ -229,6 +234,28 @@ impl DbContextOptionsBuilder {
     pub fn context_key(&mut self, key: impl Into<String>) -> &mut Self {
         self.inner.context_key = Some(key.into());
         self
+    }
+
+    /// Shares the default entity model with a keyed context.
+    ///
+    /// `add_dbcontext_keyed("key", ...)` normally filters entities to those
+    /// tagged `#[context("key")]`. Read and write replicas use the same schema,
+    /// so both should call this to discover the default model instead.
+    ///
+    /// ```rust,ignore
+    /// .add_dbcontext_keyed("read", |options| {
+    ///     options.use_default_entity_model();
+    ///     options.use_mysql(replica_cs);
+    /// })
+    /// ```
+    pub fn use_default_entity_model(&mut self) -> &mut Self {
+        self.inner.shared_entity_model = true;
+        self.inner.context_key = None;
+        self
+    }
+
+    pub(crate) fn uses_default_entity_model(&self) -> bool {
+        self.inner.shared_entity_model
     }
 
     /// Sets the slow query threshold. Queries exceeding this duration

@@ -6,6 +6,45 @@ use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::IAsyncConnection;
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 
+/// Options for a MySQL provider.
+///
+/// Configured through the `use_mysql_with(connection_string, |options| { ... })`
+/// delegate; additional MySQL settings can be added here without new
+/// `use_mysql_*` methods.
+#[derive(Clone, Debug)]
+pub struct MySqlOptions {
+    pub(crate) connection_string: String,
+    pub(crate) max_pool_size: Option<u32>,
+    pub(crate) tls: MySqlTlsMode,
+}
+
+impl MySqlOptions {
+    pub(crate) fn new(connection_string: impl Into<String>) -> Self {
+        Self {
+            connection_string: connection_string.into(),
+            max_pool_size: None,
+            tls: MySqlTlsMode::Required,
+        }
+    }
+
+    /// Sets the connection pool's maximum size.
+    pub fn max_pool_size(&mut self, max_pool_size: u32) -> &mut Self {
+        self.max_pool_size = Some(max_pool_size);
+        self
+    }
+
+    /// Overrides the TLS mode.
+    pub fn tls(&mut self, tls: MySqlTlsMode) -> &mut Self {
+        self.tls = tls;
+        self
+    }
+
+    /// Disables TLS (local development only).
+    pub fn insecure(&mut self) -> &mut Self {
+        self.tls(MySqlTlsMode::Disabled)
+    }
+}
+
 pub struct MySqlProvider {
     pool: sqlx::MySqlPool,
     #[cfg(feature = "tracing")]

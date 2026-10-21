@@ -255,14 +255,23 @@ ctx.set::<Blog>();
 ### 多数据库（Keyed）/ Multi-DB (Keyed)
 
 ```rust
+// 读写分离：两个 keyed context 共享默认实体模型
 let provider = ServiceCollection::new()
-    .add_dbcontext_keyed("read", |o| o.use_postgres("host=replica/db"))
-    .add_dbcontext_keyed("write", |o| o.use_postgres("host=primary/db"))
+    .add_dbcontext_keyed("read", |o| {
+        o.use_default_entity_model();
+        o.use_postgres("host=replica/db");
+    })
+    .add_dbcontext_keyed("write", |o| {
+        o.use_default_entity_model();
+        o.use_postgres("host=primary/db");
+    })
     .build()
     .unwrap();
 
 let read: Arc<DbContext> = provider.get_keyed("read");
 let write: Arc<DbContext> = provider.get_keyed("write");
+
+// SQLite 同一文件：写 context 用 use_sqlite_with("app.db", |o| { o.max_pool_size(1); })
 ```
 
 ---

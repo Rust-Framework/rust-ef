@@ -39,6 +39,24 @@ async fn test_mysql_crud_lifecycle() {
 }
 
 #[tokio::test]
+async fn test_mysql_transaction_scope() {
+    let Some(url) = mysql_url() else {
+        eprintln!("skip test_mysql_transaction_scope: RUST_EF_MYSQL_URL not set");
+        return;
+    };
+    let provider = match MySqlProvider::new_insecure(&url).await {
+        Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
+        Err(e) => {
+            eprintln!("skip test_mysql_transaction_scope: {e}");
+            return;
+        }
+    };
+    common::run_transaction_scope(provider, rust_ef::migration::MigrationDialect::MySql)
+        .await
+        .expect("mysql transaction scope");
+}
+
+#[tokio::test]
 async fn test_mysql_filter_with_in_operator() {
     let Some(url) = mysql_url() else {
         eprintln!("skip test_mysql_filter_with_in_operator: RUST_EF_MYSQL_URL not set");

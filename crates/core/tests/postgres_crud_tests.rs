@@ -166,3 +166,21 @@ async fn test_postgres_has_data_seed() {
         .await
         .expect("postgres has_data seed");
 }
+
+#[tokio::test]
+async fn test_postgres_transaction_scope() {
+    let Some(url) = pg_url() else {
+        eprintln!("skip test_postgres_transaction_scope: RUST_EF_PG_URL not set");
+        return;
+    };
+    let provider = match PostgresProvider::new_insecure(&url, 5) {
+        Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
+        Err(e) => {
+            eprintln!("skip test_postgres_transaction_scope: {e}");
+            return;
+        }
+    };
+    common::run_transaction_scope(provider, rust_ef::migration::MigrationDialect::Postgres)
+        .await
+        .expect("postgres transaction scope");
+}

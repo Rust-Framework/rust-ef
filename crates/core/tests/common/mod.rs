@@ -6,6 +6,7 @@ mod cascade_fixtures;
 mod mock_generators;
 mod setup;
 mod test_item;
+mod txn_fixture;
 
 pub use cascade_fixtures::*;
 pub use mock_generators::*;
@@ -15,3 +16,4 @@ pub use setup::{
     run_filter_with_in_operator, run_has_data_seed, run_limit_and_offset,
 };
 pub use test_item::TestItem;
+pub use txn_fixture::{run_transaction_scope, TxnTestItem};

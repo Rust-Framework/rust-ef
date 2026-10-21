@@ -126,6 +126,18 @@ impl IAsyncConnection for SqliteConnection {
         self.execute("BEGIN TRANSACTION", &[]).await.map(|_| ())
     }
 
+    async fn begin_transaction_with(&mut self, level: IsolationLevel) -> EFResult<()> {
+        // SQLite has one isolation mode (serializable); other levels would be
+        // a silent lie, so fail loudly like the EF Core SQLite provider.
+        match level {
+            IsolationLevel::Serializable => self.begin_transaction().await,
+            other => Err(EFError::provider(format!(
+                "SQLite supports only Serializable isolation, got {:?}",
+                other
+            ))),
+        }
+    }
+
     async fn commit_transaction(&mut self) -> EFResult<()> {
         self.execute("COMMIT", &[]).await.map(|_| ())
     }
@@ -153,6 +165,8 @@ impl IAsyncConnection for SqliteConnection {
     }
 
     async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()> {
+        // Legacy post-BEGIN API: keep the historical PRAGMA behavior. The
+        // portable, strict entry point is `begin_transaction_with`.
         let sql = match level {
             IsolationLevel::ReadUncommitted => "PRAGMA read_uncommitted = ON",
             _ => "PRAGMA read_uncommitted = OFF",

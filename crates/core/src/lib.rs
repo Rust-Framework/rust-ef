@@ -44,6 +44,7 @@ pub mod provider;
 pub mod query;
 pub mod registration;
 pub mod relations;
+pub(crate) mod session;
 pub mod tracking;
 pub mod transaction;
 
@@ -85,7 +86,7 @@ pub mod prelude {
     pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::tracking::ChangeTracker;
-    pub use crate::transaction::{DbTransaction, ITransaction};
+    pub use crate::transaction::{DbTransaction, ITransaction, TxOutcome};
     pub use rust_ef_macros::column;
     pub use rust_ef_macros::entity;
     pub use rust_ef_macros::linq;

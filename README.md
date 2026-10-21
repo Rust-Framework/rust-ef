@@ -255,14 +255,23 @@ ctx.set::<Blog>();
 ### Multi-DB (Keyed)
 
 ```rust
+// Read/write split: both keyed contexts share the default entity model.
 let provider = ServiceCollection::new()
-    .add_dbcontext_keyed("read", |o| o.use_postgres("host=replica/db"))
-    .add_dbcontext_keyed("write", |o| o.use_postgres("host=primary/db"))
+    .add_dbcontext_keyed("read", |o| {
+        o.use_default_entity_model();
+        o.use_postgres("host=replica/db");
+    })
+    .add_dbcontext_keyed("write", |o| {
+        o.use_default_entity_model();
+        o.use_postgres("host=primary/db");
+    })
     .build()
     .unwrap();
 
 let read: Arc<DbContext> = provider.get_keyed("read");
 let write: Arc<DbContext> = provider.get_keyed("write");
+
+// SQLite on one file: write context uses use_sqlite_with("app.db", |o| { o.max_pool_size(1); }).
 ```
 
 ---

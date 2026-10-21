@@ -37,6 +37,10 @@ pub(crate) trait ErasedSetOps: Send + Sync {
         tracker: &mut ChangeTracker,
     );
 
+    /// Drops every entry from the typed `DbSet` (used by
+    /// `DbContext::clear_tracking` after a rollback).
+    fn clear_entries(&self, raw_set: &mut (dyn Any + Send + Sync));
+
     /// Collects type-erased views of all tracked entries, joined by `entry_id`.
     fn collect_entries(
         &self,
@@ -196,6 +200,12 @@ where
             .map(|e| (e.entry_id, e.entity.snapshot()))
             .collect();
         tracker.accept_all_changes(&snapshots);
+    }
+
+    fn clear_entries(&self, raw_set: &mut (dyn Any + Send + Sync)) {
+        if let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() {
+            db_set.entries.clear();
+        }
     }
 
     fn collect_entries(

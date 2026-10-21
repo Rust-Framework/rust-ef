@@ -12,13 +12,17 @@ use crate::provider::{DbValue, IAsyncConnection};
 use crate::transaction::ITransaction;
 use std::any::TypeId;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::save_phases::SaveChangesResult;
 
-/// Transaction source for `save_changes`: either an ambient transaction
-/// (registered by `use_transaction`) or a self-managed connection.
+/// Transaction source for `save_changes`: either the ambient transaction
+/// registered by `use_transaction` / `transaction`, or a self-managed
+/// connection.
 pub(super) enum TxnSource {
+    /// Ambient transaction (`use_transaction` / `transaction`).
     Ambient(Box<dyn ITransaction>),
+    /// Self-managed transaction (no explicit transaction around the save).
     Managed(Box<dyn IAsyncConnection>),
 }
 
@@ -29,6 +33,24 @@ impl TxnSource {
             TxnSource::Managed(c) => c.as_mut(),
         }
     }
+
+    /// Only context-scoped transactions get per-save savepoints. A legacy
+    /// standalone handle (`begin_transaction`) does not cover queries or
+    /// `save_changes`, so it must not affect save semantics.
+    fn is_scoped(&self) -> bool {
+        matches!(self, TxnSource::Ambient(t) if t.is_scoped())
+    }
+}
+
+/// Savepoints are per-save unique; a process-wide counter keeps names distinct
+/// across nested / concurrent sessions without allocating UUIDs.
+static SAVEPOINT_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn next_savepoint_name() -> String {
+    format!(
+        "rust_ef_save_{}",
+        SAVEPOINT_SEQ.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 impl super::DbContext {
@@ -73,6 +95,32 @@ impl super::DbContext {
         let save_ctx = self.build_save_context();
         self.interceptor_pipeline.on_saving(&save_ctx).await?;
 
+        // No-op saves should not open a transaction (or a savepoint): EF Core
+        // returns without touching the database when nothing is pending.
+        if save_ctx.added_count() == 0
+            && save_ctx.modified_count() == 0
+            && save_ctx.deleted_count() == 0
+        {
+            let result_ctx = SaveChangesResultContext {
+                added: 0,
+                updated: 0,
+                deleted: 0,
+            };
+            self.interceptor_pipeline
+                .on_saved(&save_ctx, &result_ctx)
+                .await?;
+            return Ok(SaveChangesResult {
+                added: 0,
+                updated: 0,
+                deleted: 0,
+            });
+        }
+
+        // Note: unlike EF Core's `AutoTransactionBehavior.WhenNeeded`, a
+        // self-managed save always opens a transaction. A single-statement
+        // fast path would need a complete statement plan (cascades, FK fixups,
+        // M2M join rows) before execution; an incorrect count would commit
+        // partially, so it is intentionally not attempted here.
         let mut txn = match self.ambient_transaction.take() {
             Some(t) => TxnSource::Ambient(t),
             None => {
@@ -82,14 +130,42 @@ impl super::DbContext {
             }
         };
 
+        // Context-scoped transactions get a savepoint so a failed save can be
+        // rolled back without discarding work already done in the same
+        // transaction (EF Core does the same around SaveChanges).
+        let scoped = txn.is_scoped();
+        let savepoint = if scoped {
+            let name = next_savepoint_name();
+            if let Err(e) = txn.conn().create_savepoint(&name).await {
+                return self.fail_save(txn, &save_ctx, None, e).await;
+            }
+            Some(name)
+        } else {
+            None
+        };
+
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
 
         // --- Cascade drain: Added + Deleted ---
-        let fixup_links = self.drain_cascade_adds(&type_ids, &configured_metas)?;
+        let fixup_links = match self.drain_cascade_adds(&type_ids, &configured_metas) {
+            Ok(links) => links,
+            Err(e) => {
+                return self
+                    .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                    .await
+            }
+        };
         let mut processed: std::collections::HashSet<(TypeId, usize)> =
             std::collections::HashSet::new();
         let delete_directives =
-            self.drain_cascade_deletes(&type_ids, &configured_metas, &mut processed)?;
+            match self.drain_cascade_deletes(&type_ids, &configured_metas, &mut processed) {
+                Ok(directives) => directives,
+                Err(e) => {
+                    return self
+                        .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                        .await
+                }
+            };
 
         let graph = DependencyGraph::build(&configured_metas);
         let insert_order = graph.topological_sort();
@@ -118,6 +194,7 @@ impl super::DbContext {
                     .fail_save(
                         txn,
                         &save_ctx,
+                        savepoint.as_deref(),
                         EFError::configuration(format!(
                             "entity metadata not found for {:?}",
                             type_id
@@ -136,7 +213,11 @@ impl super::DbContext {
                 .await
             {
                 Ok(n) => n,
-                Err(e) => return self.fail_save(txn, &save_ctx, e).await,
+                Err(e) => {
+                    return self
+                        .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                        .await
+                }
             };
             total_added += inserted;
 
@@ -228,7 +309,9 @@ impl super::DbContext {
                     .execute(&sql, &[DbValue::from(fk_val), DbValue::from(pk_val)])
                     .await
                 {
-                    return self.fail_save(txn, &save_ctx, e).await;
+                    return self
+                        .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                        .await;
                 }
             }
         }
@@ -282,7 +365,9 @@ impl super::DbContext {
                     params.push(DbValue::from(*child_pk));
                 }
                 if let Err(e) = txn.conn().execute(&sql, &params).await {
-                    return self.fail_save(txn, &save_ctx, e).await;
+                    return self
+                        .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                        .await;
                 }
                 total_added += child_pks.len();
             }
@@ -307,6 +392,7 @@ impl super::DbContext {
                     .fail_save(
                         txn,
                         &save_ctx,
+                        savepoint.as_deref(),
                         EFError::configuration(format!(
                             "entity metadata not found for {:?}",
                             type_id
@@ -325,7 +411,11 @@ impl super::DbContext {
                 .await
             {
                 Ok(n) => n,
-                Err(e) => return self.fail_save(txn, &save_ctx, e).await,
+                Err(e) => {
+                    return self
+                        .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                        .await
+                }
             };
             total_added += n;
         }
@@ -349,6 +439,7 @@ impl super::DbContext {
                     .fail_save(
                         txn,
                         &save_ctx,
+                        savepoint.as_deref(),
                         EFError::configuration(format!(
                             "entity metadata not found for {:?}",
                             type_id
@@ -367,7 +458,11 @@ impl super::DbContext {
                 .await
             {
                 Ok(n) => n,
-                Err(e) => return self.fail_save(txn, &save_ctx, e).await,
+                Err(e) => {
+                    return self
+                        .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                        .await
+                }
             };
             total_updated += n;
         }
@@ -383,7 +478,9 @@ impl super::DbContext {
             );
             let params = vec![DbValue::from(directive.principal_pk)];
             if let Err(e) = txn.conn().execute(&sql, &params).await {
-                return self.fail_save(txn, &save_ctx, e).await;
+                return self
+                    .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                    .await;
             }
         }
 
@@ -406,6 +503,7 @@ impl super::DbContext {
                     .fail_save(
                         txn,
                         &save_ctx,
+                        savepoint.as_deref(),
                         EFError::configuration(format!(
                             "entity metadata not found for {:?}",
                             type_id
@@ -424,7 +522,11 @@ impl super::DbContext {
                 .await
             {
                 Ok(n) => n,
-                Err(e) => return self.fail_save(txn, &save_ctx, e).await,
+                Err(e) => {
+                    return self
+                        .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                        .await
+                }
             };
             total_deleted += n;
         }
@@ -440,11 +542,19 @@ impl super::DbContext {
             );
             let params = vec![DbValue::from(directive.principal_pk)];
             if let Err(e) = txn.conn().execute(&sql, &params).await {
-                return self.fail_save(txn, &save_ctx, e).await;
+                return self
+                    .fail_save(txn, &save_ctx, savepoint.as_deref(), e)
+                    .await;
             }
         }
 
         // --- Commit ---
+        if let Some(name) = savepoint.as_deref() {
+            // The DML already succeeded; a failed RELEASE leaves the savepoint
+            // in place but does not invalidate the transaction, so don't fail
+            // the save because of it.
+            let _ = txn.conn().release_savepoint(name).await;
+        }
         match txn {
             TxnSource::Ambient(t) => {
                 self.ambient_transaction = Some(t);
@@ -485,19 +595,25 @@ impl super::DbContext {
         })
     }
 
-    /// Error recovery: rollback managed transaction (or restore ambient),
-    /// fire `on_save_failed` interceptor, return the error.
+    /// Error recovery: roll back to the savepoint for caller-managed
+    /// transactions, roll back the whole managed transaction otherwise, fire
+    /// `on_save_failed`, and return the error.
     async fn fail_save(
         &mut self,
         txn: TxnSource,
         save_ctx: &SaveChangesContext,
+        savepoint: Option<&str>,
         e: EFError,
     ) -> EFResult<SaveChangesResult> {
         match txn {
             TxnSource::Managed(mut conn) => {
                 let _ = conn.rollback_transaction().await;
             }
-            TxnSource::Ambient(t) => {
+            TxnSource::Ambient(mut t) => {
+                if let Some(name) = savepoint {
+                    let _ = t.connection().rollback_to_savepoint(name).await;
+                    let _ = t.connection().release_savepoint(name).await;
+                }
                 self.ambient_transaction = Some(t);
             }
         }

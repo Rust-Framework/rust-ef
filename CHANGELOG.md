@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Transaction scope**: statements issued inside `use_transaction` now share the transaction's connection. Previously only the DML executed by `save_changes` joined the ambient transaction; high-level queries, navigation/lazy loading, `sql_query`, `execute_update` and `execute_delete` acquired separate pooled connections. As a result, a query could not observe the handler's uncommitted writes, and bulk DML committed immediately outside the transaction (so it could not be rolled back).
+- **Savepoint per scoped save**: `save_changes()` inside `use_transaction` / `transaction` wraps its DML in a savepoint and rolls back to it on failure, leaving the outer transaction usable (matching EF Core). Standalone `begin_transaction` handles keep the legacy behavior.
+- **No-op save fast path**: `save_changes()` with nothing pending returns `{ added: 0, updated: 0, deleted: 0 }` without opening a transaction or savepoint.
+- **SQLite pool acquisition**: pooled connection acquisition now runs on `spawn_blocking`, so a saturated write pool does not block Tokio workers. The default acquisition timeout remains 30s (r2d2's historical default) and is configurable via `SqliteOptions::pool_acquire_timeout`.
+
+#### Added
+
+- **`DbContext::transaction` + `TxOutcome`**: handler-level unit of work. The closure returns `TxOutcome::Commit(value)` or `TxOutcome::Rollback(value)`; both yield `Ok(value)`, while `Err` still rolls back and propagates. `Rollback` also detaches tracked entities.
+- **`DbContext::clear_tracking`**: detaches every tracked entity and clears the change tracker.
+- **Drop-rolls-back**: dropping a transaction handle without committing rolls it back on a background task (best effort; requires a Tokio runtime).
+- **Isolation at transaction start**: `begin_transaction_with` / `use_transaction_with` / `transaction_with` apply the isolation level before the first statement. MySQL sets it before `START TRANSACTION`; PostgreSQL applies it after `BEGIN` but before any query; SQLite accepts only `Serializable`.
+- **Options APIs for all providers**: `use_sqlite_with(path, |o| ...)`, `use_mysql_with(cs, |o| ...)`, `use_postgres_with(cs, |o| ...)`. Each delegate configures a provider-specific options builder (pool size, TLS, SQLite acquisition timeout), so new features can be added without more `use_*` methods. Existing `use_*` / `use_*_with_pool` / `use_*_with_tls` methods are unchanged.
+- **Keyed shared entity model**: `use_default_entity_model()` lets read/write replica contexts share the default entity model instead of being filtered by `#[context(key)]`.
+
+#### Changed
+
+- **`use_transaction` behavior**: queries, navigation loading, `sql_query`, `execute_update` and `execute_delete` now join the ambient transaction. `begin_transaction` remains a standalone handle (queries and `save_changes()` do not join it) for backward compatibility; use `transaction` for a context-scoped unit of work.
+- **Isolation semantics**: `set_isolation` keeps its legacy provider-specific behavior (SQLite PRAGMA, MySQL `SET TRANSACTION`, PostgreSQL). The new `*_with` entry points are the portable, validated way to set isolation at transaction start.
+- **Read/write separation recipe**: documented as two keyed `DbContext`s (EF Core style); no `use_*_read_write` API. Pool sizing for the write context uses the provider's delegate (e.g. `use_sqlite_with(..., |o| o.max_pool_size(1))`, `use_mysql_with(..., |o| o.max_pool_size(1))`, `use_postgres_with(..., |o| o.pool_size(1))`).
+
+### 简体中文
+
+#### 修复
+
+- **事务覆盖范围**：`use_transaction` 内的所有语句现在共享事务连接。此前只有 `save_changes` 执行的 DML 加入环境事务；查询、导航/懒加载、`sql_query`、`execute_update` 与 `execute_delete` 会各自从连接池取新连接，导致查询读不到本事务未提交的写，批量 DML 也会立即提交、无法随事务回滚。
+- **作用域内每次 save 使用 savepoint**：`use_transaction` / `transaction` 内的 `save_changes()` 会把本次 DML 包在 savepoint 中，失败时回滚到该 savepoint，外层事务仍可继续（与 EF Core 一致）。独立的 `begin_transaction` 句柄保持旧行为。
+- **空保存快速路径**：没有待保存变更时，`save_changes()` 直接返回 `{ added: 0, updated: 0, deleted: 0 }`，不开启事务或 savepoint。
+- **SQLite 池获取**：连接池获取改为 `spawn_blocking`，写池饱和时不会阻塞 Tokio worker；默认超时保持 r2d2 历史的 30s，可通过 `SqliteOptions::pool_acquire_timeout` 配置。
+
+#### 新增
+
+- **`DbContext::transaction` + `TxOutcome`**：以 handler 为单位的工作单元。闭包返回 `TxOutcome::Commit(value)` 或 `TxOutcome::Rollback(value)`，两者都向外返回 `Ok(value)`；`Err` 仍会回滚并传播。`Rollback` 同时 detach 所有跟踪实体。
+- **`DbContext::clear_tracking`**：detach 所有跟踪实体并清空 ChangeTracker。
+- **Drop 自动回滚**：未提交就 drop 的事务句柄会在后台任务中回滚（best effort，需要 Tokio runtime）。
+- **事务开始时指定隔离级别**：`begin_transaction_with` / `use_transaction_with` / `transaction_with` 在首条语句前应用隔离级别。MySQL 在 `START TRANSACTION` 前设置；PostgreSQL 在 `BEGIN` 后、首条查询前设置；SQLite 只接受 `Serializable`。
+- **所有 provider 的 options API**：`use_sqlite_with(path, |o| ...)`、`use_mysql_with(cs, |o| ...)`、`use_postgres_with(cs, |o| ...)`。delegate 配置各 provider 的 options（池大小、TLS、SQLite 获取超时），后续扩展无需新增 `use_*` 方法。原有 `use_*` / `use_*_with_pool` / `use_*_with_tls` 保持不变。
+- **Keyed 共享实体模型**：`use_default_entity_model()` 让读写副本 context 共享默认实体模型，而不是按 `#[context(key)]` 过滤。
+
+#### 变更
+
+- **`use_transaction` 行为**：查询、导航、`sql_query`、`execute_update`、`execute_delete` 现在加入环境事务。`begin_transaction` 保持独立句柄语义（查询和 `save_changes()` 不加入），以兼容旧代码；需要上下文级工作单元时使用 `transaction`。
+- **隔离级别语义**：`set_isolation` 保留各 provider 的旧行为（SQLite PRAGMA、MySQL `SET TRANSACTION`、PostgreSQL）；新的 `*_with` 入口是跨库、经过校验的隔离级别设置方式。
+- **读写分离方式**：文档改为 EF Core 推荐的 keyed 双 `DbContext`；不新增 `use_*_read_write` 方法。写 context 的池大小通过各 provider 的 delegate 设置（如 `use_sqlite_with(..., |o| o.max_pool_size(1))`、`use_mysql_with(..., |o| o.max_pool_size(1))`、`use_postgres_with(..., |o| o.pool_size(1))`）。
+
+---
+
 ## [1.8.4] — 2026-09-09 — Fix crates.io README mojibake
 
 > **English** · **简体中文**

@@ -175,7 +175,9 @@ impl DbContextServiceCollectionExt for ::rust_dix::ServiceCollection {
     ) -> Self {
         let mut builder = DbContextOptionsBuilder::new();
         configure(&mut builder);
-        builder.context_key(key);
+        if !builder.uses_default_entity_model() {
+            builder.context_key(key);
+        }
         let options = Arc::new(builder.build());
         options
             .create_provider()
