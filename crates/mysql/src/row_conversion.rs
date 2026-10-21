@@ -3,12 +3,12 @@ use sqlx::{Column, Row, TypeInfo};
 
 /// Converts a cell from a `sqlx::mysql::MySqlRow` into a native `DbValue`.
 ///
-/// Dispatches by attempting `try_get` on common Rust types in a specific
-/// order (bool → i16 → i32 → i64 → f32 → f64 → NaiveDateTime → NaiveDate →
-/// Uuid → String → Vec<u8>). This mirrors the PostgreSQL provider's
-/// `cell_to_db_value` approach and returns native `DbValue` variants directly
-/// (no String round-trip), eliminating the v1.5 silent-data-loss path where
-/// non-String columns were stringified and re-parsed.
+/// Uses the column type for the ambiguous cases (`BIGINT`, `TINYINT`), then
+/// attempts `try_get` on common Rust types. This mirrors the PostgreSQL
+/// provider's `cell_to_db_value` approach and returns native `DbValue`
+/// variants directly (no String round-trip), eliminating the v1.5
+/// silent-data-loss path where non-String columns were stringified and
+/// re-parsed.
 ///
 /// `Ok(None)` from `try_get::<Option<T>>` indicates a SQL NULL — returned as
 /// `DbValue::Null`. `Err` indicates the column's native type is not
@@ -27,10 +27,12 @@ pub(crate) fn cell_to_db_value(row: &sqlx::mysql::MySqlRow, col_idx: usize) -> D
         }
     }
 
-    // bool (TINYINT(1)) — must precede integer types, since MySQL booleans
-    // are stored as 0/1 and would otherwise be matched by i16/i32/i64.
-    if let Ok(v) = row.try_get::<Option<bool>, _>(col_idx) {
-        return v.map(DbValue::Bool).unwrap_or(DbValue::Null);
+    // bool (TINYINT(1)) — only for TINYINT. The MySQL bool decoder accepts
+    // any integer, so decoding INT/BIGINT as bool corrupts IDs and counts.
+    if column_type == "TINYINT" {
+        if let Ok(v) = row.try_get::<Option<bool>, _>(col_idx) {
+            return v.map(DbValue::Bool).unwrap_or(DbValue::Null);
+        }
     }
     if let Ok(v) = row.try_get::<Option<i16>, _>(col_idx) {
         return v.map(DbValue::I16).unwrap_or(DbValue::Null);
