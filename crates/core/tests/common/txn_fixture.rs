@@ -13,6 +13,7 @@ use std::sync::Arc;
 pub struct TxnTestItem {
     #[primary_key]
     #[auto_increment]
+    #[required]
     pub id: i32,
     #[required]
     pub name: String,

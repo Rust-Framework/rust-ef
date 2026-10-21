@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
-use sqlx::Row;
+use sqlx::{Executor, Row};
 
 pub struct MySqlConnection {
     conn: Option<sqlx::pool::PoolConnection<sqlx::MySql>>,
@@ -36,6 +36,24 @@ impl MySqlConnection {
         {
             None
         }
+    }
+
+    /// Executes a statement through MySQL's text protocol.
+    ///
+    /// Transaction control and DDL statements are not supported by the
+    /// prepared-statement protocol (MySQL error 1295), so they must use
+    /// `raw_sql` instead of `sqlx::query`.
+    async fn execute_raw(&mut self, sql: &str) -> EFResult<u64> {
+        let _guard = rust_ef::observability::QueryGuard::new(sql, self.threshold());
+        let conn = self
+            .conn
+            .as_mut()
+            .ok_or_else(|| EFError::connection("Connection already closed".to_string()))?;
+        let result = conn
+            .execute(sqlx::raw_sql(sql))
+            .await
+            .map_err(|e| EFError::query(format!("Execution error: {}", e)))?;
+        Ok(result.rows_affected())
     }
 }
 
@@ -84,38 +102,38 @@ impl IAsyncConnection for MySqlConnection {
     }
 
     async fn begin_transaction(&mut self) -> EFResult<()> {
-        self.execute("START TRANSACTION", &[]).await.map(|_| ())
+        self.execute_raw("START TRANSACTION").await.map(|_| ())
     }
 
     async fn begin_transaction_with(&mut self, level: IsolationLevel) -> EFResult<()> {
         // MySQL only accepts SET TRANSACTION before the transaction starts.
         let sql = format!("SET TRANSACTION ISOLATION LEVEL {}", isolation_sql(level));
-        self.execute(&sql, &[]).await?;
+        self.execute_raw(&sql).await?;
         self.begin_transaction().await
     }
 
     async fn commit_transaction(&mut self) -> EFResult<()> {
-        self.execute("COMMIT", &[]).await.map(|_| ())
+        self.execute_raw("COMMIT").await.map(|_| ())
     }
 
     async fn rollback_transaction(&mut self) -> EFResult<()> {
-        self.execute("ROLLBACK", &[]).await.map(|_| ())
+        self.execute_raw("ROLLBACK").await.map(|_| ())
     }
 
     async fn create_savepoint(&mut self, name: &str) -> EFResult<()> {
-        self.execute(&format!("SAVEPOINT {}", name), &[])
+        self.execute_raw(&format!("SAVEPOINT {}", name))
             .await
             .map(|_| ())
     }
 
     async fn release_savepoint(&mut self, name: &str) -> EFResult<()> {
-        self.execute(&format!("RELEASE SAVEPOINT {}", name), &[])
+        self.execute_raw(&format!("RELEASE SAVEPOINT {}", name))
             .await
             .map(|_| ())
     }
 
     async fn rollback_to_savepoint(&mut self, name: &str) -> EFResult<()> {
-        self.execute(&format!("ROLLBACK TO SAVEPOINT {}", name), &[])
+        self.execute_raw(&format!("ROLLBACK TO SAVEPOINT {}", name))
             .await
             .map(|_| ())
     }
@@ -125,7 +143,7 @@ impl IAsyncConnection for MySqlConnection {
         // it reliably before START TRANSACTION; use `begin_transaction_with`
         // for the portable entry point.
         let sql = format!("SET TRANSACTION ISOLATION LEVEL {}", isolation_sql(level));
-        self.execute(&sql, &[]).await.map(|_| ())
+        self.execute_raw(&sql).await.map(|_| ())
     }
 
     #[cfg(feature = "tracing")]

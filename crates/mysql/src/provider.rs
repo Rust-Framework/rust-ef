@@ -153,7 +153,9 @@ impl IDatabaseProvider for MySqlProvider {
     }
 
     async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {
-        sqlx::query(sql)
+        // DDL is not supported by the prepared-statement protocol (MySQL error
+        // 1295); use the text protocol.
+        sqlx::raw_sql(sql)
             .execute(&self.pool)
             .await
             .map_err(|e| EFError::migration(format!("Migration execution failed: {}", e)))?;
