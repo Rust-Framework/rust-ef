@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Savepoint per scoped save**: `save_changes()` inside `use_transaction` / `transaction` wraps its DML in a savepoint and rolls back to it on failure, leaving the outer transaction usable (matching EF Core). Standalone `begin_transaction` handles keep the legacy behavior.
 - **No-op save fast path**: `save_changes()` with nothing pending returns `{ added: 0, updated: 0, deleted: 0 }` without opening a transaction or savepoint.
 - **SQLite pool acquisition**: pooled connection acquisition now runs on `spawn_blocking`, so a saturated write pool does not block Tokio workers. The default acquisition timeout remains 30s (r2d2's historical default) and is configurable via `SqliteOptions::pool_acquire_timeout`.
+- **MySQL text protocol**: transaction control (`START TRANSACTION`, `SET TRANSACTION`, `COMMIT`, `ROLLBACK`, savepoints) and DDL now use `sqlx::raw_sql`; MySQL 8.4 rejects these statements through the prepared-statement protocol (error 1295).
 
 #### Added
 
@@ -43,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **作用域内每次 save 使用 savepoint**：`use_transaction` / `transaction` 内的 `save_changes()` 会把本次 DML 包在 savepoint 中，失败时回滚到该 savepoint，外层事务仍可继续（与 EF Core 一致）。独立的 `begin_transaction` 句柄保持旧行为。
 - **空保存快速路径**：没有待保存变更时，`save_changes()` 直接返回 `{ added: 0, updated: 0, deleted: 0 }`，不开启事务或 savepoint。
 - **SQLite 池获取**：连接池获取改为 `spawn_blocking`，写池饱和时不会阻塞 Tokio worker；默认超时保持 r2d2 历史的 30s，可通过 `SqliteOptions::pool_acquire_timeout` 配置。
+- **MySQL 文本协议**：事务控制（`START TRANSACTION`、`SET TRANSACTION`、`COMMIT`、`ROLLBACK`、savepoint）与 DDL 改用 `sqlx::raw_sql`；MySQL 8.4 的预处理协议会拒绝这些语句（错误 1295）。
 
 #### 新增
 
