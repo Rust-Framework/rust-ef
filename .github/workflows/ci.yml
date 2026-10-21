@@ -74,9 +74,9 @@ jobs:
               cargo test --workspace --all-features -- --skip postgres --skip mysql
               ;;
             postgres)
-              cargo test --workspace --features chrono,uuid,decimal --test postgres_crud_tests
+              cargo test --workspace --features chrono,uuid,decimal --test postgres_crud_tests -- --test-threads=1
               ;;
             mysql)
-              cargo test --workspace --features chrono,uuid,decimal --test mysql_crud_tests
+              cargo test --workspace --features chrono,uuid,decimal --test mysql_crud_tests -- --test-threads=1
               ;;
           esac

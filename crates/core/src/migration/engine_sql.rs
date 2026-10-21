@@ -31,6 +31,25 @@ impl MigrationEngine {
         format!("ix_{}_{}", table, column)
     }
 
+    /// Returns the column type and whether MySQL `AUTO_INCREMENT` must be
+    /// emitted after the nullability clause.
+    ///
+    /// MySQL's column grammar is `type [NOT NULL|NULL] ... [AUTO_INCREMENT]`;
+    /// emitting `INT AUTO_INCREMENT NOT NULL` makes the primary key column
+    /// nullable (error 1171).
+    fn column_type(&self, col: &SnapshotColumn) -> (String, bool) {
+        let col_type = self.dialect.map_column_type(col);
+        if self.dialect == MigrationDialect::MySql && (col.is_auto_increment || col.is_sequence) {
+            let stripped = col_type
+                .strip_suffix(" AUTO_INCREMENT")
+                .unwrap_or(&col_type)
+                .to_string();
+            (stripped, true)
+        } else {
+            (col_type, false)
+        }
+    }
+
     pub fn generate_alter_column_sql(
         &self,
         table: &str,
@@ -38,10 +57,10 @@ impl MigrationEngine {
         new: &SnapshotColumn,
     ) -> String {
         let q = |s: &str| self.dialect.quote(s);
-        let col_type = self.dialect.map_column_type(new);
+        let (col_type, mysql_auto_increment) = self.column_type(new);
         match self.dialect {
             MigrationDialect::Postgres => {
-                let nullable = if new.is_required {
+                let nullable = if new.is_required || new.is_primary_key {
                     "SET NOT NULL"
                 } else {
                     "DROP NOT NULL"
@@ -57,13 +76,23 @@ impl MigrationEngine {
                 )
             }
             MigrationDialect::MySql => {
-                let nullable = if new.is_required { "NOT NULL" } else { "NULL" };
+                let nullable = if new.is_required || new.is_primary_key {
+                    "NOT NULL"
+                } else {
+                    "NULL"
+                };
+                let auto_increment = if mysql_auto_increment {
+                    " AUTO_INCREMENT"
+                } else {
+                    ""
+                };
                 format!(
-                    "ALTER TABLE {} MODIFY COLUMN {} {} {};\n",
+                    "ALTER TABLE {} MODIFY COLUMN {} {} {}{};\n",
                     q(table),
                     q(column_name),
                     col_type,
-                    nullable
+                    nullable,
+                    auto_increment
                 )
             }
             MigrationDialect::Sqlite => format!(
@@ -121,8 +150,12 @@ impl MigrationEngine {
                     let col_defs: Vec<String> = columns
                         .iter()
                         .map(|c| {
-                            let nullable = if c.is_required { "NOT NULL" } else { "NULL" };
-                            let col_type = self.dialect.map_column_type(c);
+                            let nullable = if c.is_required || c.is_primary_key {
+                                "NOT NULL"
+                            } else {
+                                "NULL"
+                            };
+                            let (col_type, mysql_auto_increment) = self.column_type(c);
                             // PostgreSQL sequence column: add DEFAULT nextval('seq_name')
                             if c.is_sequence && self.dialect == MigrationDialect::Postgres {
                                 if let Some(seq_name) = &c.sequence_name {
@@ -136,11 +169,11 @@ impl MigrationEngine {
                                 }
                             }
                             // Don't put PRIMARY KEY on individual columns; handle separately
-                            [q(&c.column_name), col_type, nullable.to_string()]
-                                .into_iter()
-                                .filter(|s| !s.is_empty())
-                                .collect::<Vec<_>>()
-                                .join(" ")
+                            let mut parts = vec![q(&c.column_name), col_type, nullable.to_string()];
+                            if mysql_auto_increment {
+                                parts.push("AUTO_INCREMENT".to_string());
+                            }
+                            parts.join(" ")
                         })
                         .collect();
                     sql.push_str(&format!("    {}\n", col_defs.join(",\n    ")));
@@ -159,18 +192,24 @@ impl MigrationEngine {
                     sql.push_str(&format!("DROP TABLE IF EXISTS {};\n", q(table)));
                 }
                 SchemaChange::AddColumn { table, column } => {
-                    let col_type = self.dialect.map_column_type(column);
-                    let nullable = if column.is_required {
+                    let (col_type, mysql_auto_increment) = self.column_type(column);
+                    let nullable = if column.is_required || column.is_primary_key {
                         "NOT NULL"
                     } else {
                         "NULL"
                     };
+                    let auto_increment = if mysql_auto_increment {
+                        " AUTO_INCREMENT"
+                    } else {
+                        ""
+                    };
                     sql.push_str(&format!(
-                        "ALTER TABLE {} ADD COLUMN {} {} {};\n",
+                        "ALTER TABLE {} ADD COLUMN {} {} {}{};\n",
                         q(table),
                         q(&column.column_name),
                         col_type,
-                        nullable
+                        nullable,
+                        auto_increment
                     ));
                 }
                 SchemaChange::DropColumn { table, column_name } => {
@@ -377,5 +416,58 @@ impl MigrationEngine {
         ));
 
         sql
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migration::schema_change::SchemaChange;
+    use crate::migration::types::SnapshotColumn;
+
+    #[test]
+    fn mysql_auto_increment_follows_nullability() {
+        let engine = MigrationEngine::new(MigrationDialect::MySql);
+        let column = SnapshotColumn {
+            column_name: "id".into(),
+            type_name: "i32".into(),
+            is_primary_key: true,
+            is_required: true,
+            is_auto_increment: true,
+            ..Default::default()
+        };
+        let sql = engine.generate_ddl_sql(&[SchemaChange::CreateTable {
+            table: "items".into(),
+            columns: vec![column],
+        }]);
+        assert!(
+            sql.contains("`id` INT NOT NULL AUTO_INCREMENT"),
+            "unexpected DDL: {sql}"
+        );
+        assert!(
+            !sql.contains("INT AUTO_INCREMENT NOT NULL"),
+            "unexpected DDL: {sql}"
+        );
+    }
+
+    #[test]
+    fn primary_key_columns_are_not_null_even_without_required() {
+        let engine = MigrationEngine::new(MigrationDialect::Postgres);
+        let column = SnapshotColumn {
+            column_name: "id".into(),
+            type_name: "i32".into(),
+            is_primary_key: true,
+            is_required: false,
+            is_auto_increment: true,
+            ..Default::default()
+        };
+        let sql = engine.generate_ddl_sql(&[SchemaChange::CreateTable {
+            table: "items".into(),
+            columns: vec![column],
+        }]);
+        assert!(
+            sql.contains("\"id\" SERIAL NOT NULL"),
+            "unexpected DDL: {sql}"
+        );
     }
 }
