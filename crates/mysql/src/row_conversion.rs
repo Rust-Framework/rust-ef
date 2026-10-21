@@ -1,7 +1,5 @@
 use rust_ef::provider::DbValue;
-#[cfg(feature = "tracing")]
-use sqlx::Column;
-use sqlx::Row;
+use sqlx::{Column, Row, TypeInfo};
 
 /// Converts a cell from a `sqlx::mysql::MySqlRow` into a native `DbValue`.
 ///
@@ -16,6 +14,19 @@ use sqlx::Row;
 /// `DbValue::Null`. `Err` indicates the column's native type is not
 /// representable as `T`, so we fall through to the next candidate type.
 pub(crate) fn cell_to_db_value(row: &sqlx::mysql::MySqlRow, col_idx: usize) -> DbValue {
+    // BIGINT must be checked before bool: MySQL's bool decoder accepts any
+    // integer, so COUNT(*) (BIGINT) would otherwise become Bool(true/false).
+    let column_type = row
+        .columns()
+        .get(col_idx)
+        .map(|column| column.type_info().name())
+        .unwrap_or("");
+    if column_type.starts_with("BIGINT") {
+        if let Ok(v) = row.try_get::<Option<i64>, _>(col_idx) {
+            return v.map(DbValue::I64).unwrap_or(DbValue::Null);
+        }
+    }
+
     // bool (TINYINT(1)) — must precede integer types, since MySQL booleans
     // are stored as 0/1 and would otherwise be matched by i16/i32/i64.
     if let Ok(v) = row.try_get::<Option<bool>, _>(col_idx) {

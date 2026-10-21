@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SQLite pool acquisition**: pooled connection acquisition now runs on `spawn_blocking`, so a saturated write pool does not block Tokio workers. The default acquisition timeout remains 30s (r2d2's historical default) and is configurable via `SqliteOptions::pool_acquire_timeout`.
 - **MySQL text protocol**: transaction control (`START TRANSACTION`, `SET TRANSACTION`, `COMMIT`, `ROLLBACK`, savepoints) and DDL now use `sqlx::raw_sql`; MySQL 8.4 rejects these statements through the prepared-statement protocol (error 1295).
 - **Migration primary keys**: primary-key columns are always emitted as `NOT NULL` (SQL primary keys cannot be nullable), and MySQL `AUTO_INCREMENT` is placed after the nullability clause. Fixes MySQL error 1171 and PostgreSQL `SERIAL NULL` primary keys.
+- **Aggregate decoding**: MySQL `COUNT(*)`/`BIGINT` values are decoded as `i64` before the bool candidate, and PostgreSQL row conversion tries the actual Rust type instead of trusting a column OID, avoiding `Row::get` panics on integer/aggregate columns.
 
 #### Added
 
@@ -47,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SQLite 池获取**：连接池获取改为 `spawn_blocking`，写池饱和时不会阻塞 Tokio worker；默认超时保持 r2d2 历史的 30s，可通过 `SqliteOptions::pool_acquire_timeout` 配置。
 - **MySQL 文本协议**：事务控制（`START TRANSACTION`、`SET TRANSACTION`、`COMMIT`、`ROLLBACK`、savepoint）与 DDL 改用 `sqlx::raw_sql`；MySQL 8.4 的预处理协议会拒绝这些语句（错误 1295）。
 - **迁移主键**：主键列始终生成 `NOT NULL`（SQL 主键不能为 NULL），MySQL 的 `AUTO_INCREMENT` 放在可空性之后。修复 MySQL 错误 1171 与 PostgreSQL 的 `SERIAL NULL` 主键。
+- **聚合值解码**：MySQL 的 `COUNT(*)`/`BIGINT` 先按 `i64` 解码，再尝试 bool；PostgreSQL 行转换按实际 Rust 类型尝试，而不是只信任列 OID，避免整数/聚合列触发 `Row::get` panic。
 
 #### 新增
 
