@@ -36,52 +36,38 @@ pub async fn run_transaction_scope(
     let mut ctx = super::db_context_with_provider(provider);
     ctx.set::<TxnTestItem>();
 
-    // Rollback with a business value.
-    let outcome = ctx
-        .transaction(|ctx| {
-            Box::pin(async move {
-                ctx.add::<TxnTestItem>(TxnTestItem {
-                    id: 0,
-                    name: "rollback".into(),
-                });
-                ctx.save_changes().await?;
-                assert_eq!(ctx.set::<TxnTestItem>().query().count().await?, 1);
-                Ok(TxOutcome::Rollback("rejected"))
-            })
-        })
-        .await?;
-    assert_eq!(outcome, "rejected");
+    // Manual rollback: save_changes joins, nothing is committed.
+    let txn = ctx.begin_transaction().await?;
+    ctx.add::<TxnTestItem>(TxnTestItem {
+        id: 0,
+        name: "rollback".into(),
+    });
+    ctx.save_changes().await?;
+    assert_eq!(ctx.set::<TxnTestItem>().query().count().await?, 1);
+    txn.rollback().await?;
+    ctx.clear_tracking();
     assert_eq!(ctx.set::<TxnTestItem>().query().count().await?, 0);
 
-    // Commit multiple statements in the same unit of work.
-    let outcome = ctx
-        .transaction(|ctx| {
-            Box::pin(async move {
-                ctx.add::<TxnTestItem>(TxnTestItem {
-                    id: 0,
-                    name: "commit".into(),
-                });
-                ctx.save_changes().await?;
-                Ok(TxOutcome::Commit("ok"))
-            })
-        })
-        .await?;
-    assert_eq!(outcome, "ok");
+    // Manual commit.
+    let txn = ctx.begin_transaction().await?;
+    ctx.add::<TxnTestItem>(TxnTestItem {
+        id: 0,
+        name: "commit".into(),
+    });
+    ctx.save_changes().await?;
+    txn.commit().await?;
     assert_eq!(ctx.set::<TxnTestItem>().query().count().await?, 1);
 
     // Isolation at transaction start.
-    let outcome = ctx
-        .transaction_with(IsolationLevel::ReadCommitted, |ctx| {
-            Box::pin(async move {
-                let mut item = ctx.set::<TxnTestItem>().query().to_list().await?.remove(0);
-                item.name = "changed".into();
-                ctx.update::<TxnTestItem>(item);
-                ctx.save_changes().await?;
-                Ok(TxOutcome::Commit("done"))
-            })
-        })
+    let txn = ctx
+        .begin_transaction_with(IsolationLevel::ReadCommitted)
         .await?;
-    assert_eq!(outcome, "done");
+    let mut item = ctx.set::<TxnTestItem>().query().to_list().await?.remove(0);
+    item.name = "changed".into();
+    ctx.update::<TxnTestItem>(item);
+    ctx.save_changes().await?;
+    txn.commit().await?;
+
     let rows = ctx.set::<TxnTestItem>().query().to_list().await?;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "changed");

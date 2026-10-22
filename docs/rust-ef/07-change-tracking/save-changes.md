@@ -19,7 +19,7 @@ println!("Added: {}, Updated: {}, Deleted: {}",
     result.added, result.updated, result.deleted);
 ```
 
-> 在 `use_transaction` / `transaction` 内调用 `save_changes()` 时，它只把变更 flush 到外层事务连接，**不会提交**；提交或回滚由外层事务决定。每次 flush 会创建/释放一个 savepoint，失败时回滚到该 savepoint，外层事务仍可继续。详见[手动事务](../09-transactions-migrations/manual-transactions.md)。
+> 在 `begin_transaction` / `use_transaction` 内调用 `save_changes()` 时，它只把变更 flush 到外层事务连接，**不会提交**；提交或回滚由外层事务决定。每次 flush 会创建/释放一个 savepoint，失败时回滚到该 savepoint，外层事务仍可继续。详见[手动事务](../09-transactions-migrations/manual-transactions.md)。
 
 ## 失败与回滚
 

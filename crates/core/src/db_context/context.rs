@@ -26,7 +26,7 @@ use crate::model_builder::ModelBuilder;
 use crate::provider::{DbValue, IDatabaseProvider, IsolationLevel};
 use crate::session::{Session, SessionConnection, SessionProvider};
 use crate::tracking::ChangeTracker;
-use crate::transaction::{DbTransaction, ITransaction, TxOutcome};
+use crate::transaction::{DbTransaction, ITransaction};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::future::Future;
@@ -268,11 +268,10 @@ impl DbContext {
 
     /// Detaches every tracked entity and clears the change tracker.
     ///
-    /// Called automatically when a [`DbContext::transaction`] closure returns
-    /// [`TxOutcome::Rollback`]: the database rolled back, so keeping the
-    /// entities tracked would let those writes leak into a later
-    /// `save_changes`. Entity instances themselves are not modified — only the
-    /// context's tracking state is dropped.
+    /// Call this after a rollback when the handler is not going to retry, so
+    /// the rolled-back entities cannot leak into a later `save_changes`.
+    /// Entity instances themselves are not modified — only the context's
+    /// tracking state is dropped.
     pub fn clear_tracking(&mut self) {
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         for type_id in type_ids {
@@ -310,27 +309,32 @@ impl DbContext {
     }
 
     /// Returns a mutable reference to the ambient transaction handle, if one
-    /// is active (registered by `use_transaction()` / `transaction()`).
+    /// is active (registered by `use_transaction()`).
     ///
-    /// Inside a scoped transaction closure, use this to access the ambient
-    /// handle for savepoint and isolation operations. A handle returned by
-    /// [`DbContext::begin_transaction`] is owned by the caller instead, so use
-    /// that handle directly. The borrow must be released (by scoping) before
-    /// calling `save_changes()` or other `&mut self` methods.
+    /// A handle returned by [`DbContext::begin_transaction`] is owned by the
+    /// caller; use that handle directly for savepoint/isolation operations.
+    /// The borrow must be released (by scoping) before calling `save_changes()`
+    /// or other `&mut self` methods.
     pub fn transaction_mut(&mut self) -> Option<&mut Box<dyn ITransaction>> {
         self.ambient_transaction.as_mut()
     }
 
-    /// Begins a transaction and returns a typed handle.
+    /// Begins a context-scoped transaction and returns its handle.
     ///
-    /// The handle is **standalone**: it is not registered as the context's
-    /// current transaction. Queries and a later `save_changes()` do not join
-    /// it; `save_changes()` keeps self-managing its own transaction. Use
-    /// [`DbContext::transaction`] for a context-scoped transaction where
-    /// queries, bulk DML and `save_changes()` all join.
+    /// This is the EF Core-style API: the transaction is registered on the
+    /// context, so queries, navigation loading, bulk DML, raw SQL and
+    /// `save_changes()` all use the transaction connection. Nothing is
+    /// committed or rolled back until the returned handle is consumed.
     ///
-    /// `commit` / `rollback` consume the handle by value, preventing
-    /// use-after-commit at the type level.
+    /// ```rust,ignore
+    /// let txn = ctx.begin_transaction().await?;
+    /// ctx.add::<Account>(account);
+    /// ctx.save_changes().await?; // joins, does not commit
+    /// txn.commit().await?;       // or txn.rollback().await?
+    /// ```
+    ///
+    /// Dropping the handle without committing rolls back (best effort).
+    /// Nested transactions are not supported.
     pub async fn begin_transaction(&mut self) -> EFResult<Box<dyn ITransaction>> {
         self.begin_transaction_with_opt(None).await
     }
@@ -348,12 +352,13 @@ impl DbContext {
         &mut self,
         isolation: Option<IsolationLevel>,
     ) -> EFResult<Box<dyn ITransaction>> {
-        let mut conn = self.provider.get_connection().await?;
-        match isolation {
-            Some(level) => conn.begin_transaction_with(level).await?,
-            None => conn.begin_transaction().await?,
-        }
-        Ok(Box::new(DbTransaction::new(conn)))
+        let shared = self.session.begin_with(isolation).await?;
+        let facade = SessionConnection::new(Arc::clone(&shared));
+        Ok(Box::new(DbTransaction::new_shared(
+            shared,
+            facade,
+            Arc::clone(&self.session),
+        )))
     }
 
     /// Executes a closure within an ambient transaction.
@@ -363,7 +368,9 @@ impl DbContext {
     /// bulk DML, raw SQL and `save_changes()` — reuses the same transaction
     /// connection. Commits on `Ok`, rolls back on `Err`.
     ///
-    /// For an abort-with-result exit, use [`DbContext::transaction`] instead.
+    /// For a business rejection that must roll back and still return a value,
+    /// use the manual [`DbContext::begin_transaction`] handle and call
+    /// `rollback()` explicitly.
     ///
     /// The closure receives `&mut DbContext` and must return a pinned boxed
     /// future. This signature works around Rust's async borrow checker by
@@ -420,7 +427,7 @@ impl DbContext {
         self.ambient_transaction = Some(Box::new(DbTransaction::new_shared(
             shared,
             facade,
-            Some(Arc::clone(&self.session)),
+            Arc::clone(&self.session),
         )));
         let result = f(self).await;
         let txn = self.ambient_transaction.take().ok_or_else(|| {
@@ -433,111 +440,6 @@ impl DbContext {
             }
             Err(e) => {
                 let _ = txn.rollback().await;
-                Err(e)
-            }
-        }
-    }
-
-    /// Executes a closure within an ambient transaction and lets the closure
-    /// decide whether to commit or roll back — while still returning a value.
-    ///
-    /// This is the handler-level unit of work: every statement issued through
-    /// `ctx` inside the closure (queries, `save_changes`, `execute_update`,
-    /// `execute_delete`, raw SQL) uses the same transaction connection, so
-    /// reads observe the handler's own uncommitted writes.
-    ///
-    /// - `Ok(TxOutcome::Commit(value))` — commit, return `Ok(value)`
-    /// - `Ok(TxOutcome::Rollback(value))` — roll back, detach tracked
-    ///   entities, return `Ok(value)`
-    /// - `Err(e)` — roll back, detach tracked entities, return `Err(e)`
-    ///
-    /// Unlike [`DbContext::use_transaction`], a business rejection does not
-    /// have to be encoded as an error.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let result = ctx.transaction(|ctx| Box::pin(async move {
-    ///     // Batch update A, then join-query A/B/C — both on the transaction
-    ///     // connection, so the query sees the uncommitted update.
-    ///     linq!(ctx.set::<A>(), |a: A| a.flag; set a.flag, true; execute_update).await?;
-    ///     let rows = linq!(ctx.set::<A>(), |a: A| a.flag).to_list().await?;
-    ///
-    ///     if !rows.iter().all(|r| r.ok()) {
-    ///         return Ok(TxOutcome::Rollback(BizResult::Rejected));
-    ///     }
-    ///     Ok(TxOutcome::Commit(BizResult::Done))
-    /// })).await?;
-    /// ```
-    pub async fn transaction<F, R>(&mut self, f: F) -> EFResult<R>
-    where
-        for<'a> F: FnOnce(
-            &'a mut Self,
-        )
-            -> Pin<Box<dyn Future<Output = EFResult<TxOutcome<R>>> + Send + 'a>>,
-        R: Send + 'static,
-    {
-        self.transaction_with_opt(None, f).await
-    }
-
-    /// Like [`DbContext::transaction`], with an explicit isolation level
-    /// applied at transaction start.
-    pub async fn transaction_with<F, R>(&mut self, isolation: IsolationLevel, f: F) -> EFResult<R>
-    where
-        for<'a> F: FnOnce(
-            &'a mut Self,
-        )
-            -> Pin<Box<dyn Future<Output = EFResult<TxOutcome<R>>> + Send + 'a>>,
-        R: Send + 'static,
-    {
-        self.transaction_with_opt(Some(isolation), f).await
-    }
-
-    async fn transaction_with_opt<F, R>(
-        &mut self,
-        isolation: Option<IsolationLevel>,
-        f: F,
-    ) -> EFResult<R>
-    where
-        for<'a> F: FnOnce(
-            &'a mut Self,
-        )
-            -> Pin<Box<dyn Future<Output = EFResult<TxOutcome<R>>> + Send + 'a>>,
-        R: Send + 'static,
-    {
-        if self.ambient_transaction.is_some() {
-            return Err(EFError::transaction(
-                "ambient transaction already active; nested transaction is not supported",
-            ));
-        }
-        let shared = self.session.begin_with(isolation).await?;
-        let facade = SessionConnection::new(Arc::clone(&shared));
-        self.ambient_transaction = Some(Box::new(DbTransaction::new_shared(
-            shared,
-            facade,
-            Some(Arc::clone(&self.session)),
-        )));
-        let result = f(self).await;
-        let txn = self.ambient_transaction.take().ok_or_else(|| {
-            EFError::transaction("ambient_transaction was consumed during transaction closure")
-        })?;
-        match result {
-            Ok(TxOutcome::Commit(value)) => {
-                txn.commit().await?;
-                Ok(value)
-            }
-            Ok(TxOutcome::Rollback(value)) => {
-                txn.rollback().await?;
-                // The database no longer contains the handler's writes; detach
-                // the in-memory entities so they cannot leak into a later save.
-                self.clear_tracking();
-                Ok(value)
-            }
-            Err(e) => {
-                let _ = txn.rollback().await;
-                // A rolled-back unit of work must not leave accepted tracking
-                // state behind; otherwise a retry would silently skip writes.
-                self.clear_tracking();
                 Err(e)
             }
         }

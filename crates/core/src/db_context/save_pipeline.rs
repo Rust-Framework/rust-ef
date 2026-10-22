@@ -16,12 +16,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::save_phases::SaveChangesResult;
 
-/// Transaction source for `save_changes`: either the ambient transaction
-/// registered by `use_transaction` / `transaction`, or a self-managed
+/// Transaction source for `save_changes`: an ambient closure transaction, a
+/// manual `begin_transaction` handle active on the session, or a self-managed
 /// connection.
 pub(super) enum TxnSource {
-    /// Ambient transaction (`use_transaction` / `transaction`).
+    /// Ambient transaction (`use_transaction`).
     Ambient(Box<dyn ITransaction>),
+    /// Manual context-scoped transaction (`begin_transaction`).
+    Session(Box<dyn IAsyncConnection>),
     /// Self-managed transaction (no explicit transaction around the save).
     Managed(Box<dyn IAsyncConnection>),
 }
@@ -30,15 +32,14 @@ impl TxnSource {
     fn conn(&mut self) -> &mut dyn IAsyncConnection {
         match self {
             TxnSource::Ambient(t) => t.connection(),
-            TxnSource::Managed(c) => c.as_mut(),
+            TxnSource::Session(c) | TxnSource::Managed(c) => c.as_mut(),
         }
     }
 
-    /// Only context-scoped transactions get per-save savepoints. A legacy
-    /// standalone handle (`begin_transaction`) does not cover queries or
-    /// `save_changes`, so it must not affect save semantics.
+    /// Both ambient and manual session transactions cover queries and
+    /// `save_changes`, so both get per-save savepoints.
     fn is_scoped(&self) -> bool {
-        matches!(self, TxnSource::Ambient(t) if t.is_scoped())
+        matches!(self, TxnSource::Ambient(_) | TxnSource::Session(_))
     }
 }
 
@@ -123,6 +124,9 @@ impl super::DbContext {
         // partially, so it is intentionally not attempted here.
         let mut txn = match self.ambient_transaction.take() {
             Some(t) => TxnSource::Ambient(t),
+            None if self.session.is_active().await => {
+                TxnSource::Session(self.provider.get_connection().await?)
+            }
             None => {
                 let mut c = self.provider.get_connection().await?;
                 c.begin_transaction().await?;
@@ -559,8 +563,12 @@ impl super::DbContext {
             TxnSource::Ambient(t) => {
                 self.ambient_transaction = Some(t);
             }
+            TxnSource::Session(_) => {
+                // Manual transaction: caller commits/rolls back via the handle.
+            }
             TxnSource::Managed(mut conn) => {
                 if let Err(e) = conn.commit_transaction().await {
+                    let _ = conn.rollback_transaction().await;
                     self.interceptor_pipeline
                         .on_save_failed(&save_ctx, &e)
                         .await;
@@ -608,6 +616,12 @@ impl super::DbContext {
         match txn {
             TxnSource::Managed(mut conn) => {
                 let _ = conn.rollback_transaction().await;
+            }
+            TxnSource::Session(mut conn) => {
+                if let Some(name) = savepoint {
+                    let _ = conn.rollback_to_savepoint(name).await;
+                    let _ = conn.release_savepoint(name).await;
+                }
             }
             TxnSource::Ambient(mut t) => {
                 if let Some(name) = savepoint {

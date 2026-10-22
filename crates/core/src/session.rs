@@ -89,6 +89,10 @@ impl Session {
         *self.txn.lock().await = None;
     }
 
+    pub(crate) async fn is_active(&self) -> bool {
+        self.txn.lock().await.is_some()
+    }
+
     /// Best-effort synchronous clear, used from `Drop` to detach the doomed
     /// transaction before the background rollback runs.
     pub(crate) fn clear_now(&self) {

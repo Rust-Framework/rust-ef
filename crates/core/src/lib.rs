@@ -86,7 +86,7 @@ pub mod prelude {
     pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
     pub use crate::tracking::ChangeTracker;
-    pub use crate::transaction::{DbTransaction, ITransaction, TxOutcome};
+    pub use crate::transaction::{DbTransaction, ITransaction};
     pub use rust_ef_macros::column;
     pub use rust_ef_macros::entity;
     pub use rust_ef_macros::linq;

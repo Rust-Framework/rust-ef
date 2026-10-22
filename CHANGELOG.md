@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.0] — 2026-10-22 — EF Core-style transactions
+
+### English
+
+#### Breaking
+
+- **`begin_transaction` is now context-scoped**: it returns an `ITransaction` and registers the transaction on the `DbContext`, matching EF Core's `IDbContextTransaction` / `CurrentTransaction` model. Queries, navigation loading, bulk DML, raw SQL and `save_changes()` all join it; nothing is committed until `commit()` is called. The previous standalone behavior (queries and `save_changes()` ignored the handle) is removed.
+- **Removed `DbContext::transaction` / `transaction_with`**: use `begin_transaction` / `begin_transaction_with` and explicit `commit()` / `rollback()`, or `use_transaction` for the `Ok`-commit / `Err`-rollback closure form.
+- **Removed `TxOutcome`**: a business rollback now calls `txn.rollback().await?` and returns the business value directly. This removes the extra three-state transaction concept.
+- **`ITransaction::is_scoped` and `DbTransaction::new` removed**: all transactions returned by `DbContext` are scoped; `DbTransaction` handles are created only by the context.
+- **`save_changes()` inside `begin_transaction` no longer self-commits**: it flushes to the active transaction and uses a savepoint, like `use_transaction`.
+
+#### Reliability
+
+- **Drop captures the runtime**: a transaction handle stores the Tokio runtime at begin time, so dropping it outside a Tokio context still schedules the rollback (best effort; `panic = "abort"` and a shut-down runtime cannot run it).
+- **Failed `COMMIT` retries rollback**: `commit()` attempts a best-effort `ROLLBACK` if `COMMIT` returns an error, and the context detaches from the transaction.
+
+#### Migration from 1.x
+
+```rust
+// 1.x
+let result = ctx.transaction(|ctx| Box::pin(async move {
+    // ...
+    Ok(TxOutcome::Rollback(BizResult::Rejected))
+})).await?;
+
+// 2.0
+let txn = ctx.begin_transaction().await?;
+// ...
+txn.rollback().await?;
+ctx.clear_tracking();
+let result = BizResult::Rejected;
+```
+
+- Replace `transaction` with `begin_transaction` + `commit` / `rollback`.
+- Replace `transaction_with(level, ...)` with `begin_transaction_with(level)`.
+- Replace `TxOutcome::Commit(v)` with `txn.commit().await?` then return `v`.
+- Replace `TxOutcome::Rollback(v)` with `txn.rollback().await?`, `ctx.clear_tracking()`, then return `v`.
+- Existing `use_transaction` code continues to work: `Ok` commits, `Err` rolls back.
+
+### 简体中文
+
+#### 破坏性变更
+
+- **`begin_transaction` 改为上下文作用域**：返回 `ITransaction`，并把事务注册到 `DbContext`，与 EF Core 的 `IDbContextTransaction` / `CurrentTransaction` 对齐。查询、导航加载、批量 DML、raw SQL 与 `save_changes()` 都会加入；只有调用 `commit()` 才提交。旧的 standalone 行为（查询和 `save_changes()` 不加入句柄）已移除。
+- **移除 `DbContext::transaction` / `transaction_with`**：改用 `begin_transaction` / `begin_transaction_with` 显式 `commit()` / `rollback()`，或保留 `use_transaction` 的 `Ok` 提交 / `Err` 回滚闭包形式。
+- **移除 `TxOutcome`**：业务回滚改为 `txn.rollback().await?` 后直接返回业务值，去掉额外的三态事务概念。
+- **移除 `ITransaction::is_scoped` 与 `DbTransaction::new`**：`DbContext` 返回的事务全部是作用域事务；`DbTransaction` 句柄只由 context 创建。
+- **`begin_transaction` 内的 `save_changes()` 不再自行提交**：只 flush 到当前事务并通过 savepoint 保护，与 `use_transaction` 一致。
+
+#### 可靠性
+
+- **Drop 捕获 runtime**：事务句柄在 begin 时保存 Tokio runtime，因此在非 Tokio 上下文 drop 仍可调度回滚（best effort；`panic = "abort"` 与已关闭的 runtime 无法执行）。
+- **COMMIT 失败后尝试回滚**：`commit()` 在 `COMMIT` 返回错误时 best-effort 执行 `ROLLBACK`，context 与事务解绑。
+
+#### 从 1.x 迁移
+
+```rust
+// 1.x
+let result = ctx.transaction(|ctx| Box::pin(async move {
+    // ...
+    Ok(TxOutcome::Rollback(BizResult::Rejected))
+})).await?;
+
+// 2.0
+let txn = ctx.begin_transaction().await?;
+// ...
+txn.rollback().await?;
+ctx.clear_tracking();
+let result = BizResult::Rejected;
+```
+
+- `transaction` → `begin_transaction` + `commit` / `rollback`；
+- `transaction_with(level, ...)` → `begin_transaction_with(level)`；
+- `TxOutcome::Commit(v)` → `txn.commit().await?` 后返回 `v`；
+- `TxOutcome::Rollback(v)` → `txn.rollback().await?`、`ctx.clear_tracking()` 后返回 `v`；
+- 原有 `use_transaction` 代码保持可用：`Ok` 提交，`Err` 回滚。
+
 ## [1.9.0] — 2026-10-21 — Transaction completeness & keyed read/write separation
 
 ### English

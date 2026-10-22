@@ -137,19 +137,15 @@ pub struct OrderHandler {
 ```rust
 impl OrderHandler {
     pub async fn create(&mut self, user_id: i32, total: f64) -> EFResult<()> {
-        self.write
-            .transaction(|ctx| {
-                Box::pin(async move {
-                    ctx.add::<Order>(Order {
-                        id: 0,
-                        user_id,
-                        total,
-                    });
-                    ctx.save_changes().await?;
-                    Ok(TxOutcome::Commit(()))
-                })
-            })
-            .await
+        let txn = self.write.begin_transaction().await?;
+        self.write.add::<Order>(Order {
+            id: 0,
+            user_id,
+            total,
+        });
+        self.write.save_changes().await?;
+        txn.commit().await?;
+        Ok(())
     }
 }
 ```
@@ -273,15 +269,10 @@ async fn write_then_read_uses_separate_contexts() -> EFResult<()> {
     let mut read: DbContext = services.get_keyed_owned("read").unwrap();
 
     write.ensure_created().await?;
-    write
-        .transaction(|ctx| {
-            Box::pin(async move {
-                ctx.add::<Order>(Order { id: 0, user_id: 1, total: 9.9 });
-                ctx.save_changes().await?;
-                Ok(TxOutcome::Commit(()))
-            })
-        })
-        .await?;
+    let txn = write.begin_transaction().await?;
+    write.add::<Order>(Order { id: 0, user_id: 1, total: 9.9 });
+    write.save_changes().await?;
+    txn.commit().await?;
 
     // 同文件、已提交；读 context 能看到。
     let rows = read.set::<Order>().query().to_list().await?;

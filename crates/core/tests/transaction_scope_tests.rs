@@ -13,6 +13,7 @@ use rust_ef::prelude::*;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 #[derive(Debug, Clone, EntityType, Default, PartialEq)]
 #[table("txn_scope_items")]
@@ -196,41 +197,36 @@ async fn txn_sql_query_sees_uncommitted_write() {
 }
 
 #[tokio::test]
-async fn txn_outcome_rollback_returns_value_and_discards_writes() {
+async fn manual_rollback_discards_writes() {
     let path = db_path("outcome_rollback");
     let mut ctx = make_ctx(&path).await;
     seed(&mut ctx).await;
 
-    let outcome = ctx
-        .transaction(|ctx| {
-            Box::pin(async move {
-                linq!(ctx.set::<TxnScopeItem>(), |i: TxnScopeItem| i.name == "a";
-                    set i.value, 9;
-                    execute_update
-                )
-                .await?;
+    let txn = ctx.begin_transaction().await.expect("begin_transaction");
+    linq!(ctx.set::<TxnScopeItem>(), |i: TxnScopeItem| i.name == "a";
+        set i.value, 9;
+        execute_update
+    )
+    .await
+    .unwrap();
 
-                let seen = ctx.set::<TxnScopeItem>().query().to_list().await?;
-                assert_eq!(
-                    seen.iter().find(|i| i.name == "a").unwrap().value,
-                    9,
-                    "the join query must see the uncommitted bulk update"
-                );
+    let seen = ctx.set::<TxnScopeItem>().query().to_list().await.unwrap();
+    assert_eq!(
+        seen.iter().find(|i| i.name == "a").unwrap().value,
+        9,
+        "the join query must see the uncommitted bulk update"
+    );
 
-                ctx.add::<TxnScopeItem>(TxnScopeItem {
-                    id: 0,
-                    name: "b".into(),
-                    value: 5,
-                });
-                ctx.save_changes().await?;
+    ctx.add::<TxnScopeItem>(TxnScopeItem {
+        id: 0,
+        name: "b".into(),
+        value: 5,
+    });
+    ctx.save_changes().await.unwrap();
 
-                Ok(TxOutcome::Rollback("rejected"))
-            })
-        })
-        .await
-        .expect("transaction");
+    txn.rollback().await.expect("rollback");
+    ctx.clear_tracking();
 
-    assert_eq!(outcome, "rejected");
     assert_eq!(
         value_of_a(&mut ctx).await,
         1,
@@ -243,77 +239,43 @@ async fn txn_outcome_rollback_returns_value_and_discards_writes() {
     );
     assert!(
         !ctx.change_tracker().has_changes(),
-        "rollback must detach tracked entities"
+        "clear_tracking must detach tracked entities"
     );
     cleanup(&path);
 }
 
 #[tokio::test]
-async fn txn_outcome_commit_persists_all_writes() {
+async fn manual_commit_persists_all_writes() {
     let path = db_path("outcome_commit");
     let mut ctx = make_ctx(&path).await;
     seed(&mut ctx).await;
 
-    let committed = ctx
-        .transaction(|ctx| {
-            Box::pin(async move {
-                ctx.add::<TxnScopeItem>(TxnScopeItem {
-                    id: 0,
-                    name: "b".into(),
-                    value: 5,
-                });
-                ctx.save_changes().await?;
+    let txn = ctx.begin_transaction().await.expect("begin_transaction");
+    ctx.add::<TxnScopeItem>(TxnScopeItem {
+        id: 0,
+        name: "b".into(),
+        value: 5,
+    });
+    ctx.save_changes().await.unwrap();
 
-                linq!(ctx.set::<TxnScopeItem>(), |i: TxnScopeItem| i.name == "a";
-                    set i.value, 9;
-                    execute_update
-                )
-                .await?;
+    linq!(ctx.set::<TxnScopeItem>(), |i: TxnScopeItem| i.name == "a";
+        set i.value, 9;
+        execute_update
+    )
+    .await
+    .unwrap();
 
-                let seen = ctx.set::<TxnScopeItem>().query().to_list().await?;
-                assert_eq!(
-                    seen.iter().find(|i| i.name == "a").unwrap().value,
-                    9,
-                    "the join query must see the uncommitted bulk update"
-                );
+    let seen = ctx.set::<TxnScopeItem>().query().to_list().await.unwrap();
+    assert_eq!(
+        seen.iter().find(|i| i.name == "a").unwrap().value,
+        9,
+        "the join query must see the uncommitted bulk update"
+    );
 
-                Ok(TxOutcome::Commit(2))
-            })
-        })
-        .await
-        .expect("transaction");
+    txn.commit().await.expect("commit");
 
-    assert_eq!(committed, 2);
     assert_eq!(value_of_a(&mut ctx).await, 9);
     assert_eq!(ctx.set::<TxnScopeItem>().query().count().await.unwrap(), 2);
-    cleanup(&path);
-}
-
-#[tokio::test]
-async fn txn_outcome_error_rolls_back_and_propagates() {
-    let path = db_path("outcome_error");
-    let mut ctx = make_ctx(&path).await;
-    seed(&mut ctx).await;
-
-    let result: EFResult<()> = ctx
-        .transaction(|ctx| {
-            Box::pin(async move {
-                linq!(ctx.set::<TxnScopeItem>(), |i: TxnScopeItem| i.name == "a";
-                    set i.value, 9;
-                    execute_update
-                )
-                .await?;
-                Err(EFError::transaction("boom"))
-            })
-        })
-        .await;
-
-    assert!(result.is_err());
-    assert_eq!(
-        value_of_a(&mut ctx).await,
-        1,
-        "Err from the closure must roll the transaction back"
-    );
     cleanup(&path);
 }
 
@@ -416,26 +378,63 @@ async fn begin_transaction_with_serializable_isolation() {
 }
 
 #[tokio::test]
-async fn transaction_with_serializable_isolation_returns_value() {
+async fn begin_transaction_with_serializable_rollback() {
     let path = db_path("isolation_transaction");
     let mut ctx = make_ctx(&path).await;
     seed(&mut ctx).await;
 
-    let outcome = ctx
-        .transaction_with(IsolationLevel::Serializable, |ctx| {
-            Box::pin(async move {
-                let mut item = ctx.set::<TxnScopeItem>().query().to_list().await?.remove(0);
-                item.value = 9;
-                ctx.update::<TxnScopeItem>(item);
-                ctx.save_changes().await?;
-                Ok(TxOutcome::Rollback("rejected"))
-            })
-        })
+    let txn = ctx
+        .begin_transaction_with(IsolationLevel::Serializable)
         .await
-        .expect("transaction_with");
+        .expect("begin_transaction_with");
 
-    assert_eq!(outcome, "rejected");
+    let mut item = ctx
+        .set::<TxnScopeItem>()
+        .query()
+        .to_list()
+        .await
+        .unwrap()
+        .remove(0);
+    item.value = 9;
+    ctx.update::<TxnScopeItem>(item);
+    ctx.save_changes().await.unwrap();
+
+    txn.rollback().await.expect("rollback");
+    ctx.clear_tracking();
+
     assert_eq!(value_of_a(&mut ctx).await, 1);
+    cleanup(&path);
+}
+
+#[tokio::test]
+async fn dropping_manual_transaction_outside_runtime_rolls_back() {
+    let path = db_path("drop_outside_runtime");
+    let mut ctx = make_ctx(&path).await;
+    seed(&mut ctx).await;
+
+    let txn = ctx.begin_transaction().await.expect("begin_transaction");
+    ctx.add::<TxnScopeItem>(TxnScopeItem {
+        id: 0,
+        name: "drop".into(),
+        value: 5,
+    });
+    ctx.save_changes().await.expect("save");
+
+    // Drop on a plain thread (no Tokio context). The handle captured the
+    // runtime at begin time and must still schedule the rollback.
+    std::thread::spawn(move || drop(txn))
+        .join()
+        .expect("drop thread");
+
+    let mut count = -1;
+    for _ in 0..50 {
+        count = ctx.set::<TxnScopeItem>().query().count().await.unwrap();
+        if count == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(count, 1, "dropped transaction must roll back");
     cleanup(&path);
 }
 

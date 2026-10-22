@@ -71,7 +71,7 @@
 # 生产与工程化
 
 - [第九章 事务与迁移](./09-transactions-migrations/INDEX.md)
-  - [手动事务：use_transaction 与 transaction](./09-transactions-migrations/manual-transactions.md)
+  - [手动事务：begin_transaction 与 use_transaction](./09-transactions-migrations/manual-transactions.md)
   - [EnsureCreated 与 EnsureDeleted](./09-transactions-migrations/ensure-created-deleted.md)
   - [迁移引擎与种子数据](./09-transactions-migrations/migrations-seed.md)
 
@@ -93,6 +93,13 @@
 - [第十二章 实战教程](./12-tutorials/INDEX.md)
   - [事务实战：转账、批量 DML 与业务回滚](./12-tutorials/transactions.md)
   - [读写分离实战：主库写入、副本查询](./12-tutorials/read-write-splitting.md)
+
+---
+
+# 迁移指南
+
+- [第十三章 迁移指南](./13-migration/INDEX.md)
+  - [2.0 事务 API 迁移](./13-migration/v2-transactions.md)
 
 ---
 
