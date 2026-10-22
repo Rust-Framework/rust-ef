@@ -136,7 +136,7 @@ async fn txn_rolls_back_bulk_execute_update() {
     assert_eq!(
         value_of_a(&mut ctx).await,
         1,
-        "execute_update must join the ambient transaction and roll back"
+        "execute_update must join the explicit transaction and roll back"
     );
     cleanup(&path);
 }
@@ -163,7 +163,7 @@ async fn txn_rolls_back_bulk_execute_delete() {
     assert_eq!(
         ctx.set::<TxnScopeItem>().query().count().await.unwrap(),
         1,
-        "execute_delete must join the ambient transaction and roll back"
+        "execute_delete must join the explicit transaction and roll back"
     );
     cleanup(&path);
 }
@@ -335,7 +335,7 @@ async fn failed_save_rolls_back_to_savepoint_and_keeps_transaction_usable() {
                 "a failed save must be rolled back to its savepoint"
             );
 
-            // The ambient transaction is still usable after the failed save.
+            // The explicit transaction is still usable after the failed save.
             ctx.clear_tracking();
             ctx.add::<TxnScopeItem>(TxnScopeItem {
                 id: 0,

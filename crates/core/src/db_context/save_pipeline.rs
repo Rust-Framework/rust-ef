@@ -9,20 +9,17 @@ use crate::error::{EFError, EFResult};
 use crate::interceptor::{SaveChangesContext, SaveChangesResultContext};
 use crate::metadata::EntityTypeMeta;
 use crate::provider::{DbValue, IAsyncConnection};
-use crate::transaction::ITransaction;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::save_phases::SaveChangesResult;
 
-/// Transaction source for `save_changes`: an ambient closure transaction, a
-/// manual `begin_transaction` handle active on the session, or a self-managed
-/// connection.
+/// Transaction source for `save_changes`: either a context-scoped transaction
+/// active on the session (`begin_transaction` / `use_transaction`), or a
+/// self-managed connection.
 pub(super) enum TxnSource {
-    /// Ambient transaction (`use_transaction`).
-    Ambient(Box<dyn ITransaction>),
-    /// Manual context-scoped transaction (`begin_transaction`).
+    /// Manual or closure transaction registered on the session.
     Session(Box<dyn IAsyncConnection>),
     /// Self-managed transaction (no explicit transaction around the save).
     Managed(Box<dyn IAsyncConnection>),
@@ -31,15 +28,13 @@ pub(super) enum TxnSource {
 impl TxnSource {
     fn conn(&mut self) -> &mut dyn IAsyncConnection {
         match self {
-            TxnSource::Ambient(t) => t.connection(),
             TxnSource::Session(c) | TxnSource::Managed(c) => c.as_mut(),
         }
     }
 
-    /// Both ambient and manual session transactions cover queries and
-    /// `save_changes`, so both get per-save savepoints.
+    /// Only context-scoped transactions get per-save savepoints.
     fn is_scoped(&self) -> bool {
-        matches!(self, TxnSource::Ambient(_) | TxnSource::Session(_))
+        matches!(self, TxnSource::Session(_))
     }
 }
 
@@ -122,16 +117,12 @@ impl super::DbContext {
         // fast path would need a complete statement plan (cascades, FK fixups,
         // M2M join rows) before execution; an incorrect count would commit
         // partially, so it is intentionally not attempted here.
-        let mut txn = match self.ambient_transaction.take() {
-            Some(t) => TxnSource::Ambient(t),
-            None if self.session.is_active().await => {
-                TxnSource::Session(self.provider.get_connection().await?)
-            }
-            None => {
-                let mut c = self.provider.get_connection().await?;
-                c.begin_transaction().await?;
-                TxnSource::Managed(c)
-            }
+        let mut txn = if self.session.is_active().await {
+            TxnSource::Session(self.provider.get_connection().await?)
+        } else {
+            let mut c = self.provider.get_connection().await?;
+            c.begin_transaction().await?;
+            TxnSource::Managed(c)
         };
 
         // Context-scoped transactions get a savepoint so a failed save can be
@@ -560,11 +551,8 @@ impl super::DbContext {
             let _ = txn.conn().release_savepoint(name).await;
         }
         match txn {
-            TxnSource::Ambient(t) => {
-                self.ambient_transaction = Some(t);
-            }
             TxnSource::Session(_) => {
-                // Manual transaction: caller commits/rolls back via the handle.
+                // Caller commits/rolls back via the transaction handle.
             }
             TxnSource::Managed(mut conn) => {
                 if let Err(e) = conn.commit_transaction().await {
@@ -625,13 +613,6 @@ impl super::DbContext {
                     let _ = conn.rollback_to_savepoint(name).await;
                     let _ = conn.release_savepoint(name).await;
                 }
-            }
-            TxnSource::Ambient(mut t) => {
-                if let Some(name) = savepoint {
-                    let _ = t.connection().rollback_to_savepoint(name).await;
-                    let _ = t.connection().release_savepoint(name).await;
-                }
-                self.ambient_transaction = Some(t);
             }
         }
         self.interceptor_pipeline.on_save_failed(save_ctx, &e).await;

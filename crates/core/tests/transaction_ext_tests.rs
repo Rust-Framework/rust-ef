@@ -1,20 +1,14 @@
-//! Integration tests for the ITransaction abstraction (Priority 3, Part 0):
-//! - `begin_transaction()` returns a typed `Box<dyn ITransaction>` handle.
-//! - `use_transaction()` registers an ambient transaction so `save_changes()`
-//!   reuses it; commits on `Ok`, rolls back on `Err`.
+//! Integration tests for the ITransaction abstraction:
+//! - `begin_transaction()` returns a scoped `Box<dyn ITransaction>` handle.
+//! - `use_transaction()` commits on `Ok`, rolls back on `Err`.
 //! - Savepoints: `create_point` / `release_point` / `rollback_point` on the
-//!   ambient handle accessed via `transaction_mut()`.
-//! - Isolation level: `set_isolation` on the ambient handle.
-//! - Error cases: `transaction_mut()` returns `None` without ambient,
-//!   nested `use_transaction` is rejected.
+//!   manual handle.
+//! - Isolation level: `set_isolation` on the manual handle.
+//! - Nested transactions are rejected.
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::prelude::*;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
-
-// -----------------------------------------------------------------------
-// Entity
-// -----------------------------------------------------------------------
 
 #[derive(Debug, Clone, EntityType, Default, PartialEq)]
 #[table("txn_items")]
@@ -47,33 +41,29 @@ async fn add_item(ctx: &mut DbContext, name: &str) {
     });
 }
 
-// -----------------------------------------------------------------------
-// begin_transaction returns a handle (manual control, no ambient)
-// -----------------------------------------------------------------------
-
 #[tokio::test]
 async fn test_begin_transaction_returns_handle() {
     let mut ctx = make_ctx().await;
     let txn = ctx.begin_transaction().await.expect("begin");
-    // Handle is not registered as ambient — transaction_mut() returns None.
-    assert!(
-        ctx.transaction_mut().is_none(),
-        "begin_transaction should not register ambient"
-    );
+    add_item(&mut ctx, "a").await;
+    ctx.save_changes().await.expect("save");
     txn.commit().await.expect("commit");
+    assert_eq!(count_items(&mut ctx).await, 1);
 }
 
 #[tokio::test]
-async fn test_begin_transaction_rollback_consumes_handle() {
+async fn test_begin_transaction_rollback_discards_writes() {
     let mut ctx = make_ctx().await;
     let txn = ctx.begin_transaction().await.expect("begin");
+    add_item(&mut ctx, "a").await;
+    ctx.save_changes().await.expect("save");
     txn.rollback().await.expect("rollback");
-    // Handle consumed; no ambient to check.
-    assert!(ctx.transaction_mut().is_none());
+    ctx.clear_tracking();
+    assert_eq!(count_items(&mut ctx).await, 0);
 }
 
 // -----------------------------------------------------------------------
-// use_transaction: ambient + save_changes integration
+// use_transaction: commit / rollback
 // -----------------------------------------------------------------------
 
 #[tokio::test]
@@ -90,11 +80,7 @@ async fn test_use_transaction_commits_on_ok() {
     .await
     .expect("use_transaction");
 
-    assert_eq!(
-        count_items(&mut ctx).await,
-        1,
-        "item should persist after use_transaction commit"
-    );
+    assert_eq!(count_items(&mut ctx).await, 1);
 }
 
 #[tokio::test]
@@ -111,16 +97,12 @@ async fn test_use_transaction_rolls_back_on_err() {
         })
         .await;
 
-    assert!(result.is_err(), "use_transaction should propagate error");
-    assert_eq!(
-        count_items(&mut ctx).await,
-        0,
-        "save_changes writes should be rolled back"
-    );
+    assert!(result.is_err());
+    assert_eq!(count_items(&mut ctx).await, 0);
 }
 
 #[tokio::test]
-async fn test_use_transaction_multiple_save_changes_share_ambient() {
+async fn test_use_transaction_multiple_save_changes_share_transaction() {
     let mut ctx = make_ctx().await;
 
     ctx.use_transaction(|ctx| {
@@ -135,110 +117,59 @@ async fn test_use_transaction_multiple_save_changes_share_ambient() {
     .await
     .expect("use_transaction");
 
-    assert_eq!(
-        count_items(&mut ctx).await,
-        2,
-        "both save_changes calls should share the ambient transaction"
-    );
+    assert_eq!(count_items(&mut ctx).await, 2);
 }
 
 // -----------------------------------------------------------------------
-// Savepoints via transaction_mut() inside use_transaction
+// Savepoints on a manual transaction handle
 // -----------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_savepoint_create_and_rollback_to() {
     let mut ctx = make_ctx().await;
+    let mut txn = ctx.begin_transaction().await.expect("begin");
 
-    ctx.use_transaction(|ctx| {
-        Box::pin(async move {
-            add_item(ctx, "before_sp").await;
-            ctx.save_changes().await?;
+    add_item(&mut ctx, "before_sp").await;
+    ctx.save_changes().await.expect("save before");
 
-            {
-                let txn = ctx.transaction_mut().expect("ambient");
-                txn.create_point("sp1").await?;
-            }
-
-            add_item(ctx, "after_sp").await;
-            ctx.save_changes().await?;
-
-            {
-                let txn = ctx.transaction_mut().expect("ambient");
-                txn.rollback_point("sp1").await?;
-            }
-            Ok(())
-        })
-    })
-    .await
-    .expect("use_transaction");
+    txn.create_point("sp1").await.expect("create point");
+    add_item(&mut ctx, "after_sp").await;
+    ctx.save_changes().await.expect("save after");
+    txn.rollback_point("sp1").await.expect("rollback to point");
+    txn.commit().await.expect("commit");
 
     let items = ctx.set::<TxnItem>().query().to_list().await.expect("list");
-    assert_eq!(items.len(), 1, "only pre-savepoint item should remain");
+    assert_eq!(items.len(), 1);
     assert_eq!(items[0].name, "before_sp");
 }
 
 #[tokio::test]
 async fn test_savepoint_release_then_rollback_to_fails() {
     let mut ctx = make_ctx().await;
+    let mut txn = ctx.begin_transaction().await.expect("begin");
 
-    let result: EFResult<()> = ctx
-        .use_transaction(|ctx| {
-            Box::pin(async move {
-                add_item(ctx, "x").await;
-                ctx.save_changes().await?;
+    add_item(&mut ctx, "x").await;
+    ctx.save_changes().await.expect("save");
 
-                {
-                    let txn = ctx.transaction_mut().expect("ambient");
-                    txn.create_point("sp1").await?;
-                    txn.release_point("sp1").await?;
-                }
-                {
-                    let txn = ctx.transaction_mut().expect("ambient");
-                    // After release, rollback_to should fail at the DB level.
-                    txn.rollback_point("sp1").await?;
-                }
-                Ok(())
-            })
-        })
-        .await;
+    txn.create_point("sp1").await.expect("create point");
+    txn.release_point("sp1").await.expect("release point");
+    let result = txn.rollback_point("sp1").await;
+    assert!(result.is_err(), "rollback after release should fail");
 
-    assert!(
-        result.is_err(),
-        "rollback_point after release_point should fail"
-    );
+    txn.rollback().await.expect("rollback");
 }
-
-#[tokio::test]
-async fn test_transaction_mut_none_without_ambient() {
-    let mut ctx = make_ctx().await;
-    assert!(
-        ctx.transaction_mut().is_none(),
-        "transaction_mut should return None without use_transaction"
-    );
-}
-
-// -----------------------------------------------------------------------
-// Isolation level via transaction_mut()
-// -----------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_set_isolation_level_serializable() {
     let mut ctx = make_ctx().await;
 
-    ctx.use_transaction(|ctx| {
-        Box::pin(async move {
-            {
-                let txn = ctx.transaction_mut().expect("ambient");
-                txn.set_isolation(IsolationLevel::Serializable).await?;
-            }
-            add_item(ctx, "iso").await;
-            ctx.save_changes().await?;
-            Ok(())
-        })
-    })
-    .await
-    .expect("use_transaction");
+    let mut txn = ctx.begin_transaction().await.expect("begin");
+    txn.set_isolation(IsolationLevel::Serializable)
+        .await
+        .expect("set isolation");
+    add_item(&mut ctx, "iso").await;
+    ctx.save_changes().await.expect("save");
+    txn.commit().await.expect("commit");
 
     assert_eq!(count_items(&mut ctx).await, 1);
 }
@@ -254,7 +185,6 @@ async fn test_nested_use_transaction_errors() {
     let result: EFResult<()> = ctx
         .use_transaction(|ctx| {
             Box::pin(async move {
-                // Nested use_transaction should fail because ambient is active.
                 ctx.use_transaction(|_ctx| Box::pin(async move { Ok(()) }))
                     .await?;
                 Ok(())
@@ -262,8 +192,5 @@ async fn test_nested_use_transaction_errors() {
         })
         .await;
 
-    assert!(
-        result.is_err(),
-        "nested use_transaction should return an error"
-    );
+    assert!(result.is_err(), "nested transaction should fail");
 }

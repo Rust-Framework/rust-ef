@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removed `DbContext::transaction` / `transaction_with`**: use `begin_transaction` / `begin_transaction_with` and explicit `commit()` / `rollback()`, or `use_transaction` for the `Ok`-commit / `Err`-rollback closure form.
 - **Removed `TxOutcome`**: a business rollback now calls `txn.rollback().await?` and returns the business value directly. This removes the extra three-state transaction concept.
 - **`ITransaction::is_scoped` and `DbTransaction::new` removed**: all transactions returned by `DbContext` are scoped; `DbTransaction` handles are created only by the context.
+- **`DbContext::transaction_mut` removed**: use the handle returned by `begin_transaction` for savepoints/isolation; `use_transaction` no longer exposes an ambient handle.
 - **`IAsyncConnection::discard` added**: custom providers must implement it to close a connection (forcing DB rollback) when a transaction is dropped unfinished or commit/rollback fails.
 - **`save_changes()` inside `begin_transaction` no longer self-commits**: it flushes to the active transaction and uses a savepoint, like `use_transaction`.
 
@@ -59,6 +60,7 @@ let result = BizResult::Rejected;
 - **移除 `DbContext::transaction` / `transaction_with`**：改用 `begin_transaction` / `begin_transaction_with` 显式 `commit()` / `rollback()`，或保留 `use_transaction` 的 `Ok` 提交 / `Err` 回滚闭包形式。
 - **移除 `TxOutcome`**：业务回滚改为 `txn.rollback().await?` 后直接返回业务值，去掉额外的三态事务概念。
 - **移除 `ITransaction::is_scoped` 与 `DbTransaction::new`**：`DbContext` 返回的事务全部是作用域事务；`DbTransaction` 句柄只由 context 创建。
+- **移除 `DbContext::transaction_mut`**：savepoint/isolation 直接使用 `begin_transaction` 返回的句柄；`use_transaction` 不再暴露 ambient 句柄。
 - **新增 `IAsyncConnection::discard`**：自定义 provider 必须实现，用于事务未完成即 drop 或 commit/rollback 失败时关闭连接、强制数据库回滚。
 - **`begin_transaction` 内的 `save_changes()` 不再自行提交**：只 flush 到当前事务并通过 savepoint 保护，与 `use_transaction` 一致。
 

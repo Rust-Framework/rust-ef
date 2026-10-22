@@ -124,7 +124,7 @@ conn.commit_transaction().await?;
 
 ## 6. 自定义 `ITransaction` 实现
 
-2.0 删除了 `ITransaction::is_scoped`；所有 `DbContext` 返回的事务都按 scoped 处理。自定义实现只需保留：
+2.0 删除了 `ITransaction::is_scoped` 与 `DbContext::transaction_mut()`；所有 `DbContext` 返回的事务都按 scoped 处理，savepoint/isolation 直接使用 `begin_transaction` 的句柄。自定义实现只需保留：
 
 - `commit` / `rollback`
 - `create_point` / `release_point` / `rollback_point`

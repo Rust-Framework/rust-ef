@@ -139,23 +139,7 @@ txn.rollback_point("before_more").await?;
 txn.commit().await?;
 ```
 
-`use_transaction` 内通过 `transaction_mut()` 取得 ambient 句柄：
-
-```rust
-ctx.use_transaction(|ctx| {
-    Box::pin(async move {
-        {
-            let txn = ctx.transaction_mut().expect("ambient transaction");
-            txn.create_point("before_more").await?;
-        }
-        // ...
-        Ok(())
-    })
-})
-.await?;
-```
-
-> `transaction_mut()` 只返回 `use_transaction` 注册的 ambient 句柄；`begin_transaction` 的句柄归调用者所有，直接使用变量即可。
+> `use_transaction` 不暴露事务句柄；需要手动 savepoint / isolation 时使用 `begin_transaction` 返回的句柄。
 
 ## 异常与回滚：Rust 没有 try/finally
 

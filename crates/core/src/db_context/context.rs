@@ -58,11 +58,6 @@ pub struct DbContext {
     pub(crate) session: Arc<Session>,
     pub(crate) interceptor_pipeline: InterceptorPipeline,
     pub(crate) lazy_loading_enabled: bool,
-    /// Ambient transaction: registered by `use_transaction()`. When present,
-    /// `save_changes()` reuses this transaction's connection and does not
-    /// begin/commit/rollback on its own. Uses `take()`/restore pattern to
-    /// avoid `&mut self` borrow conflicts with `self.sets` during save.
-    pub(crate) ambient_transaction: Option<Box<dyn ITransaction>>,
 }
 
 impl DbContext {
@@ -92,7 +87,6 @@ impl DbContext {
             session,
             interceptor_pipeline: InterceptorPipeline::new(options.interceptors.clone()),
             lazy_loading_enabled: options.lazy_loading_enabled,
-            ambient_transaction: None,
         };
         Ok(ctx)
     }
@@ -308,17 +302,6 @@ impl DbContext {
         crate::entity::materialize_entities(&rows)
     }
 
-    /// Returns a mutable reference to the ambient transaction handle, if one
-    /// is active (registered by `use_transaction()`).
-    ///
-    /// A handle returned by [`DbContext::begin_transaction`] is owned by the
-    /// caller; use that handle directly for savepoint/isolation operations.
-    /// The borrow must be released (by scoping) before calling `save_changes()`
-    /// or other `&mut self` methods.
-    pub fn transaction_mut(&mut self) -> Option<&mut Box<dyn ITransaction>> {
-        self.ambient_transaction.as_mut()
-    }
-
     /// Begins a context-scoped transaction and returns its handle.
     ///
     /// This is the EF Core-style API: the transaction is registered on the
@@ -361,12 +344,12 @@ impl DbContext {
         )))
     }
 
-    /// Executes a closure within an ambient transaction.
+    /// Executes a closure within a context-scoped transaction.
     ///
-    /// Registers the transaction as ambient for the duration of `f`, so every
-    /// statement issued through the context — queries, navigation loading,
-    /// bulk DML, raw SQL and `save_changes()` — reuses the same transaction
-    /// connection. Commits on `Ok`, rolls back on `Err`.
+    /// Registers the transaction on the context session for the duration of
+    /// `f`, so every statement issued through the context — queries, navigation
+    /// loading, bulk DML, raw SQL and `save_changes()` — reuses the same
+    /// transaction connection. Commits on `Ok`, rolls back on `Err`.
     ///
     /// For a business rejection that must roll back and still return a value,
     /// use the manual [`DbContext::begin_transaction`] handle and call
@@ -417,22 +400,21 @@ impl DbContext {
         for<'a> F: FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = EFResult<R>> + Send + 'a>>,
         R: Send + 'static,
     {
-        if self.ambient_transaction.is_some() {
+        if self.session.is_active().await {
             return Err(EFError::transaction(
-                "ambient transaction already active; nested use_transaction is not supported",
+                "a transaction is already active on this DbContext",
             ));
         }
         let shared = self.session.begin_with(isolation).await?;
         let facade = SessionConnection::new(Arc::clone(&shared));
-        self.ambient_transaction = Some(Box::new(DbTransaction::new_shared(
+        let txn: Box<dyn ITransaction> = Box::new(DbTransaction::new_shared(
             shared,
             facade,
             Arc::clone(&self.session),
-        )));
+        ));
+        // `txn` is a local guard: if `f` returns Err, panics, or is cancelled,
+        // its Drop discards the connection and rolls back.
         let result = f(self).await;
-        let txn = self.ambient_transaction.take().ok_or_else(|| {
-            EFError::transaction("ambient_transaction was consumed during use_transaction closure")
-        })?;
         match result {
             Ok(r) => {
                 txn.commit().await?;
