@@ -76,4 +76,4 @@ impl BlogRepository {
 | 每个请求一个 DbContext | Scoped 生命周期，避免跨请求跟踪污染 |
 | `#[derive(Inject)]` 显式标记 | bare `T` + `#[inject(owned)]` → owned；`Arc<T>` + `#[inject]` → shared；未标记 → `Default` |
 
-下一节：[多数据库 Keyed 注册](keyed-databases.md)
+下一节：[多数据库 Keyed 注册与读写分离](keyed-databases.md)

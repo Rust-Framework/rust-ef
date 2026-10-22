@@ -267,5 +267,5 @@ assert_eq!(blog_meta.table_name.as_ref(), "blogs_v2");
 
 - [inventory crate 文档](https://docs.rs/inventory/latest/inventory/)
 - [EFCore IEntityTypeConfiguration&lt;T&gt;](https://learn.microsoft.com/en-us/dotnet/api/microsoft.entityframeworkcore.ientitytypeconfiguration-1)
-- [多数据库 Keyed 注册](../10-di-interceptors/keyed-databases.md)
+- [多数据库 Keyed 注册与读写分离](../10-di-interceptors/keyed-databases.md)
 - [常见陷阱与排查第 4 点](../11-best-practices/common-pitfalls.md)

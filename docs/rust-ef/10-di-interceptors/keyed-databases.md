@@ -1,4 +1,7 @@
-# 多数据库 Keyed 注册
+<a id="多数据库-keyed-注册"></a>
+# 多数据库 Keyed 注册与读写分离
+
+> 本文同时是**读写分离教程**，覆盖：keyed 双 `DbContext` 注册、SQLite/MySQL/PostgreSQL 配置、完整订单 Handler、read-your-writes、副本延迟、只读账号、迁移与排错。
 
 当应用需要连接多个数据库时，使用 `add_dbcontext_keyed`。v1.1.0 起支持通过 `#[context("key")]` 属性实现**实体隔离**——每个 keyed `DbContext` 只管理属于自己的实体。
 

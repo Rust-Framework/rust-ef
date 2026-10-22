@@ -67,7 +67,7 @@ pub struct LogEntry {
 }
 ```
 
-配合 `#[entity(T, "key")]` 配置和 `add_dbcontext_keyed` 使用，详见 [多数据库 Keyed 注册](../10-di-interceptors/keyed-databases.md)。
+配合 `#[entity(T, "key")]` 配置和 `add_dbcontext_keyed` 使用，详见 [多数据库 Keyed 注册与读写分离](../10-di-interceptors/keyed-databases.md)。
 
 ## 设计要点
 
