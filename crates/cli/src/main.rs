@@ -74,7 +74,7 @@ enum MigrationCommands {
         dir: PathBuf,
     },
     /// Revert applied migrations. Without --target, reverts only the last.
-    /// With --target <Name>, reverts all migrations after <Name> (exclusive).
+    /// With `--target <Name>`, reverts all migrations after `<Name>` (exclusive).
     Revert {
         #[arg(long)]
         connection: String,
@@ -87,7 +87,7 @@ enum MigrationCommands {
         target: Option<String>,
     },
     /// Write migration SQL script to stdout.
-    /// Use --name <Name> for a single migration, or --from/--to for a range.
+    /// Use `--name <Name>` for a single migration, or `--from`/`--to` for a range.
     Script {
         /// Print a single migration's up/down SQL by name.
         #[arg(long)]

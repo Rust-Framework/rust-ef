@@ -78,7 +78,7 @@ impl PostgresProvider {
     /// `PgTlsMode::Require(connector)` enforces TLS for all pooled connections.
     ///
     /// The TLS connector type is erased inside `deadpool_postgres::Manager`
-    /// (via `Box<dyn Connect>`), so [`Pool`] and [`PostgresConnection`] are
+    /// (via `Box<dyn Connect>`), so `Pool` and `PostgresConnection` are
     /// non-generic — TLS configuration is a per-pool construction-time
     /// decision, not a type-level parameter.
     pub fn new_with_tls(

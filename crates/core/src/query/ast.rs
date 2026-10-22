@@ -118,7 +118,7 @@ pub enum BoolExpr {
     Or(Box<BoolExpr>, Box<BoolExpr>),
     /// NOT negation.
     Not(Box<BoolExpr>),
-    /// EXISTS (SELECT 1 FROM related_table WHERE related.fk = outer.pk AND <predicate>)
+    /// EXISTS (SELECT 1 FROM related_table WHERE related.fk = outer.pk AND `predicate`)
     Exists(Box<SubquerySpec>),
     /// NOT EXISTS (...)
     NotExists(Box<SubquerySpec>),

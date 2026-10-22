@@ -93,7 +93,7 @@ pub struct Post {
     #[max_length(200)]
     pub title: String,
 
-    /// Post content (optional -- Option<T> naturally maps to nullable)
+    /// Post content (optional -- `Option<T>` naturally maps to nullable)
     pub content: Option<String>,
 
     /// Foreign key to Blog (EFCore: `public int BlogId { get; set; }`)

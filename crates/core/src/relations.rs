@@ -78,7 +78,7 @@ impl<T> BelongsTo<T> {
     }
 
     /// Returns `true` if the navigation has been loaded (either eagerly
-    /// via `Include` or lazily via [`load`]).
+    /// via `Include` or lazily via `load`).
     pub fn is_loaded(&self) -> bool {
         self.loaded
     }
@@ -97,7 +97,7 @@ impl<T> BelongsTo<T> {
     /// [`LazyContext`] is attached (lazy loading disabled), returns
     /// `Ok(())` without loading.
     ///
-    /// After this call, [`get`] returns the loaded entity (or `None` if
+    /// After this call, `get` returns the loaded entity (or `None` if
     /// no matching row was found).
     pub async fn load(&mut self) -> EFResult<()>
     where
@@ -214,7 +214,7 @@ impl<T, Join> HasMany<T, Join> {
     }
 
     /// Returns `true` if the navigation has been loaded (either eagerly
-    /// via `Include` or lazily via [`load`]).
+    /// via `Include` or lazily via `load`).
     pub fn is_loaded(&self) -> bool {
         self.loaded
     }
@@ -233,7 +233,7 @@ impl<T, Join> HasMany<T, Join> {
     /// [`LazyContext`] is attached (lazy loading disabled), returns
     /// `Ok(())` without loading.
     ///
-    /// After this call, [`items`] returns the loaded collection.
+    /// After this call, `items` returns the loaded collection.
     pub async fn load(&mut self) -> EFResult<()>
     where
         T: IFromRow + IEntityType + ILazyInit,

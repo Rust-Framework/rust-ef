@@ -148,13 +148,13 @@ impl PropertyMetaBuilder {
 /// Describes the type of navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavigationKind {
-    /// BelongsTo<T> ?reference to a single related entity (FK on this side).
+    /// `BelongsTo<T>` — reference to a single related entity (FK on this side).
     BelongsTo,
-    /// HasOne<T> ?reference to a single related entity (FK on other side).
+    /// `HasOne<T>` — reference to a single related entity (FK on other side).
     HasOne,
-    /// HasMany<T> ?collection of related entities.
+    /// `HasMany<T>` — collection of related entities.
     HasMany,
-    /// HasMany<T, Join> ?many-to-many via join entity.
+    /// `HasMany<T, Join>` — many-to-many via join entity.
     ManyToMany,
 }
 
@@ -222,7 +222,7 @@ pub struct EntityTypeMeta {
     pub properties: Vec<PropertyMeta>,
     /// Navigation properties (relationships) of this entity.
     pub navigations: Vec<NavigationMeta>,
-    /// The name of the primary key property (simplified; multi-key via Vec<String> in practice).
+    /// The name of the primary key property (simplified; multi-key via `Vec<String>` in practice).
     pub primary_keys: Vec<Cow<'static, str>>,
     /// Lazily-built `field_name -> properties index` map for O(1) lookup.
     /// Built on first `find_property` call; empty after clone (rebuilt on demand).
