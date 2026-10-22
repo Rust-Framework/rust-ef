@@ -691,7 +691,7 @@ v1.4 已完成（生产硬化）:
   ✅ P1-6 PostgreSQL TLS 可配置（PgTlsMode + new_with_tls + postgres-native-tls 0.5）
   ✅ metadata cache 进程级共享（BuiltMetadata + context_key 隔离）
   ✅ rust-dicore → rust-dix 0.6 重命名 + Result 化解析 API
-  ✅ 事务接口扩展（ambient transaction + savepoint + isolation level）
+  ✅ 事务接口扩展（context-scoped transaction + savepoint + isolation level）
 
 v1.2+ 范围（规模扩展）:
   二级缓存（IQueryInterceptor + CachingProvider）

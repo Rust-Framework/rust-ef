@@ -9,6 +9,7 @@ use crate::error::{EFError, EFResult};
 use crate::interceptor::{SaveChangesContext, SaveChangesResultContext};
 use crate::metadata::EntityTypeMeta;
 use crate::provider::{DbValue, IAsyncConnection};
+use crate::transaction::ConnectionGuard;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,13 +23,14 @@ pub(super) enum TxnSource {
     /// Manual or closure transaction registered on the session.
     Session(Box<dyn IAsyncConnection>),
     /// Self-managed transaction (no explicit transaction around the save).
-    Managed(Box<dyn IAsyncConnection>),
+    Managed(ConnectionGuard),
 }
 
 impl TxnSource {
     fn conn(&mut self) -> &mut dyn IAsyncConnection {
         match self {
-            TxnSource::Session(c) | TxnSource::Managed(c) => c.as_mut(),
+            TxnSource::Session(c) => c.as_mut(),
+            TxnSource::Managed(guard) => guard.as_mut(),
         }
     }
 
@@ -122,7 +124,7 @@ impl super::DbContext {
         } else {
             let mut c = self.provider.get_connection().await?;
             c.begin_transaction().await?;
-            TxnSource::Managed(c)
+            TxnSource::Managed(ConnectionGuard::new(c))
         };
 
         // Context-scoped transactions get a savepoint so a failed save can be
@@ -554,15 +556,17 @@ impl super::DbContext {
             TxnSource::Session(_) => {
                 // Caller commits/rolls back via the transaction handle.
             }
-            TxnSource::Managed(mut conn) => {
-                if let Err(e) = conn.commit_transaction().await {
-                    let _ = conn.rollback_transaction().await;
-                    conn.discard();
+            TxnSource::Managed(mut guard) => {
+                if let Err(e) = guard.as_mut().commit_transaction().await {
+                    let _ = guard.as_mut().rollback_transaction().await;
                     self.interceptor_pipeline
                         .on_save_failed(&save_ctx, &e)
                         .await;
+                    // Guard drop discards the connection.
                     return Err(e);
                 }
+                // Successful commit: return the connection to the pool.
+                drop(guard.disarm());
             }
         }
         // --- Accept changes: refresh tracker originals, drop Deleted entries ---
@@ -603,10 +607,11 @@ impl super::DbContext {
         e: EFError,
     ) -> EFResult<SaveChangesResult> {
         match txn {
-            TxnSource::Managed(mut conn) => {
-                if conn.rollback_transaction().await.is_err() {
-                    conn.discard();
+            TxnSource::Managed(mut guard) => {
+                if guard.as_mut().rollback_transaction().await.is_ok() {
+                    drop(guard.disarm());
                 }
+                // On rollback failure the guard discards the connection.
             }
             TxnSource::Session(mut conn) => {
                 if let Some(name) = savepoint {

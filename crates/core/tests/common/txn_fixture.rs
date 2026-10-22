@@ -7,6 +7,7 @@ use rust_ef::migration::{MigrationDialect, MigrationEngine};
 use rust_ef::prelude::*;
 use rust_ef::provider::IDatabaseProvider;
 use std::sync::Arc;
+use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Clone, EntityType, Default)]
 #[table("txn_test_items")]
@@ -71,6 +72,26 @@ pub async fn run_transaction_scope(
     let rows = ctx.set::<TxnTestItem>().query().to_list().await?;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "changed");
+
+    // Dropping an unfinished transaction must close/discard the connection so
+    // the database rolls back; the context must remain usable afterwards.
+    let txn = ctx.begin_transaction().await?;
+    ctx.add::<TxnTestItem>(TxnTestItem {
+        id: 0,
+        name: "dropped".into(),
+    });
+    ctx.save_changes().await?;
+    drop(txn);
+
+    let mut count = -1;
+    for _ in 0..60 {
+        count = ctx.set::<TxnTestItem>().query().count().await?;
+        if count == 1 {
+            break;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(count, 1, "dropped transaction must roll back");
 
     let _ = engine
         .ensure_deleted(&*cleanup_provider, std::slice::from_ref(&meta))

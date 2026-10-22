@@ -68,6 +68,40 @@ pub trait ITransaction: Send + Sync {
     fn connection(&mut self) -> &mut (dyn IAsyncConnection + Send);
 }
 
+/// A connection that is discarded if the owning future is cancelled before it
+/// can be returned to the pool. `disarm` transfers the connection back.
+pub(crate) struct ConnectionGuard {
+    conn: Option<Box<dyn IAsyncConnection>>,
+}
+
+impl ConnectionGuard {
+    pub(crate) fn new(conn: Box<dyn IAsyncConnection>) -> Self {
+        Self { conn: Some(conn) }
+    }
+
+    pub(crate) fn as_mut(&mut self) -> &mut dyn IAsyncConnection {
+        self.conn
+            .as_mut()
+            .expect("connection guard already disarmed")
+            .as_mut()
+    }
+
+    /// Returns the connection for normal pool release.
+    pub(crate) fn disarm(mut self) -> Box<dyn IAsyncConnection> {
+        self.conn.take().expect("connection guard already disarmed")
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            // A cancelled commit/rollback or an unfinished managed save must
+            // not return an open transaction to the pool.
+            conn.discard();
+        }
+    }
+}
+
 /// A connection shared with the `DbContext` session.
 struct TxnState {
     shared: Arc<SharedTxn>,
@@ -107,17 +141,22 @@ impl ITransaction for DbTransaction {
                 return Err(EFError::transaction("transaction already consumed"));
             };
             let result = match state.shared.take().await {
-                Ok(mut conn) => match conn.commit_transaction().await {
-                    Ok(()) => Ok(()),
-                    Err(e) => {
-                        // Best-effort cleanup if COMMIT failed; the connection
-                        // may be in an unknown state either way, so close it
-                        // instead of returning it to the pool.
-                        let _ = conn.rollback_transaction().await;
-                        conn.discard();
-                        Err(e)
+                Ok(conn) => {
+                    let mut guard = ConnectionGuard::new(conn);
+                    match guard.as_mut().commit_transaction().await {
+                        Ok(()) => {
+                            drop(guard.disarm());
+                            Ok(())
+                        }
+                        Err(e) => {
+                            // Best-effort cleanup if COMMIT failed; the
+                            // connection may be in an unknown state either way,
+                            // so the guard discards it instead of recycling.
+                            let _ = guard.as_mut().rollback_transaction().await;
+                            Err(e)
+                        }
                     }
-                },
+                }
                 Err(e) => Err(e),
             };
             this.session.clear().await;
@@ -132,15 +171,16 @@ impl ITransaction for DbTransaction {
                 return Err(EFError::transaction("transaction already consumed"));
             };
             let result = match state.shared.take().await {
-                Ok(mut conn) => match conn.rollback_transaction().await {
-                    Ok(()) => Ok(()),
-                    Err(e) => {
-                        // Unknown transaction state; do not recycle the
-                        // connection.
-                        conn.discard();
-                        Err(e)
+                Ok(conn) => {
+                    let mut guard = ConnectionGuard::new(conn);
+                    match guard.as_mut().rollback_transaction().await {
+                        Ok(()) => {
+                            drop(guard.disarm());
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
                     }
-                },
+                }
                 Err(e) => Err(e),
             };
             this.session.clear().await;
@@ -240,9 +280,10 @@ impl Drop for DbTransaction {
         };
         let session = Arc::clone(&self.session);
         handle.spawn(async move {
-            if let Ok(mut conn) = state.shared.take().await {
-                let _ = conn.rollback_transaction().await;
-                conn.discard();
+            if let Ok(conn) = state.shared.take().await {
+                let mut guard = ConnectionGuard::new(conn);
+                let _ = guard.as_mut().rollback_transaction().await;
+                // Guard drop discards the connection.
             }
             session.clear().await;
         });
