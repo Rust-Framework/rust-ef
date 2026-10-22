@@ -569,6 +569,7 @@ impl super::DbContext {
             TxnSource::Managed(mut conn) => {
                 if let Err(e) = conn.commit_transaction().await {
                     let _ = conn.rollback_transaction().await;
+                    conn.discard();
                     self.interceptor_pipeline
                         .on_save_failed(&save_ctx, &e)
                         .await;
@@ -615,7 +616,9 @@ impl super::DbContext {
     ) -> EFResult<SaveChangesResult> {
         match txn {
             TxnSource::Managed(mut conn) => {
-                let _ = conn.rollback_transaction().await;
+                if conn.rollback_transaction().await.is_err() {
+                    conn.discard();
+                }
             }
             TxnSource::Session(mut conn) => {
                 if let Some(name) = savepoint {

@@ -111,8 +111,10 @@ impl ITransaction for DbTransaction {
                     Ok(()) => Ok(()),
                     Err(e) => {
                         // Best-effort cleanup if COMMIT failed; the connection
-                        // may be in an unknown state either way.
+                        // may be in an unknown state either way, so close it
+                        // instead of returning it to the pool.
                         let _ = conn.rollback_transaction().await;
+                        conn.discard();
                         Err(e)
                     }
                 },
@@ -130,7 +132,15 @@ impl ITransaction for DbTransaction {
                 return Err(EFError::transaction("transaction already consumed"));
             };
             let result = match state.shared.take().await {
-                Ok(mut conn) => conn.rollback_transaction().await,
+                Ok(mut conn) => match conn.rollback_transaction().await {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        // Unknown transaction state; do not recycle the
+                        // connection.
+                        conn.discard();
+                        Err(e)
+                    }
+                },
                 Err(e) => Err(e),
             };
             this.session.clear().await;
@@ -210,6 +220,17 @@ impl Drop for DbTransaction {
         let Some(state) = state else {
             return;
         };
+
+        // Fast path: no statement is using the connection. Closing it is a
+        // synchronous, reliable rollback (the database aborts on disconnect).
+        if let Some(conn) = state.shared.try_take() {
+            conn.discard();
+            return;
+        }
+
+        // The connection is busy (a statement borrowed it). Schedule rollback
+        // and close; `SharedTxn::drop` is the final fallback if the runtime is
+        // already gone.
         let handle = self
             .runtime
             .clone()
@@ -221,6 +242,7 @@ impl Drop for DbTransaction {
         handle.spawn(async move {
             if let Ok(mut conn) = state.shared.take().await {
                 let _ = conn.rollback_transaction().await;
+                conn.discard();
             }
             session.clear().await;
         });

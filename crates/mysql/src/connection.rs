@@ -150,4 +150,13 @@ impl IAsyncConnection for MySqlConnection {
     fn set_slow_query_threshold(&mut self, threshold: std::time::Duration) {
         self.slow_query_threshold = Some(threshold);
     }
+
+    fn discard(self: Box<Self>) {
+        let this = *self;
+        if let Some(conn) = this.conn {
+            // Detach from the pool; dropping the underlying connection closes
+            // it, and MySQL rolls back any open transaction on disconnect.
+            let _ = conn.detach();
+        }
+    }
 }

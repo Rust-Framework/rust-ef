@@ -187,6 +187,14 @@ pub trait IAsyncConnection: Send + Sync {
     /// rejects this call. Prefer [`begin_transaction_with`](Self::begin_transaction_with).
     async fn set_transaction_isolation(&mut self, level: IsolationLevel) -> EFResult<()>;
 
+    /// Synchronously discards the underlying connection without returning it
+    /// to the pool.
+    ///
+    /// Used when a transaction is dropped unfinished or a commit/rollback
+    /// fails: closing the connection lets the database roll back any open
+    /// transaction, and prevents a poisoned connection from being reused.
+    fn discard(self: Box<Self>);
+
     /// Sets the slow query threshold for this connection.
     ///
     /// Only available when the `tracing` feature is enabled on the core

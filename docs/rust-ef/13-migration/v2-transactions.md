@@ -133,7 +133,25 @@ conn.commit_transaction().await?;
 
 `DbTransaction::new` 也不再公开；请通过 `DbContext::begin_transaction` 获取句柄。
 
-## 7. 迁移检查清单
+`IAsyncConnection` 新增必实现的 `discard(self: Box<Self>)`：当事务异常 drop 或 commit/rollback 失败时，用它同步关闭连接，避免把带未提交事务的连接放回池。自定义 provider 必须实现：
+
+- MySQL/PostgreSQL：从 pool 中 detach/take 连接，drop 即关闭；
+- SQLite：同步执行 `ROLLBACK` 后再归还连接。
+
+## 7. 异常与释放保证
+
+2.0 的释放策略：
+
+1. **显式 `commit` / `rollback`**：等待数据库响应；失败时 `discard` 连接，不回池。
+2. **Drop 未完成事务**：
+   - 连接空闲：同步 `discard`（MySQL/PostgreSQL 关闭连接，SQLite 执行 ROLLBACK）；
+   - 连接正被语句使用：后台任务先 rollback 再 discard；
+   - runtime 已关闭：`SharedTxn::drop` 作为最后兜底 discard。
+3. **panic unwind**：同上；`panic = "abort"` 无法执行 Drop，只能依赖数据库检测连接断开回滚。
+
+因此不再只依赖“后台 rollback 恰好执行”；连接不会带着未提交事务回到连接池。
+
+## 8. 迁移检查清单
 
 - [ ] 搜索 `TxOutcome`，改为显式 `rollback()` + 返回值；
 - [ ] 搜索 `.transaction(` / `transaction_with`，改为 `begin_transaction` / `begin_transaction_with`；
@@ -143,7 +161,7 @@ conn.commit_transaction().await?;
 - [ ] 自定义 `ITransaction` 实现移除 `is_scoped`；
 - [ ] 升级依赖到 `rust-ef = "2.0"`。
 
-## 8. 相关文档
+## 9. 相关文档
 
 - [手动事务：begin_transaction 与 use_transaction](../09-transactions-migrations/manual-transactions.md)
 - [事务实战：转账、批量 DML 与业务回滚](../12-tutorials/transactions.md)

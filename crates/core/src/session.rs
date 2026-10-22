@@ -45,6 +45,24 @@ impl SharedTxn {
             .take()
             .ok_or_else(|| EFError::transaction("transaction connection is already consumed"))
     }
+
+    /// Synchronously takes the connection when no statement is currently
+    /// using it. Used by `DbTransaction::Drop`.
+    pub(crate) fn try_take(&self) -> Option<Box<dyn IAsyncConnection>> {
+        self.conn.try_lock().ok()?.take()
+    }
+}
+
+impl Drop for SharedTxn {
+    fn drop(&mut self) {
+        // Last owner is gone while a connection is still attached: no one can
+        // commit it anymore. Discard/close it so the database rolls back.
+        if let Ok(mut guard) = self.conn.try_lock() {
+            if let Some(conn) = guard.take() {
+                conn.discard();
+            }
+        }
+    }
 }
 
 /// The session state owned by one `DbContext`.
@@ -201,6 +219,12 @@ impl IAsyncConnection for SessionConnection {
     fn set_slow_query_threshold(&mut self, _threshold: std::time::Duration) {
         // The pooled connection already received the provider's threshold when
         // it was acquired; per-session overrides are not needed here.
+    }
+
+    fn discard(self: Box<Self>) {
+        if let Some(conn) = self.shared.try_take() {
+            conn.discard();
+        }
     }
 }
 

@@ -144,4 +144,11 @@ impl IAsyncConnection for PostgresConnection {
     fn set_slow_query_threshold(&mut self, threshold: std::time::Duration) {
         self.slow_query_threshold = Some(threshold);
     }
+
+    fn discard(self: Box<Self>) {
+        let this = *self;
+        // Take the connection out of the deadpool object; dropping it closes
+        // the connection, and PostgreSQL rolls back on disconnect.
+        let _ = deadpool_postgres::Client::take(this.client);
+    }
 }

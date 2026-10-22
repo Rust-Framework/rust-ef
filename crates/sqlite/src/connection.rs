@@ -178,4 +178,24 @@ impl IAsyncConnection for SqliteConnection {
     fn set_slow_query_threshold(&mut self, threshold: std::time::Duration) {
         self.slow_query_threshold = Some(threshold);
     }
+
+    fn discard(self: Box<Self>) {
+        let this = *self;
+        match this.inner {
+            SqliteConnectionInner::Pooled(m) => {
+                if let Ok(mut guard) = m.lock() {
+                    if let Some(conn) = guard.take() {
+                        // r2d2 has no detach API; roll back synchronously
+                        // before returning the connection to the pool.
+                        let _ = conn.execute_batch("ROLLBACK");
+                    }
+                }
+            }
+            SqliteConnectionInner::Shared(conn) => {
+                if let Ok(conn) = conn.try_lock() {
+                    let _ = conn.execute_batch("ROLLBACK");
+                }
+            }
+        }
+    }
 }

@@ -18,7 +18,7 @@ txn.commit().await?;                // 或 txn.rollback().await?
 - 事务注册到 `DbContext`，查询、导航加载、批量 DML、`sql_query`、`save_changes()` 全部复用同一条事务连接；
 - 提交/回滚由句柄显式控制；
 - `commit` / `rollback` 消费句柄，类型上防止 use-after-commit；
-- 未提交就 drop 会在后台回滚（best effort，需要 Tokio runtime）。
+- 未提交就 drop：连接空闲时同步 `discard`（MySQL/PostgreSQL 关闭连接，SQLite 执行 ROLLBACK）；连接正被语句使用时后台 rollback + discard；不会把带未提交事务的连接放回池。
 
 ## 业务回滚 + 返回结果
 
@@ -172,12 +172,13 @@ txn.commit().await?;
 ```
 
 - 任意 `?` 提前返回时，`txn` 离开作用域被 drop；
-- drop 会先同步清除 context 的事务状态，再在后台任务中执行 `ROLLBACK`（best effort）；
+- drop 会先同步清除 context 的事务状态，再释放连接：空闲连接同步 `discard`，忙连接后台 rollback + discard；
+- `discard` 由 provider 实现：MySQL/PostgreSQL 关闭连接，SQLite 同步 ROLLBACK；
 - 因此不需要 `finally` 块，也不需要手写“每个分支都 rollback”。
 
 ### 需要确定性回滚时：显式 match
 
-Drop 的回滚是异步后台任务，不能 `await`。如果必须在返回前确认回滚完成，用显式分支：
+Drop 的释放可能走同步 `discard`，也可能在连接被语句占用时走后台任务；都不能在 Drop 中 `await`。如果必须在返回前确认回滚完成，用显式分支：
 
 ```rust
 let txn = ctx.begin_transaction().await?;
@@ -228,12 +229,12 @@ ctx.use_transaction(|ctx| {
 
 | 场景 | 行为 |
 |------|------|
-| 普通 `Err` / `?` | 句柄 drop，后台 rollback |
-| panic（unwind） | drop 仍会执行，后台 rollback |
-| `panic = "abort"` | 进程终止，没有 drop；依赖数据库连接断开回滚 |
-| future 被取消 | 句柄 drop，后台 rollback；不能保证在取消返回前完成 |
-| Tokio runtime 已关闭 | 后台任务无法调度，rollback 只能 best effort |
-| 事务开始后没有 Tokio runtime | 无法调度异步 rollback；必须在运行时内显式 `commit`/`rollback` |
+| 普通 `Err` / `?` | 句柄 drop；空闲连接同步 discard，忙连接后台 rollback + discard |
+| panic（unwind） | drop 仍会执行；同上 |
+| `panic = "abort"` | 进程终止，没有 drop；依赖数据库检测连接断开回滚 |
+| future 被取消 | 句柄 drop；空闲连接同步 discard，忙连接后台处理 |
+| Tokio runtime 已关闭 | 后台任务无法调度；`SharedTxn::drop` 兜底 discard 连接 |
+| 事务开始后没有 Tokio runtime | 空闲连接同步 discard；忙连接由 `SharedTxn::drop` 兜底 |
 
 生产代码不要只依赖 Drop：在关键路径显式 `commit()` / `rollback()`，Drop 作为最后一道保险。
 
@@ -242,6 +243,7 @@ ctx.use_transaction(|ctx| {
 `commit()` / `rollback()` 返回 `Err` 时，事务状态可能已经不确定（例如网络在 COMMIT 响应前断开）：
 
 - 向外传播错误，不要当作成功；
+- 失败路径会尝试 rollback，并 `discard` 连接，避免把未知状态连接放回池；
 - 当前 context 的事务状态会被清除，后续语句回到普通连接池；
 - 业务层应把该操作视为失败，并根据幂等键/业务状态决定是否重试；
 - 不要在同一个 context 上继续假设之前的事务仍然有效。

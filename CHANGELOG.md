@@ -19,12 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removed `DbContext::transaction` / `transaction_with`**: use `begin_transaction` / `begin_transaction_with` and explicit `commit()` / `rollback()`, or `use_transaction` for the `Ok`-commit / `Err`-rollback closure form.
 - **Removed `TxOutcome`**: a business rollback now calls `txn.rollback().await?` and returns the business value directly. This removes the extra three-state transaction concept.
 - **`ITransaction::is_scoped` and `DbTransaction::new` removed**: all transactions returned by `DbContext` are scoped; `DbTransaction` handles are created only by the context.
+- **`IAsyncConnection::discard` added**: custom providers must implement it to close a connection (forcing DB rollback) when a transaction is dropped unfinished or commit/rollback fails.
 - **`save_changes()` inside `begin_transaction` no longer self-commits**: it flushes to the active transaction and uses a savepoint, like `use_transaction`.
 
 #### Reliability
 
-- **Drop captures the runtime**: a transaction handle stores the Tokio runtime at begin time, so dropping it outside a Tokio context still schedules the rollback (best effort; `panic = "abort"` and a shut-down runtime cannot run it).
-- **Failed `COMMIT` retries rollback**: `commit()` attempts a best-effort `ROLLBACK` if `COMMIT` returns an error, and the context detaches from the transaction.
+- **Drop never returns an open transaction to the pool**: dropping an unfinished transaction synchronously discards the connection when idle (MySQL/PostgreSQL close it; SQLite runs ROLLBACK); if a statement is in flight, a background task rolls back and discards. `SharedTxn::drop` is a final fallback when the runtime is gone.
+- **Failed COMMIT/ROLLBACK discards the connection**: the transaction state may be unknown after an error, so the connection is closed instead of being recycled.
+- **Drop captures the runtime**: a transaction handle stores the Tokio runtime at begin time, so dropping it outside a Tokio context can still schedule the busy-path rollback (best effort; `panic = "abort"` cannot run `Drop`).
 
 #### Migration from 1.x
 
@@ -57,12 +59,14 @@ let result = BizResult::Rejected;
 - **移除 `DbContext::transaction` / `transaction_with`**：改用 `begin_transaction` / `begin_transaction_with` 显式 `commit()` / `rollback()`，或保留 `use_transaction` 的 `Ok` 提交 / `Err` 回滚闭包形式。
 - **移除 `TxOutcome`**：业务回滚改为 `txn.rollback().await?` 后直接返回业务值，去掉额外的三态事务概念。
 - **移除 `ITransaction::is_scoped` 与 `DbTransaction::new`**：`DbContext` 返回的事务全部是作用域事务；`DbTransaction` 句柄只由 context 创建。
+- **新增 `IAsyncConnection::discard`**：自定义 provider 必须实现，用于事务未完成即 drop 或 commit/rollback 失败时关闭连接、强制数据库回滚。
 - **`begin_transaction` 内的 `save_changes()` 不再自行提交**：只 flush 到当前事务并通过 savepoint 保护，与 `use_transaction` 一致。
 
 #### 可靠性
 
-- **Drop 捕获 runtime**：事务句柄在 begin 时保存 Tokio runtime，因此在非 Tokio 上下文 drop 仍可调度回滚（best effort；`panic = "abort"` 与已关闭的 runtime 无法执行）。
-- **COMMIT 失败后尝试回滚**：`commit()` 在 `COMMIT` 返回错误时 best-effort 执行 `ROLLBACK`，context 与事务解绑。
+- **未完成事务的 Drop 不会把开启的事务放回连接池**：连接空闲时同步 `discard`（MySQL/PostgreSQL 关闭连接，SQLite 执行 ROLLBACK）；有语句正在使用时，后台任务 rollback + discard。`SharedTxn::drop` 是 runtime 已关闭时的最终兜底。
+- **COMMIT/ROLLBACK 失败会 discard 连接**：错误后事务状态可能不确定，连接直接关闭，不复用。
+- **Drop 捕获 runtime**：事务句柄在 begin 时保存 Tokio runtime，因此在非 Tokio 上下文 drop 仍可调度忙路径回滚（best effort；`panic = "abort"` 无法执行 Drop）。
 
 #### 从 1.x 迁移
 
