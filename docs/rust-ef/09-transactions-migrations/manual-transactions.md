@@ -2,6 +2,7 @@
 
 `save_changes()` 内部已包含事务；需要显式控制事务边界时，使用 `begin_transaction()` 返回的 `ITransaction` 句柄（EF Core `IDbContextTransaction` 风格），或用 `use_transaction()` 闭包。
 
+<a id="begin_transaction手动句柄独立事务"></a>
 ## begin_transaction：EF Core 风格
 
 ```rust
@@ -44,6 +45,7 @@ Ok(TransferOutcome::Done)
 - 基础设施错误：`?` 提前返回；未消费的句柄 drop 时自动回滚；
 - 需要重试时重新查询，不要复用回滚前的跟踪实体。
 
+<a id="use_transaction"></a>
 ## use_transaction：闭包便利 API
 
 如果不需要手动返回值，闭包更紧凑：
@@ -86,6 +88,7 @@ ctx.use_transaction_with(IsolationLevel::ReadCommitted, |ctx| {
 - SQLite 只接受 `Serializable`；其他级别返回 `EFError::Provider`，不会静默降级；
 - 事务开始后仍可通过句柄的 `set_isolation` 修改，但仅 PostgreSQL 在首条语句前有效；新代码优先用 `*_with`。
 
+<a id="事务覆盖范围当前版本起"></a>
 ## 事务覆盖范围
 
 在 `begin_transaction` / `use_transaction` 内，所有通过 `ctx` 发出的语句都复用同一条事务连接：
@@ -232,6 +235,174 @@ ctx.use_transaction(|ctx| {
 - 业务层应把该操作视为失败，并根据幂等键/业务状态决定是否重试；
 - 不要在同一个 context 上继续假设之前的事务仍然有效。
 
+## 完整示例：转账
+
+下面把 `begin_transaction` / `ITransaction` 串成可直接改造的业务代码。
+
+```rust
+use rust_ef::prelude::*;
+
+#[derive(Debug, Clone, EntityType)]
+#[table("accounts")]
+pub struct Account {
+    #[primary_key]
+    #[auto_increment]
+    pub id: i32,
+    #[required]
+    pub owner: String,
+    pub balance: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferOutcome {
+    Done,
+    InsufficientFunds,
+}
+
+#[derive(Inject)]
+pub struct TransferHandler {
+    #[inject(owned)]
+    ctx: DbContext,
+}
+
+impl TransferHandler {
+    pub async fn transfer(
+        &mut self,
+        from_id: i32,
+        to_id: i32,
+        amount: f64,
+    ) -> EFResult<TransferOutcome> {
+        let txn = self.ctx.begin_transaction().await?;
+
+        let mut from = self
+            .ctx
+            .set::<Account>()
+            .query()
+            .find(from_id)
+            .await?
+            .ok_or_else(|| EFError::query(format!("account {from_id} not found")))?;
+        let mut to = self
+            .ctx
+            .set::<Account>()
+            .query()
+            .find(to_id)
+            .await?
+            .ok_or_else(|| EFError::query(format!("account {to_id} not found")))?;
+
+        if from.balance < amount {
+            txn.rollback().await?;
+            self.ctx.clear_tracking();
+            return Ok(TransferOutcome::InsufficientFunds);
+        }
+
+        from.balance -= amount;
+        to.balance += amount;
+        self.ctx.update::<Account>(from);
+        self.ctx.update::<Account>(to);
+        self.ctx.save_changes().await?;
+
+        txn.commit().await?;
+        Ok(TransferOutcome::Done)
+    }
+}
+```
+
+要点：
+
+- 两次 `find`、两次 `update`、`save_changes` 都在同一事务连接；
+- 余额不足路径显式 `rollback`，然后返回业务结果；
+- 任意 `?` 提前返回时，未消费的 `txn` drop，连接被 discard/回滚；
+- 真实资金系统请用 `Decimal` 或整数最小货币单位，不要用 `f64`。
+
+### 批量 DML + 查询 + 条件回滚
+
+```rust
+let txn = ctx.begin_transaction().await?;
+
+linq!(ctx.set::<Order>(), |o: Order| o.batch == batch;
+    set o.checked, true;
+    execute_update
+)
+.await?;
+
+let rows = linq!(ctx.set::<Order>(), |o: Order| o.batch == batch)
+    .to_list()
+    .await?; // 能看到未提交的批量更新
+
+if !rows.iter().all(Order::is_valid) {
+    txn.rollback().await?;
+    ctx.clear_tracking();
+    return Ok(false);
+}
+
+ctx.save_changes().await?;
+txn.commit().await?;
+Ok(true)
+```
+
+`save_changes` 在事务内只 flush，并使用 savepoint；失败只回滚本次保存，外层事务仍可继续（或由调用方整体 rollback）。
+
+<a id="transaction"></a>
+<a id="transaction回滚并返回业务结果"></a>
+## 2.0 迁移：从 transaction/TxOutcome 到 ITransaction
+
+2.0 移除了 `transaction` / `transaction_with` / `TxOutcome` / `transaction_mut`，`begin_transaction` 改为 context-scoped。
+
+| 1.x | 2.0 |
+|-----|-----|
+| `ctx.transaction(\|ctx\| ... TxOutcome ...)` | `begin_transaction` + `commit`/`rollback` |
+| `ctx.transaction_with(level, ...)` | `begin_transaction_with(level)` |
+| `TxOutcome::Commit(v)` | `txn.commit().await?` 后返回 `v` |
+| `TxOutcome::Rollback(v)` | `txn.rollback().await?` + `clear_tracking()` 后返回 `v` |
+| `begin_transaction` standalone | 现在查询/`save_changes` 自动加入 |
+| `transaction_mut()` | 删除；savepoint 直接用 `begin_transaction` 的句柄 |
+
+1.x：
+
+```rust
+let result = ctx.transaction(|ctx| Box::pin(async move {
+    ctx.add::<Order>(order);
+    ctx.save_changes().await?;
+    if !valid {
+        return Ok(TxOutcome::Rollback(Outcome::Rejected));
+    }
+    Ok(TxOutcome::Commit(Outcome::Done))
+})).await?;
+```
+
+2.0：
+
+```rust
+let txn = ctx.begin_transaction().await?;
+ctx.add::<Order>(order);
+ctx.save_changes().await?;
+if !valid {
+    txn.rollback().await?;
+    ctx.clear_tracking();
+    return Ok(Outcome::Rejected);
+}
+txn.commit().await?;
+Ok(Outcome::Done)
+```
+
+**最危险的语义变化**：1.x 中 `begin_transaction` 是独立句柄，`save_changes` 会自行提交；2.0 中 `save_changes` 只 flush。旧代码如果依赖“手动事务内 `save_changes` 自动提交”，升级后会因未 commit 而在 drop 时回滚。所有 `begin_transaction` 必须显式 `commit()` / `rollback()`。
+
+需要确定性回滚时用显式 `match`：
+
+```rust
+let txn = ctx.begin_transaction().await?;
+let result: EFResult<_> = async {
+    ctx.add::<Order>(order);
+    ctx.save_changes().await?;
+    Ok::<_, EFError>(value)
+}.await;
+
+match result {
+    Ok(v) => { txn.commit().await?; Ok(v) }
+    Err(e) => { let _ = txn.rollback().await; Err(e) }
+}
+```
+
 ## 性能
 
 - 显式事务会占用一个连接直到提交/回滚；不要把网络请求、文件 IO 或长计算放进事务。
@@ -249,8 +420,6 @@ ctx.use_transaction(|ctx| {
 | 跨多个 DbContext | 分布式事务当前版本未内置 |
 | 事务内不做 IO | 网络请求、文件操作会不可控地延长事务 |
 
-> 端到端业务示例（转账、批量 DML、测试与避坑）见 [事务实战：转账、批量 DML 与业务回滚](../12-tutorials/transactions.md)。
->
-> 从 1.x 升级见 [2.0 事务 API 迁移](../13-migration/v2-transactions.md)。
+> 本文档已包含完整转账示例、批量 DML、异常处理与 2.0 迁移；无需跳转到其他章节。
 
 下一节：[EnsureCreated 与 EnsureDeleted](ensure-created-deleted.md)
