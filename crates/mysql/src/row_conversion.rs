@@ -1,7 +1,10 @@
 use rust_ef::provider::DbValue;
-use sqlx::{Column, Row, TypeInfo};
+use sqlx_core::column::Column;
+use sqlx_core::row::Row;
+use sqlx_core::type_info::TypeInfo;
+use sqlx_mysql::MySqlRow;
 
-/// Converts a cell from a `sqlx::mysql::MySqlRow` into a native `DbValue`.
+/// Converts a cell from a `sqlx_mysql::MySqlRow` into a native `DbValue`.
 ///
 /// Uses the column type for the ambiguous cases (`BIGINT`, `TINYINT`), then
 /// attempts `try_get` on common Rust types. This mirrors the PostgreSQL
@@ -13,7 +16,7 @@ use sqlx::{Column, Row, TypeInfo};
 /// `Ok(None)` from `try_get::<Option<T>>` indicates a SQL NULL — returned as
 /// `DbValue::Null`. `Err` indicates the column's native type is not
 /// representable as `T`, so we fall through to the next candidate type.
-pub(crate) fn cell_to_db_value(row: &sqlx::mysql::MySqlRow, col_idx: usize) -> DbValue {
+pub(crate) fn cell_to_db_value(row: &MySqlRow, col_idx: usize) -> DbValue {
     // BIGINT must be checked before bool: MySQL's bool decoder accepts any
     // integer, so COUNT(*) (BIGINT) would otherwise become Bool(true/false).
     let column_type = row

@@ -2,6 +2,7 @@
 name = "rust-ef-postgres"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "PostgreSQL provider for Rust Entity Framework"
@@ -9,7 +10,7 @@ keywords = ["orm", "efcore", "entity-framework", "postgres", "database"]
 categories = ["database"]
 
 [dependencies]
-rust-ef = { version = "2.0.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
+rust-ef = { version = "2.0.1", path = "../core", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 bytes = "1"
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"] }

@@ -2,6 +2,7 @@
 name = "rust-ef-sqlite"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "SQLite provider for Rust Entity Framework"
@@ -16,11 +17,14 @@ categories = ["database"]
 # and collapses native variants to their canonical string form in
 # `type_conversion.rs` (SQLite has no native TIMESTAMPTZ/UUID type — TEXT is
 # the correct storage, matching v1.0 behavior).
-rust-ef = { version = "2.0.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
+rust-ef = { version = "2.0.1", path = "../core", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
-rusqlite = { version = "0.31", features = ["bundled"] }
+# rusqlite 0.41 bundles SQLite through libsqlite3-sys 0.39, which fixes
+# RUSTSEC-2026-0459 (CVE-2026-119375). r2d2_sqlite 0.35 still pins rusqlite
+# 0.40 / libsqlite3-sys 0.38, so the small r2d2 manager lives in
+# `pool_strategy.rs` instead of pulling that crate in.
+rusqlite = { version = "0.41", features = ["bundled"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.24"
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }

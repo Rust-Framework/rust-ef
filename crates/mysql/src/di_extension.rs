@@ -1,7 +1,7 @@
 use crate::provider::MySqlOptions;
 use crate::tls::MySqlTlsMode;
 use rust_ef::provider::IDatabaseProvider;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
+use sqlx_mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use std::sync::Arc;
 
 pub trait DbContextOptionsBuilderExt {

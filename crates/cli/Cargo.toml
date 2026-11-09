@@ -2,6 +2,7 @@
 name = "rust-ef-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CLI for Rust Entity Framework migrations"
@@ -14,9 +15,9 @@ name = "rust-ef"
 path = "src/main.rs"
 
 [dependencies]
-rust-ef = { version = "2.0.0", path = "../core" }
-rust-ef-sqlite = { version = "2.0.0", path = "../sqlite" }
-rust-ef-postgres = { version = "2.0.0", path = "../postgres" }
-rust-ef-mysql = { version = "2.0.0", path = "../mysql" }
+rust-ef = { version = "2.0.1", path = "../core" }
+rust-ef-sqlite = { version = "2.0.1", path = "../sqlite" }
+rust-ef-postgres = { version = "2.0.1", path = "../postgres" }
+rust-ef-mysql = { version = "2.0.1", path = "../mysql" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

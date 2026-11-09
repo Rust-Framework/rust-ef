@@ -3,12 +3,60 @@
 //! Separates pool/memory dispatch from the public provider so `provider.rs`
 //! only contains `SqliteProvider` and its trait impls.
 use r2d2::CustomizeConnection;
-use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::Connection;
 use rust_ef::error::{EFError, EFResult};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+
+/// r2d2 connection manager for file-based SQLite databases.
+///
+/// This replaces `r2d2_sqlite`, whose latest release still pins rusqlite 0.40
+/// (libsqlite3-sys 0.38, affected by RUSTSEC-2026-0459). A manager only needs
+/// to open the connection; WAL and busy_timeout are applied by
+/// [`SqliteConnectionCustomizer`].
+#[derive(Debug, Clone)]
+pub(crate) struct SqliteConnectionManager {
+    path: PathBuf,
+}
+
+impl SqliteConnectionManager {
+    pub(crate) fn file(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+#[cfg(test)]
+impl SqliteConnectionManager {
+    /// Pooled in-memory manager used only to exercise pool acquisition. Every
+    /// pooled connection gets its own database, which is fine for a timeout
+    /// test that never queries data.
+    pub(crate) fn memory() -> Self {
+        Self {
+            path: PathBuf::from(":memory:"),
+        }
+    }
+}
+
+impl r2d2::ManageConnection for SqliteConnectionManager {
+    type Connection = Connection;
+    type Error = rusqlite::Error;
+
+    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+        Connection::open(&self.path)
+    }
+
+    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        // Matches r2d2_sqlite: an empty batch checks the handle without
+        // issuing a query on every pool checkout.
+        conn.execute_batch("")
+    }
+
+    fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
+        false
+    }
+}
 
 /// Initializes each pooled connection with WAL mode and a busy timeout.
 ///

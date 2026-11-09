@@ -1,6 +1,6 @@
+use crate::pool_strategy::SqliteConnectionManager;
 use async_trait::async_trait;
 use r2d2::PooledConnection;
-use r2d2_sqlite::SqliteConnectionManager;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
 use std::sync::Arc;
@@ -20,6 +20,10 @@ use crate::sync_ops::{execute_sync, query_sync};
 /// databases, which must share a single connection). Operations on `Shared`
 /// call `rusqlite` directly (in-memory operations are sub-millisecond, so
 /// blocking the tokio worker is acceptable).
+// The pooled variant carries an r2d2 connection handle; `SqliteConnection`
+// itself is always heap-allocated behind `Box<dyn IAsyncConnection>`, so the
+// inline size difference does not affect the provider's footprint.
+#[allow(clippy::large_enum_variant)]
 enum SqliteConnectionInner {
     Pooled(StdMutex<Option<PooledConnection<SqliteConnectionManager>>>),
     Shared(Arc<TokioMutex<rusqlite::Connection>>),

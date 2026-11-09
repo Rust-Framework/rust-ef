@@ -27,10 +27,7 @@ async fn test_postgres_crud_lifecycle() {
 
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_crud_lifecycle: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_crud_lifecycle: failed to connect: {e}"),
     };
 
     run_crud_lifecycle(provider, rust_ef::migration::MigrationDialect::Postgres)
@@ -46,10 +43,7 @@ async fn test_postgres_filter_with_in_operator() {
     };
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_filter_with_in_operator: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_filter_with_in_operator: failed to connect: {e}"),
     };
     common::run_filter_with_in_operator(provider, rust_ef::migration::MigrationDialect::Postgres)
         .await
@@ -64,10 +58,7 @@ async fn test_postgres_limit_and_offset() {
     };
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_limit_and_offset: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_limit_and_offset: failed to connect: {e}"),
     };
     common::run_limit_and_offset(provider, rust_ef::migration::MigrationDialect::Postgres)
         .await
@@ -82,10 +73,7 @@ async fn test_postgres_count_and_any() {
     };
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_count_and_any: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_count_and_any: failed to connect: {e}"),
     };
     common::run_count_and_any(provider, rust_ef::migration::MigrationDialect::Postgres)
         .await
@@ -100,10 +88,7 @@ async fn test_postgres_aggregation_queries() {
     };
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_aggregation_queries: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_aggregation_queries: failed to connect: {e}"),
     };
     common::run_aggregation_queries(provider, rust_ef::migration::MigrationDialect::Postgres)
         .await
@@ -118,10 +103,7 @@ async fn test_postgres_empty_result_handling() {
     };
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_empty_result_handling: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_empty_result_handling: failed to connect: {e}"),
     };
     common::run_empty_result_handling(provider, rust_ef::migration::MigrationDialect::Postgres)
         .await
@@ -136,10 +118,7 @@ async fn test_postgres_ensure_created_and_deleted() {
     };
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_ensure_created_and_deleted: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_ensure_created_and_deleted: failed to connect: {e}"),
     };
     common::run_ensure_created_and_deleted(
         provider,
@@ -157,10 +136,7 @@ async fn test_postgres_has_data_seed() {
     };
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_has_data_seed: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_has_data_seed: failed to connect: {e}"),
     };
     common::run_has_data_seed(provider, rust_ef::migration::MigrationDialect::Postgres)
         .await
@@ -175,10 +151,7 @@ async fn test_postgres_transaction_scope() {
     };
     let provider = match PostgresProvider::new_insecure(&url, 5) {
         Ok(p) => Arc::new(p) as Arc<dyn rust_ef::provider::IDatabaseProvider>,
-        Err(e) => {
-            eprintln!("skip test_postgres_transaction_scope: {e}");
-            return;
-        }
+        Err(e) => panic!("test_postgres_transaction_scope: failed to connect: {e}"),
     };
     common::run_transaction_scope(provider, rust_ef::migration::MigrationDialect::Postgres)
         .await

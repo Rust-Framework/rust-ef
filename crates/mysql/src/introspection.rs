@@ -1,7 +1,9 @@
 //! Database introspection for MySQL via `information_schema`.
 
 use rust_ef::error::EFResult;
-use sqlx::Row;
+use sqlx_core::query::query;
+use sqlx_core::row::Row;
+use sqlx_mysql::MySqlPool;
 
 /// Column information from database introspection.
 #[derive(Debug, Clone)]
@@ -22,11 +24,11 @@ pub struct DbTable {
 
 /// Reads tables and columns from a MySQL database.
 pub async fn introspect_mysql(connection_string: &str) -> EFResult<Vec<DbTable>> {
-    let pool = sqlx::MySqlPool::connect(connection_string)
+    let pool = MySqlPool::connect(connection_string)
         .await
         .map_err(|e| rust_ef::error::EFError::connection(format!("MySQL connect failed: {e}")))?;
 
-    let table_rows = sqlx::query(
+    let table_rows = query(
         "SELECT table_name FROM information_schema.tables \
          WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE' \
          AND table_name NOT LIKE '__ef_%' \
@@ -40,7 +42,7 @@ pub async fn introspect_mysql(connection_string: &str) -> EFResult<Vec<DbTable>>
     for table_row in table_rows {
         let table_name: String = table_row.try_get(0).map_err(map_row_err)?;
 
-        let col_rows = sqlx::query(
+        let col_rows = query(
             "SELECT c.column_name, c.data_type, c.is_nullable, c.character_maximum_length, \
              CASE WHEN k.column_name IS NOT NULL THEN 1 ELSE 0 END AS is_pk \
              FROM information_schema.columns c \
@@ -83,6 +85,6 @@ pub async fn introspect_mysql(connection_string: &str) -> EFResult<Vec<DbTable>>
     Ok(tables)
 }
 
-fn map_row_err(e: sqlx::Error) -> rust_ef::error::EFError {
+fn map_row_err(e: sqlx_core::Error) -> rust_ef::error::EFError {
     rust_ef::error::EFError::query(format!("Row read error: {e}"))
 }

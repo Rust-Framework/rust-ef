@@ -1,10 +1,13 @@
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
-use sqlx::{Executor, Row};
+use sqlx_core::executor::Executor;
+use sqlx_core::raw_sql::raw_sql;
+use sqlx_core::row::Row;
+use sqlx_mysql::MySql;
 
 pub struct MySqlConnection {
-    conn: Option<sqlx::pool::PoolConnection<sqlx::MySql>>,
+    conn: Option<sqlx_core::pool::PoolConnection<MySql>>,
     #[cfg(feature = "tracing")]
     slow_query_threshold: Option<std::time::Duration>,
 }
@@ -19,7 +22,7 @@ fn isolation_sql(level: IsolationLevel) -> &'static str {
 }
 
 impl MySqlConnection {
-    pub(crate) fn new(conn: sqlx::pool::PoolConnection<sqlx::MySql>) -> Self {
+    pub(crate) fn new(conn: sqlx_core::pool::PoolConnection<MySql>) -> Self {
         Self {
             conn: Some(conn),
             #[cfg(feature = "tracing")]
@@ -50,7 +53,7 @@ impl MySqlConnection {
             .as_mut()
             .ok_or_else(|| EFError::connection("Connection already closed".to_string()))?;
         let result = conn
-            .execute(sqlx::raw_sql(sql))
+            .execute(raw_sql(sqlx_core::sql_str::AssertSqlSafe(sql)))
             .await
             .map_err(|e| EFError::query(format!("Execution error: {}", e)))?;
         Ok(result.rows_affected())

@@ -15,7 +15,7 @@ pub enum MySqlTlsMode {
     VerifyIdentity,
 }
 
-impl From<MySqlTlsMode> for sqlx::mysql::MySqlSslMode {
+impl From<MySqlTlsMode> for sqlx_mysql::MySqlSslMode {
     fn from(mode: MySqlTlsMode) -> Self {
         match mode {
             MySqlTlsMode::Disabled => Self::Disabled,

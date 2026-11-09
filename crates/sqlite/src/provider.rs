@@ -1,10 +1,9 @@
 use crate::pool_strategy::{
-    SqliteConnectionCustomizer, SqliteProviderInner, SQLITE_DEFAULT_POOL_ACQUIRE_TIMEOUT,
-    SQLITE_DEFAULT_POOL_SIZE,
+    SqliteConnectionCustomizer, SqliteConnectionManager, SqliteProviderInner,
+    SQLITE_DEFAULT_POOL_ACQUIRE_TIMEOUT, SQLITE_DEFAULT_POOL_SIZE,
 };
 use crate::sql_generator::SqliteSqlGenerator;
 use async_trait::async_trait;
-use r2d2_sqlite::SqliteConnectionManager;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
 use std::sync::Arc;

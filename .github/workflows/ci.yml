@@ -27,6 +27,22 @@ jobs:
       - name: Clippy (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate lockfile
+        run: cargo generate-lockfile
+      - name: Audit dependencies
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   test:
     name: Test (${{ matrix.db }})
     strategy:

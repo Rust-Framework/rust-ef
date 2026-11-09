@@ -9,6 +9,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.1] — 2026-11-09 — Database driver security upgrade
+
+### English
+
+#### Security
+
+- **MySQL driver: sqlx 0.8.0 → 0.9.0.** Fixes RUSTSEC-2024-0363 / GHSA-xmrp-424f-vfpx (binary-protocol length truncation could let an oversized value be reinterpreted as protocol commands).
+- **SQLite driver: rusqlite 0.31 → 0.41.1 (libsqlite3-sys 0.39.1).** The bundled engine is SQLite 3.54.0, fixing RUSTSEC-2026-0459 / CVE-2026-119375 (uninitialized page-cache memory when a mismatched `-wal` sibling is opened).
+- **RSA auth backend upgraded to `rsa` 0.10.0.** sqlx 0.9 makes RSA password auth opt-in; the provider enables the `rsa` feature so MySQL 8's `caching_sha2_password` keeps working over plaintext (local dev/tests). `sqlx-mysql 0.9` accepts `rsa >= 0.10.0-rc.18`, which resolves to the fixed `rsa 0.10.0`; RUSTSEC-2023-0071 (Marvin timing attack) no longer applies.
+- **Removed unmaintained `paste`** (RUSTSEC-2024-0436) by dropping the sqlx umbrella crate.
+- Audit result: **0 advisories across 290 locked packages** (previously 5 advisories across 330 packages, including `libsqlite3-sys 0.28` and `sqlx 0.8.0`).
+
+#### Changed
+
+- The MySQL provider now depends on `sqlx-core` / `sqlx-mysql` 0.9 directly instead of the `sqlx` umbrella. The umbrella resolves its optional SQLite driver into the lock graph even with `default-features = false`, which conflicts with rusqlite's `libsqlite3-sys 0.39` over `links = "sqlite3"`; depending on the driver crate keeps both providers on their fixed native libraries and removes unused drivers from the build.
+- Enabled the `rsa` backend on `sqlx-mysql` (resolves to `rsa 0.10.0`) so plaintext MySQL 8 authentication via `caching_sha2_password` is not silently lost; TLS remains the secure-by-default transport.
+- Provider-generated dynamic SQL is wrapped in `AssertSqlSafe` (sqlx 0.9 requirement); runtime values remain bound parameters, identifiers still come from compile-time entity metadata.
+- The SQLite provider now ships a small `r2d2::ManageConnection` implementation in `pool_strategy.rs` and no longer depends on `r2d2_sqlite`. The latest `r2d2_sqlite` (0.35) pins rusqlite 0.40 / libsqlite3-sys 0.38, which is affected by RUSTSEC-2026-0459; the manager only opens the file and leaves WAL/busy-timeout setup to the existing customizer.
+- PostgreSQL/MySQL integration tests now panic when a configured `RUST_EF_PG_URL` / `RUST_EF_MYSQL_URL` cannot be reached instead of printing `skip` and returning. A broken CI service container can no longer produce a false-green test job.
+- PostgreSQL provider dependencies were already current and are unchanged: `tokio-postgres 0.7.18`, `deadpool-postgres 0.14.2`, `postgres-native-tls 0.5.3`, `native-tls 0.2.18`.
+
+#### Compatibility
+
+- `MySqlProvider::from_pool` and `DbContextOptionsBuilderExt::use_mysql_with_pool` now use `sqlx-mysql 0.9`'s `MySqlPool` / `MySqlPoolOptions`. If an application builds a pool with `sqlx 0.8` and passes it to these optional APIs, align the application's `sqlx` dependency to 0.9. No other public API or query behavior changed.
+- New MSRV floor inherited from sqlx 0.9: Rust 1.94; the workspace and all crates now declare `rust-version = "1.94"`.
+
+#### Verified
+
+- `cargo audit --file Cargo.lock`: 0 vulnerabilities (RustSec advisory DB, 1429 advisories).
+- `cargo test --workspace --all-features -- --skip postgres --skip mysql`: 370 passed, 0 failed, 18 ignored.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: 0 warnings.
+- `cargo fmt --all -- --check`: pass.
+- `cargo bench --workspace --no-run`: all benchmarks compile.
+
+### 简体中文
+
+#### 安全
+
+- **MySQL 驱动：sqlx 0.8.0 → 0.9.0。** 修复 RUSTSEC-2024-0363 / GHSA-xmrp-424f-vfpx（二进制协议长度截断，超大值可能被解释为协议命令）。
+- **SQLite 驱动：rusqlite 0.31 → 0.41.1（libsqlite3-sys 0.39.1）。** 内置 SQLite 3.54.0，修复 RUSTSEC-2026-0459 / CVE-2026-119375（打开页大小不匹配的 `-wal` 伴随文件时可能返回未初始化的页缓存内存）。
+- **RSA 后端从 `rsa` 0.9 升级到 `rsa` 0.10.0。** sqlx 0.9 将 RSA 密码认证改为可选；provider 启用 `rsa` feature，使 MySQL 8 的 `caching_sha2_password` 在明文连接（本地开发/测试）下继续可用。`sqlx-mysql 0.9` 接受 `rsa >= 0.10.0-rc.18`，实际解析到已修复的 `rsa 0.10.0`；RUSTSEC-2023-0071（Marvin 时序攻击）不再适用。
+- **移除不再维护的 `paste`**（RUSTSEC-2024-0436），不再依赖 sqlx umbrella。
+- 审计结果：**290 个锁定依赖 0 个漏洞**（升级前 330 个依赖中 5 个漏洞，含 `libsqlite3-sys 0.28` 与 `sqlx 0.8.0`）。
+
+#### 变更
+
+- MySQL provider 直接从 `sqlx-core` / `sqlx-mysql` 0.9 取驱动，不再使用 `sqlx` umbrella。umbrella 即使关闭默认 feature 也会把可选 SQLite 驱动纳入锁定图，与 rusqlite 的 `libsqlite3-sys 0.39` 在 `links = "sqlite3"` 上冲突；直接依赖驱动 crate 可让两个 provider 各自使用已修复的原生库，并把无用驱动移出构建。
+- 启用 `sqlx-mysql` 的 `rsa` 后端（解析到 `rsa 0.10.0`），避免明文 MySQL 8 `caching_sha2_password` 认证能力静默丢失；TLS 仍是默认的安全传输方式。
+- provider 生成的动态 SQL 使用 `AssertSqlSafe` 包装（sqlx 0.9 要求）；运行时值仍走绑定参数，标识符仍来自编译期实体元数据。
+- SQLite provider 在 `pool_strategy.rs` 内实现了一个很小的 `r2d2::ManageConnection`，不再依赖 `r2d2_sqlite`。最新 `r2d2_sqlite`（0.35）仍锁定 rusqlite 0.40 / libsqlite3-sys 0.38（受 RUSTSEC-2026-0459 影响）；新 manager 只负责打开文件，WAL / busy-timeout 仍由现有 customizer 设置。
+- PostgreSQL/MySQL 集成测试在配置了 `RUST_EF_PG_URL` / `RUST_EF_MYSQL_URL` 但连接失败时改为 panic，不再打印 `skip` 后返回；CI 数据库服务异常不会再产生假绿。
+- PostgreSQL provider 依赖本已是最新，保持不变：`tokio-postgres 0.7.18`、`deadpool-postgres 0.14.2`、`postgres-native-tls 0.5.3`、`native-tls 0.2.18`。
+
+#### 兼容性
+
+- `MySqlProvider::from_pool` 与 `DbContextOptionsBuilderExt::use_mysql_with_pool` 现在使用 `sqlx-mysql 0.9` 的 `MySqlPool` / `MySqlPoolOptions`。如果应用用 `sqlx 0.8` 构建连接池并传给这两个可选 API，请把应用的 `sqlx` 依赖对齐到 0.9。其余公共 API 与查询行为不变。
+- 继承 sqlx 0.9 的 MSRV：Rust 1.94；workspace 与所有 crate 现已声明 `rust-version = "1.94"`。
+
+#### 验证
+
+- `cargo audit --file Cargo.lock`：0 漏洞（RustSec 1429 条公告库）。
+- `cargo test --workspace --all-features -- --skip postgres --skip mysql`：370 通过，0 失败，18 忽略。
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`：0 warning。
+- `cargo fmt --all -- --check`：通过。
+- `cargo bench --workspace --no-run`：全部基准编译通过。
+
 ## [2.0.0] — 2026-10-22 — EF Core-style transactions
 
 ### English
@@ -1644,6 +1710,7 @@ Project skeleton, workspace layout, and the `IDbContext` / `IDbSet<T>`
 
 ---
 
+[2.0.1]: https://github.com/Rust-Framework/rust-ef/releases/tag/v2.0.1
 [1.4.0]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.4.0
 [1.8.1]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.8.1
 [1.1.0]: https://github.com/Rust-Framework/rust-ef/releases/tag/v1.1.0

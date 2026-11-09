@@ -5,6 +5,8 @@ use rust_ef::error::{EFError, EFResult};
 #[cfg(feature = "tracing")]
 use rust_ef::provider::IAsyncConnection;
 use rust_ef::provider::{IDatabaseProvider, ISqlGenerator};
+use sqlx_core::raw_sql::raw_sql;
+use sqlx_mysql::{MySqlConnectOptions, MySqlPool};
 
 /// Options for a MySQL provider.
 ///
@@ -46,7 +48,7 @@ impl MySqlOptions {
 }
 
 pub struct MySqlProvider {
-    pool: sqlx::MySqlPool,
+    pool: MySqlPool,
     #[cfg(feature = "tracing")]
     slow_query_threshold_ms: std::sync::atomic::AtomicU64,
 }
@@ -65,7 +67,7 @@ impl MySqlProvider {
         Self::new_with_tls(connection_string, MySqlTlsMode::Disabled).await
     }
 
-    pub fn from_pool(pool: sqlx::MySqlPool) -> Self {
+    pub fn from_pool(pool: MySqlPool) -> Self {
         Self {
             pool,
             #[cfg(feature = "tracing")]
@@ -94,11 +96,11 @@ impl MySqlProvider {
     /// [`MySqlProvider::new`]. For plaintext (local dev), use
     /// [`MySqlProvider::new_insecure`].
     pub async fn new_with_tls(connection_string: &str, tls: MySqlTlsMode) -> EFResult<Self> {
-        let mut options: sqlx::mysql::MySqlConnectOptions = connection_string
+        let mut options: MySqlConnectOptions = connection_string
             .parse()
             .map_err(|e| EFError::connection(format!("MySQL URL parse: {}", e)))?;
         options = options.ssl_mode(tls.into());
-        let pool = sqlx::MySqlPool::connect_with(options)
+        let pool = MySqlPool::connect_with(options)
             .await
             .map_err(|e| EFError::connection(format!("MySQL connection failed: {}", e)))?;
         Ok(Self {
@@ -112,11 +114,11 @@ impl MySqlProvider {
     ///
     /// See [`MySqlProvider::new_with_tls`] for TLS mode details.
     pub fn new_lazy_with_tls(connection_string: &str, tls: MySqlTlsMode) -> EFResult<Self> {
-        let mut options: sqlx::mysql::MySqlConnectOptions = connection_string
+        let mut options: MySqlConnectOptions = connection_string
             .parse()
             .map_err(|e| EFError::connection(format!("MySQL URL parse: {}", e)))?;
         options = options.ssl_mode(tls.into());
-        let pool = sqlx::MySqlPool::connect_lazy_with(options);
+        let pool = MySqlPool::connect_lazy_with(options);
         Ok(Self {
             pool,
             #[cfg(feature = "tracing")]
@@ -155,7 +157,7 @@ impl IDatabaseProvider for MySqlProvider {
     async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {
         // DDL is not supported by the prepared-statement protocol (MySQL error
         // 1295); use the text protocol.
-        sqlx::raw_sql(sql)
+        raw_sql(sqlx_core::sql_str::AssertSqlSafe(sql))
             .execute(&self.pool)
             .await
             .map_err(|e| EFError::migration(format!("Migration execution failed: {}", e)))?;

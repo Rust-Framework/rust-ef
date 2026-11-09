@@ -615,6 +615,62 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 
 ---
 
+## 3.11 v2.0.1 数据库驱动安全升级与发布核验（2026-11-09）
+
+**状态: ✅ 通过**
+
+本轮升级 SQLite / MySQL / PostgreSQL 三个 provider 的数据库驱动，目标是消除 RustSec / OSV
+漏洞、保持框架行为稳定，并按 2.0.1 发布门禁完成核验。
+
+### 依赖变更
+
+| Provider | 升级前 | 升级后 | 说明 |
+|----------|--------|--------|------|
+| SQLite | rusqlite 0.31 + r2d2_sqlite 0.24 | rusqlite 0.41.1 + 内置 r2d2 manager | libsqlite3-sys 0.28 → 0.39.1（SQLite 3.54.0） |
+| MySQL | sqlx 0.8.0（umbrella，默认 feature） | sqlx-core / sqlx-mysql 0.9.0（直接依赖） | 启用 `rsa` 后端（0.10.0），移除 sqlx-sqlite / sqlx-postgres 可选驱动 |
+| PostgreSQL | tokio-postgres 0.7 / deadpool-postgres 0.14 | tokio-postgres 0.7.18 / deadpool-postgres 0.14.2 | 已是最新，未改动 |
+
+### 漏洞修复
+
+| Advisory | 包 | 处置 |
+|----------|----|------|
+| RUSTSEC-2024-0363 / GHSA-xmrp-424f-vfpx | sqlx 0.8.0 | 升级 sqlx 0.9.0 |
+| RUSTSEC-2026-0459 / CVE-2026-119375 | libsqlite3-sys 0.28.0 | rusqlite 0.41.1 + libsqlite3-sys 0.39.1 |
+| RUSTSEC-2023-0071 | rsa 0.9.10 | sqlx-mysql 0.9 的 `rsa` feature 解析到已修复的 rsa 0.10.0 |
+| RUSTSEC-2024-0436 | paste 1.0.15（unmaintained） | 移除 sqlx umbrella，paste 移出依赖图 |
+
+审计结果：**290 个锁定依赖 0 漏洞**（升级前 330 个依赖、5 条 advisory）。
+
+### 发布门禁
+
+| 准则 | 结果 | 证据 |
+|------|:----:|------|
+| 依赖漏洞 | ✅ | `cargo audit --file Cargo.lock`：0 vulnerabilities（1429 条 RustSec 公告） |
+| 测试全绿 | ✅ | 370 passed / 0 failed / 18 ignored（69 个测试二进制） |
+| 集成测试真实性 | ✅ | PG/MySQL 配置 URL 后连接失败即 panic，不再静默 skip |
+| Clippy 零 warning | ✅ | default / chrono,uuid,decimal / all-features 三组 `-D warnings` 均通过 |
+| fmt 一致 | ✅ | `cargo fmt --all -- --check` |
+| Bench 编译 | ✅ | `cargo bench --workspace --no-run` |
+| 版本一致 | ✅ | workspace 与 6 个 crate 的 inter-dep 均为 2.0.1；全部成员声明 `rust-version = "1.94"` |
+| CHANGELOG | ✅ | `[2.0.1]` 条目含安全、变更、兼容性、验证四节 |
+| 无 deprecated 残留 | ✅ | 公共 API 未新增 deprecated 项 |
+
+### 兼容性说明
+
+`MySqlProvider::from_pool` / `use_mysql_with_pool` 的参数类型随 sqlx 升级为 0.9。
+仅使用连接串 + `use_mysql` 的应用不受影响；自行构建 sqlx 连接池的应用需把 `sqlx`
+依赖对齐到 0.9。其余 provider API、SQL 方言和查询行为不变。
+
+### 验收标准
+
+- [x] 三个 provider 的驱动升级完成，且不再引入受影响的 `libsqlite3-sys` / `sqlx` / `paste`；`rsa` 为已修复的 0.10.0
+- [x] OSV 与 cargo-audit 双通道审计为 0 漏洞
+- [x] SQLite / MySQL / PostgreSQL provider 均编译通过，SQLite 集成测试全绿；PG/MySQL 连接失败不再被静默跳过
+- [x] fmt / clippy（三组 feature）/ bench 编译 / 版本一致性 / MSRV 声明全部通过
+- [x] CHANGELOG 与 SPEC 同步 2.0.1 变更
+
+---
+
 # 验收矩阵（v1.0 GA 快照）
 
 | 能力 | v0.2 Alpha | v0.3.5 | v0.5 RC 1 | v1.0 GA | v1.1 |
