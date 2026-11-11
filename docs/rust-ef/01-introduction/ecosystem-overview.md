@@ -33,14 +33,14 @@ User Application
 
 ```toml
 [dependencies]
-rust-ef = { version = "1.8", features = ["chrono", "uuid", "decimal"] }
-rust-ef-sqlite = "1.8"
-rust-dix = "0.7"
+rust-ef = { version = "2.1", features = ["chrono", "uuid", "decimal"] }
+rust-ef-sqlite = "2.1"
+rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
-
-[dev-dependencies]
-rust-ef-cli = "1.8"
 ```
+
+> CLI（`rust-ef-cli`）2.x 未发布到 crates.io，需要从仓库构建：
+> `cargo install --path crates/cli`。
 
 ## 可选 Feature（v0.5 已实现）
 

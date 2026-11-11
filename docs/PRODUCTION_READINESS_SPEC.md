@@ -550,7 +550,7 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 
 ### 修复实现
 
-**CRITICAL bug 修复**（[query.rs:938-982](../crates/core/src/query.rs#L938-L982)）：将 `.map()` 闭包改为 `for` 循环，引入 `running_idx: usize` 在 CTE 间累加。typed 模式下 `cte_idx` 从 `running_idx` 起始，编译完成后回写；raw 模式下按 `params.len()` 推进以保持与 `all_params()` 顺序一致。
+**CRITICAL bug 修复**（[query 模块](../crates/core/src/query/)）：将 `.map()` 闭包改为 `for` 循环，引入 `running_idx: usize` 在 CTE 间累加。typed 模式下 `cte_idx` 从 `running_idx` 起始，编译完成后回写；raw 模式下按 `params.len()` 推进以保持与 `all_params()` 顺序一致。
 
 **回归测试**（[cte_syntax_tests.rs:340-481](../crates/core/tests/cte_syntax_tests.rs#L340-L481)）：4 个 PostgreSQL 方言测试，使用 `PgLikeGenerator` mock（无需 live PG）：
 - `test_pg_single_typed_cte_uses_dollar_n` — 单 CTE 产出 `$1`
@@ -615,6 +615,86 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 
 ---
 
+## 3.12 v2.1.0 rust-dix 0.10 + 类型化 key / AnyKey / 异步初始化（2026-11-11）
+
+**状态: ✅ 通过**
+
+本轮把 2.1.0 作为一次合并发布：rust-dix 0.7 → 0.10（MEDI scope/生命周期/类型化 key/
+宏 key 表达式）、类型化 `DbContextKey`（含 Handler 注入）、AnyKey 动态上下文、异步 provider
+初始化，以及安全与 CI 基线。
+
+### 依赖与基线
+
+| 项 | 2.0.x | 2.1.0 |
+|----|-------|-------|
+| DI 容器 | rust-dix 0.7 | rust-dix 0.10（全仓单一版本） |
+| MSRV | 1.94 | **1.95** |
+| 严格 scope 校验 | 无（根上缓存为单例） | 默认开启（`ScopedFromRootProvider`）；owned 解析例外 |
+| 注册顺序 | 先注册优先 | 后注册优先（MEDI）；`try_add_*` 保持 TryAdd |
+| 释放契约 | 无 Provider dispose | Scope 跟踪/逆序释放；`provider.dispose()` |
+| keyed API | `&str` | `impl Into<ServiceKey>`（String/ServiceKey 源码兼容） |
+| unsafe 策略 | — | 全部库 crate `#![forbid(unsafe_code)]` |
+| 安全策略 | 无 | 新增 `SECURITY.md` |
+
+### 2.1.0 新增能力
+
+- **类型化 context key**：`IDbContextKey` + `DbContextResolver`（`get_owned_context` /
+  `get_context`）；实体模型仍以 key 的字符串名匹配 `#[context("...")]`。
+  `#[derive(DbContextKey)]` 实现 rust-dix 0.10 官方扩展契约 `From<Key> for ServiceKey`，
+  `#[inject(owned, key = Db::Read)]` 与注册使用同一个 typed key。
+- **AnyKey 动态上下文**：`add_dbcontext_anykey` 为一个兜底注册服务任意请求 key；
+  options/provider 按请求 key 缓存（**有界 LRU**，默认 256；
+  `add_dbcontext_anykey_with_capacity` 可调），跨 scope 复用连接池；精确 key 优先；
+  使用默认实体模型，租户隔离由查询过滤器负责。
+- **异步 provider 初始化**：`add_dbcontext_async` / `add_dbcontext_keyed_async` 在
+  `build_async().await` 中创建 provider；失败返回类型化 `RdiError`；可选
+  `async_preflight` 在连接池创建后执行异步自检并中止失败启动；`DbContext` 仍是
+  同步 Scoped 服务，owned 注入不变；同步 `build()` 返回
+  `AsyncServiceRequiresBuildAsync`。
+- **0.10 语义/诊断**：宏 key 表达式（`#[inject(key = <expr>)]`）、`From<LocalKey> for
+  ServiceKey` 扩展契约、typed-keyed resolver、AnyKey 缓存、链式 async 环检测
+  （`AsyncFactoryContext`）、`SyncSingletonDependsOnAsyncService` /
+  `AsyncServiceRequiresGetAsync` 诊断；EF 不包装 `RdiError`，仅文档/兼容。
+
+### 0.10 能力评估结论
+
+| 能力 | 2.1.0 决策 |
+|------|-----------|
+| ServiceKey 类型化 key | 通过 EF `IDbContextKey` 采纳（typed key；字符串实体模型保持不变） |
+| 宏 key 表达式 + `From<LocalKey> for ServiceKey` 契约 | ✅ 采纳（`#[derive(DbContextKey)]` + Handler 注入） |
+| typed-keyed resolver 扩展 | ✅ 采纳（async keyed options 解析使用 `*_key` 方法） |
+| `register!(keyed ... => Impl)` / `rdi-E004` | 不适用（EF 走运行时注册 API，last-wins） |
+| AnyKey 兜底 | 采纳（同步注册；有界 LRU 缓存；异步 AnyKey 留待后续） |
+| AsyncFactoryContext / 链式环检测 | 采纳底层能力（异步 provider 初始化 + async_preflight）；EF 工厂内不派生子任务 |
+| 异步枚举语义 | 不适用（EF 不通过 `get_all` 收集 DI 服务） |
+| 诊断错误 | 采纳（文档 + 兼容） |
+| MSRV / forbid unsafe / SECURITY / CI | 全量采纳 |
+
+### 发布门禁
+
+| 准则 | 结果 | 证据 |
+|------|:----:|------|
+| 依赖漏洞 | ✅ | `cargo audit`：0 vulnerabilities |
+| 测试全绿 | ✅ | 391 passed / 0 failed（含 typed key 派生/注入、AnyKey LRU、async preflight 回归） |
+| Clippy | ✅ | `--workspace --all-targets --all-features -- -D warnings` |
+| fmt | ✅ | `cargo fmt --all -- --check` |
+| 文档 | ✅ | `cargo doc --workspace --no-deps --all-features`（`-D warnings`）+ `mdbook build` |
+| 打包 | ✅ | 5 个可发布 crate 文件清单含 README/Cargo.toml；leaf crate 完整 package + publish dry-run |
+| 版本一致 | ✅ | workspace 与 5 个可发布 crate 均 2.1.0；`rust-version = "1.95"` |
+| MSRV | ✅ | `cargo +1.95.0 check --workspace --all-targets --all-features` |
+| CI/发布门禁 | ✅ | cargo-audit、MSRV、rustdoc、单一 rust-dix 版本、发布 preflight |
+| 消费演练 | ✅ | 独立消费工程通过严格 scope / owned 解析 / 建表写入查询 / dispose |
+| 文档链接 | ✅ | 相对链接检查 0 缺失；CHANGELOG/迁移指南/采纳矩阵同步 |
+
+### 验收标准
+
+- [x] rust-dix 0.10 单一版本，MSRV 1.95 全仓一致
+- [x] 类型化 key（含派生宏与 Handler 宏 key 表达式注入）、AnyKey、异步注册 API + 测试落地
+- [x] 严格 scope / last-wins / dispose / RdiError 语义有回归测试
+- [x] 安全与 CI 基线（audit / MSRV / rustdoc / 单一依赖版本）落地
+- [x] 2.1.0 发布就绪（打包、发布顺序、发布后核验清单）
+
+
 ## 3.11 v2.0.1 数据库驱动安全升级与发布核验（2026-11-09）
 
 **状态: ✅ 通过**
@@ -668,6 +748,8 @@ cargo bench --workspace --no-run                           ✅ 3 benches compile
 - [x] SQLite / MySQL / PostgreSQL provider 均编译通过，SQLite 集成测试全绿；PG/MySQL 连接失败不再被静默跳过
 - [x] fmt / clippy（三组 feature）/ bench 编译 / 版本一致性 / MSRV 声明全部通过
 - [x] CHANGELOG 与 SPEC 同步 2.0.1 变更
+
+---
 
 ---
 
@@ -902,7 +984,7 @@ v1.4.0 生产硬化迭代完成后，本轮对 REF 框架进行 8 维度生产�
 
 #### 维度 4：易用性 (Usability) — ✅ 就绪
 
-- **现状**：`linq!` 宏 DSL、`#[derive(EntityType)]` 12+ 属性、DI 集成（rust-dix 0.7）、3 个示例（blog/soft_delete/audit）、mdBook 文档、CLI 工具
+- **现状**：`linq!` 宏 DSL、`#[derive(EntityType)]` 12+ 属性、DI 集成（rust-dix 0.10）、3 个示例（blog/soft_delete/audit）、mdBook 文档、CLI 工具
 - **优势**：类型安全 DSL 消除字符串 API；自动实体发现；DI 集成降低样板
 - **风险**：`linq!` 宏有学习曲线；scaffold 从现有 DB 反向生成能力有限；文档示例部分未进 doctest
 - **评级**：✅ 就绪

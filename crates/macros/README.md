@@ -1,22 +1,27 @@
-# lref-macros
+# rust-ef-macros
 
-[![Crates.io](https://img.shields.io/crates/v/lref-macros)](https://crates.io/crates/lref-macros)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
+[![crates.io](https://img.shields.io/crates/v/rust-ef-macros.svg)](https://crates.io/crates/rust-ef-macros)
+[![docs.rs](https://docs.rs/rust-ef-macros/badge.svg)](https://docs.rs/rust-ef-macros)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE)
 
-Procedural macros for [Rust Entity Framework (lref)](https://crates.io/crates/lref).
+Procedural macros for [`rust-ef`](https://crates.io/crates/rust-ef), an
+EF Core-inspired ORM for Rust. Re-exported by `rust-ef`, so applications normally
+never depend on this crate directly.
 
-Provides:
+## What's included
 
-- `#[derive(EntityType)]` — generates `EntityType`, `FromRow`, `GetKeyValues`, and `EntitySnapshot` trait implementations
-- `column!()` — resolves entity fields to database column names at compile time
+| Macro | Purpose |
+|-------|---------|
+| `#[derive(EntityType)]` | Generates `IEntityType`, `IFromRow`, `IGetKeyValues` and `IEntitySnapshot`; registers the entity for compile-time discovery |
+| `linq!(...)` | Typed query DSL: `filter`, `order_by`, `skip`/`take`, `include`, joins, aggregation, CTEs, window functions, bulk `execute_update` / `execute_delete` |
+| `column!(Entity::field)` | Resolves an entity field to its database column name at compile time |
+| `#[entity(Entity)]` / `#[entity(Entity, "context_key")]` | Applies an `IEntityTypeConfiguration<T>` implementation to the model (optionally per keyed context) |
+| `#[derive(DbContextKey)]` | Typed keyed-`DbContext` key: implements `IDbContextKey` and the rust-dix `From<Key> for ServiceKey` contract (for `#[inject(owned, key = Key::Read)]` and keyed registration) |
 
----
-
-## Usage
+## Entity attributes
 
 ```rust
-use lref::prelude::*;
-use lref::column;
+use rust_ef::prelude::*;
 
 #[derive(Debug, Clone, EntityType)]
 #[table("blogs")]
@@ -27,43 +32,73 @@ pub struct Blog {
 
     #[required]
     #[max_length(200)]
+    #[unique]
     pub url: String,
 
     pub rating: i32,
-}
 
-// Type-safe column reference
-let col = column!(Blog::url);  // expands to Blog::COLUMN_URL — "url"
+    #[navigation]
+    pub posts: HasMany<Post>,
+}
 ```
 
----
+| Attribute | Meaning |
+|-----------|---------|
+| `#[table("...")]` | explicit table name |
+| `#[primary_key]` | primary key column |
+| `#[auto_increment]` | auto-increment / identity |
+| `#[required]` | `NOT NULL` |
+| `#[max_length(n)]` | max string length |
+| `#[column("db_col")]` | different database column name |
+| `#[foreign_key(Entity)]` | foreign-key target |
+| `#[navigation]` | navigation property (`BelongsTo` / `HasMany` / `HasOne`) |
+| `#[not_mapped]` | exclude from persistence |
+| `#[index]` / `#[unique]` | create an index / unique index |
+| `#[concurrency_check]` | optimistic concurrency token |
+| `#[context("key")]` | entity belongs to a keyed `DbContext` |
+| `#[on_delete(...)]` | FK delete behavior (also configurable via Fluent API) |
 
-## Generated Code
+## Configuration blocks
 
-For each struct, `#[derive(EntityType)]` generates:
+```rust
+#[derive(Default)]
+pub struct BlogConfig;
 
-1. **`EntityType`** impl — returns `EntityTypeMeta` with table name, columns, keys, navigations
-2. **`FromRow`** impl — materializes entities from `&[String]` database row data
-3. **`GetKeyValues`** impl — returns primary key values for SaveChanges WHERE clauses
-4. **`EntitySnapshot`** impl — returns all scalar property values for INSERT/UPDATE
-5. **`COLUMN_*`** constants — type-safe column name references (used by `column!()`)
+#[entity(Blog)]
+impl IEntityTypeConfiguration<Blog> for BlogConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
+        entity.property_named("url").has_column_name("blog_url");
+        entity.has_index(linq!(index |b: Blog| b.rating));
+    }
+}
+```
 
-## Supported Field Attributes
+`#[entity(T, "key")]` scopes the configuration to a keyed context.
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `#[primary_key]` | Primary key column | `pub id: i32` |
-| `#[auto_increment]` | Auto-increment / identity | `pub id: i32` |
-| `#[required]` | NOT NULL constraint | `pub name: String` |
-| `#[max_length(200)]` | Max string length | `pub url: String` |
-| `#[column("db_col")]` | Different DB column name | `pub rust_name: String` |
-| `#[foreign_key(User)]` | Foreign key reference | `pub user_id: i32` |
-| `#[navigation]` | Navigation property | `pub blog: BelongsTo<Blog>` |
-| `#[not_mapped]` | Exclude from mapping | `pub temp: String` |
-| `#[index]` | Create database index | `pub email: String` |
-| `#[unique]` | Create unique index | `pub username: String` |
-| `#[concurrency_check]` | Optimistic concurrency token | `pub version: i32` |
+## Typed DbContext keys
+
+```rust
+use rust_ef::prelude::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, DbContextKey)]
+enum Db {
+    Read,
+    Write,
+    #[key("audit-log")]
+    Audit,
+}
+```
+
+The derive generates `IDbContextKey::name()` (snake-case variant name, or the
+`#[key("...")]` override) and `From<Db> for rust_dix::ServiceKey`. That makes
+`add_dbcontext_keyed(Db::Write, ...)`, `provider.get_owned_context(Db::Write)`
+and `#[inject(owned, key = Db::Write)]` share one typed key. The enum must derive
+`Debug + Clone + Copy + PartialEq + Eq + Hash`.
+
+## MSRV
+
+Rust **1.95**.
 
 ## License
 
-MIT — see [LICENSE](../../LICENSE)
+MIT — see [LICENSE](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE).

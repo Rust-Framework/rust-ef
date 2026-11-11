@@ -126,8 +126,10 @@ let provider = ServiceCollection::new()
 
 // "primary" 上下文只管理 Blog（context_key = None）
 // "logs" 上下文只管理 LogEntry（context_key = Some("logs")）
-let primary: Arc<DbContext> = provider.get_keyed("primary");
-let logs: Arc<DbContext> = provider.get_keyed("logs");
+// 共享解析需要在 scope 内（rust-dix 0.10 严格 scope 校验）
+let scope = provider.scope();
+let primary: Arc<DbContext> = scope.get_keyed("primary").unwrap();
+let logs: Arc<DbContext> = scope.get_keyed("logs").unwrap();
 ```
 
 ### 过滤规则

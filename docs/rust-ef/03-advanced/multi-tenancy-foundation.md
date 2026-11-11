@@ -16,18 +16,17 @@ let provider = ServiceCollection::new()
     .build()?;
 
 // 推荐：owned 解析，直接 &mut self 访问
-// rust-dix 0.6+: get_owned() 返回 Result<T, RdiError>
+// rust-dix 0.10: get_owned() 返回 Result<T, RdiError>，可从根 provider 解析
 let mut ctx: DbContext = provider.get_owned()?;
 ```
 
 ### 共享解析（同一 Scope 内复用）
 
-当多个消费者在同一 Scope 内需要共享同一实例时，使用 `scope.get()` 获取 `Arc<DbContext>`（仅 `&self` 访问）：
+当多个消费者在同一 Scope 内需要共享同一实例时，使用 `scope.get()` 获取 `Arc<DbContext>`（仅 `&self` 访问）。
+`rust-dix 0.10` 默认严格 scope 校验，必须显式建 scope：
 
 ```rust,ignore
-use rust_dix::scope::ScopeFactory;  // create_scope() 在 ScopeFactory trait 上
-
-let scope = provider.create_scope();
+let scope = provider.scope();
 let ctx: Arc<DbContext> = scope.get()?;
 // 同一 scope 内多次 get 返回同一实例
 ```
@@ -42,7 +41,10 @@ let ctx = Arc::new(Mutex::new(ctx));
 
 ### 从根 ServiceProvider 直接解析
 
-从根 `ServiceProvider` 直接 `get::<DbContext>()` 会在 root scope 缓存中复用同一实例（rust-dix 0.6+ 行为）。使用 `get_owned::<DbContext>()` 则每次返回新实例。
+`rust-dix 0.10` 默认启用 MEDI 严格 scope 校验：根 `ServiceProvider` **不是** scope，
+根上 `get::<DbContext>()` 返回 `ScopedFromRootProvider`。共享解析请先 `provider.scope()`；
+`get_owned::<DbContext>()` 仍可从根解析（实例归调用方、不缓存），每次返回新实例。
+迁移期如需 0.7 的“根上缓存为单例”行为，可用 `build_with(ServiceProviderOptions::lenient())`。
 
 ## 2. 多租户查询过滤器
 

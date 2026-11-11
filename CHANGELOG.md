@@ -9,6 +9,152 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0] — 2026-11-11 — rust-dix 0.10：MEDI scope、类型化 key、动态上下文与异步初始化
+
+> **English** · **简体中文**
+
+### English
+
+#### Breaking
+
+- **DI dependency**: `rust-dix 0.7` → `0.10`. rust-ef 2.1 requires `rust-dix ^0.10`;
+  the 0.7–0.9 container types are not compatible, so applications must upgrade in
+  lockstep (0.9 → 0.10 is source-compatible).
+- **Strict scope validation** (MEDI `ValidateScopes`, default since 0.8): resolving
+  the Scoped `DbContext` from the root provider returns
+  `RdiError::ScopedFromRootProvider`. Use `provider.scope()` for shared
+  resolution, or owned resolution (`get_owned` / `get_keyed_owned` /
+  `#[inject(owned)]`), which remains allowed from the root because the instance
+  is caller-owned. Temporary escape hatch:
+  `ServiceCollection::build_with(ServiceProviderOptions::lenient())`.
+- **MEDI registration semantics**: last-registration-wins; `get_all` excludes
+  keyed registrations (rust-ef does not rely on it). `try_add_*` keeps `TryAdd`.
+- **`RdiError` is `#[non_exhaustive]`** (new variants include
+  `ScopedFromRootProvider`, `ProviderDisposed`, `ScopeDisposed`,
+  `SyncSingletonDependsOnAsyncService`, `AsyncServiceRequiresGetAsync`).
+- **MSRV**: Rust **1.95** (rust-dix 0.10 baseline).
+- **`add_dbcontext_keyed` signature**: now accepts
+  `impl IDbContextKey + Into<ServiceKey>`. Typed enum keys register a typed
+  `ServiceKey`; `&str`/`String` keys remain source-compatible and register as
+  string keys. Explicit function pointers or parameter type annotations may need
+  adjusting.
+
+#### Added — DI / context features
+
+- **Typed context keys**: `IDbContextKey` plus `DbContextResolver`
+  (`get_owned_context` / `get_context`) give compile-time-safe keyed
+  registration/resolution while the entity model keeps its stable string identity
+  (`#[context("...")]`). `#[derive(DbContextKey)]` implements the official
+  rust-dix 0.10 extension contract `From<Key> for ServiceKey`, so rust-dix 0.10
+  macro key expressions work end-to-end:
+  `#[inject(owned, key = Db::Read)]` resolves the same typed key used by
+  `add_dbcontext_keyed(Db::Read, ...)`.
+- **Dynamic keyed contexts (rust-dix `AnyKey`)**: `add_dbcontext_anykey(|key,
+  options| ...)` registers one fallback for every requested key. Options and the
+  connection pool are cached per requested key in a **bounded LRU** (default 256
+  keys; `add_dbcontext_anykey_with_capacity` overrides it), reused across scopes;
+  exact-key registrations take precedence; AnyKey contexts use the default entity
+  model (tenant isolation belongs in query filters). Security: map requested keys
+  through an allow-list/tenant table; never interpolate them into SQL or
+  connection strings.
+- **Async provider initialization**: `add_dbcontext_async` and
+  `add_dbcontext_keyed_async` defer provider creation to `build_async().await`
+  and surface failures as typed `RdiError` instead of a registration-time panic.
+  An optional `DbContextOptionsBuilder::async_preflight` hook runs after the pool
+  is created (e.g. async `SELECT 1`) and aborts startup on error. The `DbContext`
+  remains a synchronous Scoped service, so owned injection is unchanged; a sync
+  `build()` with async registrations returns
+  `RdiError::AsyncServiceRequiresBuildAsync`.
+- `rust_ef::di` re-exports `ServiceProviderOptions` and `ServiceKey`; all library
+  crates opt into `#![forbid(unsafe_code)]` and the repository ships `SECURITY.md`.
+
+#### Added — engineering / security baseline
+
+- CI: RustSec `cargo audit` (replaces the `rustsec/audit-check` action), MSRV
+  1.95 job, `rustdoc -D warnings`, and a single-`rust-dix`-version check.
+- Publish workflow: version/tag preflight, fmt/clippy/tests/package checks,
+  RustSec audit gate, dependency-order publishing with idempotent retries and
+  crates.io visibility waits.
+- Tests: typed keys (derive + macro `key = Expr` handler injection) and
+  entity-model selection, AnyKey per-key isolation/caching, bounded-LRU eviction
+  and exact-key precedence, async registration/preflight and typed failure paths,
+  `String`/`ServiceKey` compatibility, strict/lenient scope, disposal.
+- Docs: crate READMEs rewritten for the current API, `docs/v2.1-migration-guide.md`,
+  `docs/rust-dix-0.10-adoption.md`, release checklist, rust-dix 0.10 handbook notes.
+
+#### Migration from 2.0
+
+- Upgrade `rust-dix` to 0.10 and the toolchain to Rust 1.95.
+- Replace root `provider.get::<DbContext>()` with `provider.scope()` (shared) or
+  `get_owned()` (owned); see `docs/v2.1-migration-guide.md`.
+- Typed keys (use `#[derive(DbContextKey)]`), AnyKey and async registration are
+  additive; existing string-keyed registration, owned handler patterns and query
+  behavior are unchanged.
+
+### 简体中文
+
+#### 破坏性变更
+
+- **DI 依赖**：`rust-dix 0.7` → `0.10`。rust-ef 2.1 要求 `rust-dix ^0.10`；
+  0.7–0.9 的容器类型互不兼容，应用必须同步升级（0.9→0.10 源码兼容）。
+- **严格 scope 校验**（MEDI `ValidateScopes`，0.8 起默认）：从根 provider 解析
+  Scoped `DbContext` 返回 `RdiError::ScopedFromRootProvider`。共享解析请在
+  `provider.scope()` 内进行；owned 解析（`get_owned` / `get_keyed_owned` /
+  `#[inject(owned)]`）仍可从根解析（实例归调用方所有）。迁移期逃生门：
+  `ServiceCollection::build_with(ServiceProviderOptions::lenient())`。
+- **MEDI 注册语义**：后注册优先；`get_all` 不再包含 keyed 注册（rust-ef 不依赖）；
+  `try_add_*` 保持 `TryAdd` 语义。
+- **`RdiError` 标记 `#[non_exhaustive]`**（新增 `ScopedFromRootProvider`、
+  `ProviderDisposed`、`ScopeDisposed`、`SyncSingletonDependsOnAsyncService`、
+  `AsyncServiceRequiresGetAsync` 等变体）。
+- **MSRV**：Rust **1.95**（rust-dix 0.10 基线）。
+- **`add_dbcontext_keyed` 签名**：改为接受 `impl IDbContextKey + Into<ServiceKey>`。
+  typed enum key 注册为 typed `ServiceKey`；`&str`/`String` 保持源码兼容（仍是 string key）。
+  显式函数指针/参数类型标注可能需要调整。
+
+#### 新增 —— DI / 上下文能力
+
+- **类型化 context key**：`IDbContextKey` + `DbContextResolver`
+  （`get_owned_context` / `get_context`），keyed 注册/解析获得编译期安全，实体模型
+  仍使用稳定字符串（`#[context("...")]`）。`#[derive(DbContextKey)]` 实现 rust-dix 0.10
+  官方扩展契约 `From<Key> for ServiceKey`，因此 0.10 的宏 key 表达式可端到端使用：
+  `#[inject(owned, key = Db::Read)]` 与 `add_dbcontext_keyed(Db::Read, ...)` 使用同一个
+  typed key。
+- **动态 keyed 上下文（rust-dix `AnyKey`）**：
+  `add_dbcontext_anykey(|key, options| ...)` 为一个兜底注册服务任意 key；options 与
+  连接池按请求 key 缓存（有界 LRU，默认 256 个 key，
+  `add_dbcontext_anykey_with_capacity` 可调），跨 scope 复用；精确 key 注册优先；
+  AnyKey 上下文使用默认实体模型（租户隔离由查询过滤器负责）。安全提示：请求 key 必须
+  经白名单/租户表映射，禁止直接拼入 SQL 或连接串。
+- **异步 provider 初始化**：`add_dbcontext_async` 与
+  `add_dbcontext_keyed_async` 把 provider 创建推迟到 `build_async().await`，失败以
+  类型化 `RdiError` 返回（不再在注册期 panic）；可选
+  `DbContextOptionsBuilder::async_preflight` 在连接池创建后执行异步自检，失败中止启动。
+  `DbContext` 仍是同步 Scoped 服务，owned 注入方式不变；同步 `build()` 遇到异步注册
+  返回 `RdiError::AsyncServiceRequiresBuildAsync`。
+- `rust_ef::di` 重新导出 `ServiceProviderOptions` 与 `ServiceKey`；全部库 crate 启用
+  `#![forbid(unsafe_code)]`，仓库新增 `SECURITY.md`。
+
+#### 新增 —— 工程与安全基线
+
+- CI：RustSec `cargo audit`（替代 `rustsec/audit-check` action）、MSRV 1.95 job、
+  `rustdoc -D warnings`、单一 rust-dix 版本检查。
+- 发布工作流：版本/tag preflight、fmt/clippy/test/package 检查、RustSec 审计门禁、
+  依赖顺序发布 + 幂等重试 + crates.io 可见性等待。
+- 测试：类型化 key（派生 + Handler 宏 key 表达式注入）与实体模型选择、AnyKey
+  隔离/缓存/有界 LRU 淘汰/精确 key 优先级、异步注册/async preflight 与类型化失败路径、
+  `String`/`ServiceKey` 兼容、严格/lenient scope、释放。
+- 文档：各 crate README 按当前 API 重写、`docs/v2.1-migration-guide.md`、
+  `docs/rust-dix-0.10-adoption.md`、发布清单、rust-dix 0.10 手册说明。
+
+#### 从 2.0 迁移
+
+- 升级 `rust-dix` 到 0.10、工具链到 Rust 1.95。
+- 根解析 `provider.get::<DbContext>()` 改为 `provider.scope()`（共享）或
+  `get_owned()`（owned）；详见 `docs/v2.1-migration-guide.md`。
+- 类型化 key（使用 `#[derive(DbContextKey)]`）、AnyKey、异步注册均为新增能力；既有字符串
+  key 注册、owned Handler 模式与查询行为不变。
+
 ## [2.0.1] — 2026-11-09 — Database driver security upgrade
 
 ### English

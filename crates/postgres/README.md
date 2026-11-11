@@ -1,106 +1,80 @@
-# lref-provider-postgres
+# rust-ef-postgres
 
-[![Crates.io](https://img.shields.io/crates/v/lref-provider-postgres)](https://crates.io/crates/lref-provider-postgres)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
+[![crates.io](https://img.shields.io/crates/v/rust-ef-postgres.svg)](https://crates.io/crates/rust-ef-postgres)
+[![docs.rs](https://docs.rs/rust-ef-postgres/badge.svg)](https://docs.rs/rust-ef-postgres)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE)
 
-PostgreSQL database provider for [Rust Entity Framework (lref)](https://crates.io/crates/lref).
-
-Implements `DatabaseProvider`, `SqlGenerator`, and `AsyncConnection` traits for PostgreSQL using `deadpool-postgres` for connection pooling.
-
----
-
-## Features
+PostgreSQL provider for [`rust-ef`](https://crates.io/crates/rust-ef), an
+EF Core-inspired ORM for Rust.
 
 - Connection pooling via `deadpool-postgres`
-- PostgreSQL-native parameterized queries (`$1`, `$2`, ...)
-- Double-quoted identifier quoting (`"table_name"`)
-- `RETURNING *` support for INSERT auto-increment backfill
-- `SERIAL` / `BIGSERIAL` type mapping for auto-increment columns
-- Full CRUD: `execute()`, `query()`, transactions
-- Database introspection (`information_schema.columns` + `table_constraints`)
+- Positional placeholders (`$1`, `$2`, …)
+- `RETURNING *` for auto-increment backfill (`SERIAL` / `BIGSERIAL`)
+- Native TLS support (`PgTlsMode`)
+- Schema introspection (`information_schema`)
 
----
-
-## Quick Start
+## Install
 
 ```toml
 [dependencies]
-lref = "0.1"
-lref-provider-postgres = "0.1"
+rust-ef = "2.1"
+rust-ef-postgres = "2.1"
+rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
 
-```rust
-use lref::provider::DatabaseProvider;
-use lref_provider_postgres::PostgresProvider;
-use std::sync::Arc;
+MSRV: **Rust 1.95**.
 
-let provider = Arc::new(PostgresProvider::new(
-    "postgres://user:password@localhost/mydb",
-    5,  // pool size
-)?);
-
-// Get a connection
-let mut conn = provider.get_connection().await?;
-
-// Execute parameterized query
-conn.execute("INSERT INTO blogs (url, rating) VALUES ($1, $2)", &[
-    DbValue::String("https://example.com".into()),
-    DbValue::I32(5),
-]).await?;
-
-// Query rows
-let rows = conn.query("SELECT * FROM blogs WHERE rating > $1", &[
-    DbValue::I32(3),
-]).await?;
-```
-
----
-
-## Type Mapping
-
-| Rust Type | PostgreSQL Type |
-|-----------|----------------|
-| `i16` | `SMALLINT` / `SMALLSERIAL` |
-| `i32` | `INTEGER` / `SERIAL` |
-| `i64` | `BIGINT` / `BIGSERIAL` |
-| `f32` | `REAL` |
-| `f64` | `DOUBLE PRECISION` |
-| `bool` | `BOOLEAN` |
-| `String` | `TEXT` / `VARCHAR(n)` |
-| `Vec<u8>` | `BYTEA` |
-
----
-
-## Database Introspection
+## Register with rust-dix
 
 ```rust
-use lref_provider_postgres::introspection::introspect_postgres;
+use rust_dix::*;
+use rust_ef::di::*;
+use rust_ef_postgres::DbContextOptionsBuilderExt as _;
 
-let tables = introspect_postgres(
-    "postgres://user:pass@localhost/mydb"
-).await?;
+let provider = ServiceCollection::new()
+    .add_dbcontext(|options| {
+        options.use_postgres("postgres://user:pass@localhost/app");
+    })
+    .build()
+    .unwrap();
 
-for table in &tables {
-    println!("Table: {}", table.name);
-    for col in &table.columns {
-        println!("  {}: {} (nullable={}, pk={})",
-            col.name, col.data_type, col.is_nullable, col.is_primary_key);
-    }
-}
+let mut ctx: rust_ef::db_context::DbContext = provider.get_owned().unwrap();
 ```
 
----
+## Options
 
-## SQL Dialect
+```rust
+// Pool size (0 = deadpool default)
+options.use_postgres_with_pool("postgres://user:pass@localhost/app", 20);
 
-- **Placeholders**: `$1`, `$2`, ... (positional)
-- **Identifiers**: `"table_name"` (double-quote)
-- **Pagination**: `OFFSET N LIMIT M`
-- **Auto-increment**: `SERIAL`
+// Delegate-based configuration
+options.use_postgres_with("postgres://user:pass@localhost/app", |pool| {
+    pool.pool_size(20);
+});
 
----
+// Explicit TLS mode
+options.use_postgres_with_tls("postgres://user:pass@localhost/app", 5, tls);
+```
+
+## Direct provider use (without DI)
+
+```rust
+use rust_ef_postgres::{PostgresProvider, introspection::introspect_postgres};
+
+let provider = PostgresProvider::new("postgres://user:pass@localhost/app", 5)?;
+let tables = introspect_postgres("postgres://user:pass@localhost/app").await?;
+```
+
+## SQL dialect
+
+| Aspect | PostgreSQL |
+|--------|-----------|
+| Placeholders | `$1`, `$2`, … |
+| Identifier quoting | `"table"` |
+| Pagination | `LIMIT n OFFSET m` |
+| Auto-increment | `SERIAL` / `BIGSERIAL` |
 
 ## License
 
-MIT  - ?see [LICENSE](../../LICENSE)
+MIT — see [LICENSE](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE).

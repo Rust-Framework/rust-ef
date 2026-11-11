@@ -1,71 +1,89 @@
-# lref-provider-mysql
+# rust-ef-mysql
 
-[![Crates.io](https://img.shields.io/crates/v/lref-provider-mysql)](https://crates.io/crates/lref-provider-mysql)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
+[![crates.io](https://img.shields.io/crates/v/rust-ef-mysql.svg)](https://crates.io/crates/rust-ef-mysql)
+[![docs.rs](https://docs.rs/rust-ef-mysql/badge.svg)](https://docs.rs/rust-ef-mysql)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE)
 
-MySQL database provider for [Rust Entity Framework (lref)](https://crates.io/crates/lref).
+MySQL provider for [`rust-ef`](https://crates.io/crates/rust-ef), an
+EF Core-inspired ORM for Rust.
 
-Implements `DatabaseProvider`, `SqlGenerator`, and `AsyncConnection` traits for MySQL using `sqlx` with async connection pooling.
-
----
-
-## Features
-
-- Connection pooling via `sqlx::MySqlPool`
-- MySQL-native parameterized queries (`?`)
-- Backtick identifier quoting (`` `table_name` ``)
+- `sqlx-mysql 0.9` connection pooling (no `sqlx` umbrella; see 2.0.1 security notes)
+- MySQL-native placeholders (`?`) and backtick identifier quoting
 - `AUTO_INCREMENT` column type
-- Full CRUD: `execute()`, `query()`, transactions (`START TRANSACTION` / `COMMIT` / `ROLLBACK`)
 - `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4` table creation
+- RSA (`caching_sha2_password`) and TLS authentication support
+- Schema introspection
 
----
-
-## Quick Start
+## Install
 
 ```toml
 [dependencies]
-lref = "0.1"
-lref-provider-mysql = "0.1"
+rust-ef = "2.1"
+rust-ef-mysql = "2.1"
+rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
 
+MSRV: **Rust 1.95**.
+
+## Register with rust-dix
+
 ```rust
-use lref::provider::DatabaseProvider;
-use lref_provider_mysql::MySqlProvider;
-use std::sync::Arc;
+use rust_dix::*;
+use rust_ef::di::*;
+use rust_ef_mysql::DbContextOptionsBuilderExt as _;
 
-let provider = Arc::new(MySqlProvider::new(
-    "mysql://user:password@localhost/mydb"
-).await?);
+let provider = ServiceCollection::new()
+    .add_dbcontext(|options| {
+        options.use_mysql("mysql://user:pass@localhost/app");
+    })
+    .build()
+    .unwrap();
 
-// Get a connection
-let mut conn = provider.get_connection().await?;
-
-// Execute parameterized query
-conn.execute(
-    "INSERT INTO blogs (url, rating) VALUES (?, ?)",
-    &[DbValue::String("https://example.com".into()), DbValue::I32(5)],
-).await?;
-
-// Query rows
-let rows = conn.query(
-    "SELECT * FROM blogs WHERE rating > ?",
-    &[DbValue::I32(3)],
-).await?;
+let mut ctx: rust_ef::db_context::DbContext = provider.get_owned().unwrap();
 ```
 
----
+## Options
 
-## SQL Dialect
+```rust
+// Delegate-based configuration
+options.use_mysql_with("mysql://user:pass@localhost/app", |o| {
+    o.max_pool_size(20);
+});
 
-- **Placeholders**: `?` (anonymous)
-- **Identifiers**: `` `table_name` `` (backtick)
-- **Pagination**: `LIMIT t OFFSET s`
-- **Auto-increment**: `AUTO_INCREMENT`
-- **Table creation**: `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+// Pool callback (sqlx-mysql 0.9 `MySqlPoolOptions`)
+options.use_mysql_with_pool(
+    "mysql://user:pass@localhost/app",
+    std::sync::Arc::new(|o| { o.max_connections(20); }),
+);
 
----
+// Explicit TLS mode
+options.use_mysql_with_tls("mysql://user:pass@localhost/app", MySqlTlsMode::Required);
+```
+
+> Requires `sqlx-mysql 0.9` if you build pools yourself. If you pass a pool built
+> with `sqlx 0.8` to `MySqlProvider::from_pool` / `use_mysql_with_pool`, align your
+> `sqlx` dependency to 0.9.
+
+## Direct provider use (without DI)
+
+```rust
+use rust_ef_mysql::{MySqlProvider, introspection::introspect_mysql};
+
+let provider = MySqlProvider::new("mysql://user:pass@localhost/app").await?;
+let tables = introspect_mysql("mysql://user:pass@localhost/app").await?;
+```
+
+## SQL dialect
+
+| Aspect | MySQL |
+|--------|-------|
+| Placeholders | `?` |
+| Identifier quoting | `` `table` `` |
+| Pagination | `LIMIT n OFFSET m` |
+| Auto-increment | `AUTO_INCREMENT` |
+| Tables | `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4` |
 
 ## License
 
-MIT  - ?see [LICENSE](../../LICENSE)
+MIT — see [LICENSE](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE).

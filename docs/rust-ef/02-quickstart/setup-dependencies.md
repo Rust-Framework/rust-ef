@@ -4,9 +4,9 @@
 
 ```toml
 [dependencies]
-rust-ef = "2.0"
-rust-ef-sqlite = "2.0"
-rust-dix = "0.7"
+rust-ef = "2.1"
+rust-ef-sqlite = "2.1"
+rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -37,8 +37,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 开发工具
 
 ```bash
-# CLI 工具（开发时依赖）
-cargo install rust-ef-cli
+# CLI 工具（2.x 未发布到 crates.io，从仓库构建）
+cargo install --path crates/cli
 
 # 常用命令
 rust-ef migration add InitialCreate --output ./Migrations

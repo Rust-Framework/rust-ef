@@ -26,22 +26,67 @@ jobs:
         run: cargo clippy --workspace --all-targets --features chrono,uuid,decimal -- -D warnings
       - name: Clippy (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Check single rust-dix version
+        run: |
+          set -euo pipefail
+          count="$(cargo tree -i rust-dix | grep -c '^rust-dix v')"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected exactly one rust-dix version, found $count"
+            cargo tree -i rust-dix
+            exit 1
+          fi
+      - name: Rustdoc (warnings as errors)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --no-deps --all-features
+
+  package:
+    name: Package (release artifacts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify publishable crate packaging metadata
+        run: |
+          set -euo pipefail
+          # Full `cargo package` for dependent crates needs their released
+          # dependencies on crates.io (only true after publication), so CI
+          # verifies the file lists plus a full package of the leaf crate.
+          cargo package -p rust-ef-macros
+          for name in rust-ef rust-ef-sqlite rust-ef-postgres rust-ef-mysql; do
+            echo "::group::Packaging $name"
+            cargo package -p "$name" --no-verify --list > "/tmp/$name.files"
+            grep -qx "README.md" "/tmp/$name.files" \
+              || { echo "::error::$name package is missing README.md"; exit 1; }
+            grep -qx "Cargo.toml" "/tmp/$name.files" \
+              || { echo "::error::$name package is missing Cargo.toml"; exit 1; }
+            echo "::endgroup::"
+          done
 
   security:
     name: Security audit
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - name: Generate lockfile
         run: cargo generate-lockfile
       - name: Audit dependencies
-        uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo audit
+
+  msrv:
+    name: MSRV (1.95)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Check workspace on MSRV
+        run: cargo check --workspace --all-targets --all-features
 
   test:
     name: Test (${{ matrix.db }})

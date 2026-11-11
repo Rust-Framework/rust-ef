@@ -306,7 +306,8 @@ let mut logs: DbContext = provider.get_keyed_owned("logs").unwrap();
 // primary 只管理 Blog（context_key = None）
 // logs 只管理 LogEntry（context_key = Some("logs")）
 
-// 共享解析（Arc<DbContext>，&self 访问）：
+// 共享解析（Arc<DbContext>，&self 访问；rust-dix 0.10 严格 scope 校验，需在 scope 内）：
+// let scope = provider.scope();
 // let primary: Arc<DbContext> = scope.get_keyed("primary");
 ```
 

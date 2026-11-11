@@ -3,7 +3,19 @@
 
 use crate::error::EFResult;
 use crate::provider::IDatabaseProvider;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+/// Future returned by an async `DbContext` preflight hook.
+pub type AsyncPreflightFuture = Pin<Box<dyn Future<Output = EFResult<()>> + Send>>;
+
+/// Async hook run during `build_async` after the provider (connection pool) has
+/// been created for an async `DbContext` registration.
+///
+/// Used by [`DbContextOptionsBuilder::async_preflight`] and
+/// `add_dbcontext_async*`; synchronous registrations ignore it.
+pub type AsyncPreflight = Arc<dyn Fn(Arc<DbContextOptions>) -> AsyncPreflightFuture + Send + Sync>;
 
 #[derive(Clone)]
 pub struct DbContextOptions {
@@ -31,6 +43,10 @@ pub struct DbContextOptions {
     /// filtering entities by `#[context(key)]`. Read/write replica contexts use
     /// the same schema and should set this.
     pub(crate) shared_entity_model: bool,
+    /// Optional async validation hook, executed during `build_async` for async
+    /// `DbContext` registrations after provider creation. Ignored by sync
+    /// registrations.
+    pub(crate) async_preflight: Option<AsyncPreflight>,
     /// Process-level cache of `discover_entities()` output, keyed by
     /// `context_key`. Shared across all `DbContext` instances created from
     /// the same `DbContextOptions` (which is `Arc`-shared per `add_dbcontext`
@@ -146,6 +162,7 @@ impl Default for DbContextOptions {
             lazy_loading_enabled: false,
             context_key: None,
             shared_entity_model: false,
+            async_preflight: None,
             metadata_cache: Arc::new(crate::metadata_cache::MetadataCache::new()),
             #[cfg(feature = "tracing")]
             slow_query_threshold: None,
@@ -224,6 +241,33 @@ impl DbContextOptionsBuilder {
     /// ```
     pub fn use_lazy_loading(&mut self, enabled: bool) -> &mut Self {
         self.inner.lazy_loading_enabled = enabled;
+        self
+    }
+
+    /// Registers an async preflight hook for async `DbContext` registrations.
+    ///
+    /// The hook runs inside `build_async().await` after the provider (connection
+    /// pool) has been created, and receives the fully built options. Returning
+    /// `Err` aborts startup with a typed `RdiError::FactoryPanic`; the hook is
+    /// ideal for an async `SELECT 1`/schema check.
+    ///
+    /// Ignored by synchronous `add_dbcontext*` registrations.
+    ///
+    /// ```rust,ignore
+    /// options.use_postgres("postgres://app/db").async_preflight(|options| {
+    ///     Box::pin(async move {
+    ///         let provider = options.create_provider()?;
+    ///         let mut conn = provider.get_connection().await?;
+    ///         conn.query("SELECT 1", &[]).await?;
+    ///         Ok(())
+    ///     })
+    /// });
+    /// ```
+    pub fn async_preflight(
+        &mut self,
+        preflight: impl Fn(Arc<DbContextOptions>) -> AsyncPreflightFuture + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.inner.async_preflight = Some(Arc::new(preflight));
         self
     }
 

@@ -16,9 +16,9 @@
 
 ```toml
 [dependencies]
-rust-ef = "2.0"
-rust-ef-sqlite = "2.0"
-rust-dix = "0.7"
+rust-ef = "2.1"
+rust-ef-sqlite = "2.1"
+rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -87,7 +87,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // 2. 以 owned DbContext 解析（&mut self 访问，无需锁）
-    //    rust-dix 0.6+：get_owned() 返回 Result<T, RdiError>
+    //    rust-dix 0.10：get_owned() 返回 Result<T, RdiError>，且允许从根 provider 解析
+    //    （实例归调用方所有，容器不缓存）。
     let mut ctx: DbContext = provider.get_owned()?;
 
     ctx.save_changes().await?;
@@ -122,8 +123,11 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let primary: Arc<DbContext> = provider.get_keyed("primary");
-let logs: Arc<DbContext> = provider.get_keyed("logs");
+// rust-dix 0.10：Scoped DbContext 不能从根 provider 共享解析，需先建 scope
+// （owned 解析仍可从根进行）。
+let scope = provider.scope();
+let primary: Arc<DbContext> = scope.get_keyed("primary").unwrap();
+let logs: Arc<DbContext> = scope.get_keyed("logs").unwrap();
 // primary 管理 Blog；logs 管理 LogEntry —— 通过 context_key 隔离
 ```
 
@@ -268,8 +272,9 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let read: Arc<DbContext> = provider.get_keyed("read");
-let write: Arc<DbContext> = provider.get_keyed("write");
+let scope = provider.scope();
+let read: Arc<DbContext> = scope.get_keyed("read").unwrap();
+let write: Arc<DbContext> = scope.get_keyed("write").unwrap();
 
 // SQLite 同一文件：写 context 用 use_sqlite_with("app.db", |o| { o.max_pool_size(1); })
 ```
@@ -293,9 +298,10 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// 每个请求都会创建一个 scope。处理器通过 get_owned() 拥有一个全新的 DbContext。
-// rust-dix 0.6+：get_owned() 返回 Result<T, RdiError>
-let mut ctx: DbContext = provider.get_owned().unwrap();
+// 每个请求都会创建一个 scope（rust-webx 按 HTTP 请求自动创建）。
+// rust-dix 0.10：从该 scope 解析 Scoped DbContext。
+let scope = provider.scope();
+let mut ctx: DbContext = scope.get_owned().unwrap();
 
 // 通过 DI 注入到处理器 —— 标注了 #[inject(owned)] 的裸 T 字段 → owned 解析
 #[derive(Inject)]
@@ -500,7 +506,7 @@ FromDbContextOptions (DI bridge)
 | 没有 `DbSet<Blog>` 结构体字段 | `DbContext` 使用 type-map；set 通过 `set::<T>()` 惰性创建 |
 | options 中的 `provider_factory` | 各 provider 扩展注入工厂闭包；core 保持解耦 |
 | `SetOps<T>` 分发器 | 类型擦除的 `save_changes()` 可遍历所有实体类型 |
-| 多数据库的 Keyed 注册 | `add_dbcontext_keyed` + `provider.get_keyed()` |
+| 多数据库的 Keyed 注册 | `add_dbcontext_keyed` + `scope.get_keyed()` / `get_keyed_owned()` |
 | 拦截器管道 | `options.add_interceptor(...)` 用于横切关注点 |
 
 ---
@@ -513,7 +519,7 @@ FromDbContextOptions (DI bridge)
 | **查询 Query** | `linq!` 表达式树、`filter` / `filter_column`、join、group_by、聚合、IN/NOT IN 子查询 |
 | **进阶查询 Advanced Query** | CTE（`linq!(with ...)` 语法糖）、窗口函数（10 种）、懒加载（可选） |
 | **持久化 Persistence** | `save_changes()`、参数化查询、事务、级联删除（v1.5.2） |
-| **DI 依赖注入** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`、`Arc<DbContext>`、多数据库 context key 隔离 |
+| **DI 依赖注入** | `add_dbcontext` / `add_dbcontext_keyed`（含类型化 `#[derive(DbContextKey)]`、`add_dbcontext_anykey`、异步变体）、`Arc<DbContext>`、多数据库 context key 隔离 |
 | **拦截 Interception** | `ISaveChangesInterceptor` —— on_saving/on_saved/on_save_failed 钩子 |
 | **迁移 Migrations** | 模型差异、Up/Down SQL、历史跟踪、`MigrationStore`、外键 ON DELETE 子句（v1.5.2） |
 | **CLI** | `rust-ef-cli`：`migration init/add/apply/revert/list/script`、`scaffold dbcontext` |
@@ -539,6 +545,10 @@ FromDbContextOptions (DI bridge)
 | `#[on_delete]` | `OnDelete(DeleteBehavior)` Fluent API（v1.5.2） |
 
 ---
+
+## 安全 / Security
+
+漏洞报告与支持版本见 [SECURITY.md](SECURITY.md)。
 
 ## 许可证 / License
 

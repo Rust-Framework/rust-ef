@@ -11,7 +11,9 @@ mod set_ops;
 
 pub(crate) use crate::cascade::resolve_delete_behavior;
 pub use context::DbContext;
-pub use options::{DbContextOptions, DbContextOptionsBuilder};
+pub use options::{
+    AsyncPreflight, AsyncPreflightFuture, DbContextOptions, DbContextOptionsBuilder,
+};
 pub use save_phases::{
     delete_deleted_phase, insert_added_phase, update_modified_phase, upsert_added_phase,
     SaveChangesResult,

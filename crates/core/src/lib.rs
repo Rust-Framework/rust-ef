@@ -23,6 +23,8 @@
 //! }
 //! ```
 
+#![forbid(unsafe_code)]
+
 pub mod cascade;
 pub mod change_executor;
 pub mod db_context;
@@ -52,15 +54,16 @@ pub use async_trait;
 
 pub use inventory;
 
-pub use rust_ef_macros::{column, entity, linq, EntityType};
+pub use rust_ef_macros::{column, entity, linq, DbContextKey, EntityType};
 
 /// Re-exports of the most commonly used types.
 pub mod prelude {
     pub use crate::db_context::{
-        DbContext, DbContextOptions, DbContextOptionsBuilder, SaveChangesResult,
+        AsyncPreflight, AsyncPreflightFuture, DbContext, DbContextOptions, DbContextOptionsBuilder,
+        SaveChangesResult,
     };
     pub use crate::db_set::{DbSet, IDbSet};
-    pub use crate::di::DbContextServiceCollectionExt;
+    pub use crate::di::{DbContextResolver, DbContextServiceCollectionExt, IDbContextKey};
     pub use crate::entity::{
         EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, ILazyInit,
         INavigationSetter,
@@ -90,5 +93,6 @@ pub mod prelude {
     pub use rust_ef_macros::column;
     pub use rust_ef_macros::entity;
     pub use rust_ef_macros::linq;
+    pub use rust_ef_macros::DbContextKey;
     pub use rust_ef_macros::EntityType;
 }

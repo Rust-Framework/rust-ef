@@ -1,211 +1,186 @@
-# lref — Core ORM Crate
+# rust-ef
 
-[![Crates.io](https://img.shields.io/crates/v/lref)](https://crates.io/crates/lref)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../../LICENSE)
+[![crates.io](https://img.shields.io/crates/v/rust-ef.svg)](https://crates.io/crates/rust-ef)
+[![docs.rs](https://docs.rs/rust-ef/badge.svg)](https://docs.rs/rust-ef)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE)
 
-EFCore-inspired ORM core: traits, query builder, change tracking, migration engine, DI integration.
+An **EF Core-inspired ORM for Rust** — `DbContext` / `DbSet<T>` / `IEntityType`,
+the `linq!` macro, change tracking, transactions, migrations, and multi-database
+support, with first-class [`rust-dix` 0.9](https://crates.io/crates/rust-dix)
+dependency-injection integration.
+
+Full handbook: <https://rf2026.github.io/rust-ef/>
 
 ---
 
-## Quick Example
+## Install
+
+```toml
+[dependencies]
+rust-ef = "2.1"
+rust-ef-sqlite = "2.1"          # one provider: sqlite / postgres / mysql
+rust-dix = "0.10"                # DI container
+tokio = { version = "1", features = ["full"] }
+```
+
+MSRV: **Rust 1.95**.
+
+## Define an entity
 
 ```rust
-use lref::prelude::*;
+use rust_ef::prelude::*;
 
 #[derive(Debug, Clone, EntityType)]
 #[table("blogs")]
 pub struct Blog {
-    #[primary_key] #[auto_increment] pub blog_id: i32,
-    #[required] #[max_length(200)] pub url: String,
+    #[primary_key]
+    #[auto_increment]
+    pub blog_id: i32,
+    #[required]
+    #[max_length(200)]
+    pub url: String,
     pub rating: i32,
-    #[navigation] pub posts: HasMany<Post>,
+    #[navigation]
+    pub posts: HasMany<Post>,
 }
+```
 
-// DI registration
+`#[derive(EntityType)]` registers the entity at compile time; `DbContext::from_options()`
+discovers it automatically — no manual `discover_entities()` call.
+
+## Register a `DbContext` (rust-dix 0.10)
+
+```rust
+use std::sync::Arc;
 use rust_dix::*;
-use lref::di::*;
-use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
+use rust_ef::di::*;
+use rust_ef::prelude::*;
+use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 let provider = ServiceCollection::new()
-    .add_dbcontext(|o| o.use_sqlite("app.db"))
-    .build().unwrap();
+    .add_dbcontext(|options| {
+        options.use_sqlite("data source=app.db");
+    })
+    .build()
+    .unwrap();
 
-let mut ctx: DbContext = provider.get_owned().unwrap();
-```
-
----
-
-## Module Map
-
-```
-lref/src/
-├── entity.rs       → IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
-├── metadata.rs     → EntityTypeMeta, PropertyMeta, NavigationMeta
-├── provider.rs     → IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
-├── db_context.rs   → DbContext, DbContextOptions
-├── db_set.rs       → IDbSet<T>, DbSet<T>
-├── query.rs        → IQueryable<T>, QueryBuilder<T>
-├── change_executor.rs → ChangeExecutor (INSERT/UPDATE/DELETE)
-├── model_builder.rs   → ModelBuilder, IEntityTypeConfiguration<T>
-├── tracking.rs     → ChangeTracker (property-level snapshots)
-├── relations.rs    → BelongsTo, HasMany, HasOne (no trait bounds)
-├── migration.rs    → MigrationEngine
-├── di.rs           → rust-dix integration (add_dbcontext / add_dbcontext_keyed)
-├── cache.rs        → DbCache (Identity Map)
-└── error.rs        → EFError, EFResult
-```
-
----
-
-## Core Traits
-
-### Entity
-
-```rust
-pub trait IEntityType: Send + Sync + 'static { fn entity_meta() -> EntityTypeMeta; }
-pub trait IFromRow: IEntityType + Sized { fn from_row(v: &[String]) -> EFResult<Self>; }
-pub trait IGetKeyValues: IEntityType { fn key_values(&self) -> HashMap<String, DbValue>; }
-pub trait IEntitySnapshot: IEntityType { fn snapshot(&self) -> HashMap<String, DbValue>; }
-```
-
-### Session (concrete context type)
-
-```rust
-pub struct DbContext {
-    // type-map set storage, no entity-specific fields
-}
-
-impl DbContext {
-    pub fn provider(&self) -> &dyn IDatabaseProvider;
-    pub fn change_tracker_mut(&mut self) -> &mut ChangeTracker;
-    pub fn change_tracker(&self) -> &ChangeTracker;
-    pub async fn save_changes(&mut self) -> EFResult<SaveChangesResult>;
-    pub async fn use_transaction<F, Fut, R>(&self, f: F) -> EFResult<R>;
-}
-```
-
-### Collection
-
-```rust
-pub trait IQueryable<T: IEntityType> { fn query(&self) -> QueryBuilder<T>; }
-
-pub trait IDbSet<T: IEntityType>: IQueryable<T> + Send + Sync {
-    fn add(&mut self, entity: T);
-    fn remove_all(&mut self);
-    fn added_entities(&self) -> Vec<&T>;
-    fn modified_entities(&self) -> Vec<&T>;
-    fn deleted_entities(&self) -> Vec<&T>;
-    fn clear_entries(&mut self);
-    fn len(&self) -> usize;
-    fn is_empty(&self) -> bool;
-}
-```
-
-### Provider
-
-```rust
-pub trait ISqlGenerator: Send + Sync { /* select, insert, update, delete, ... */ }
-
-#[async_trait]
-pub trait IAsyncConnection: Send + Sync {
-    async fn execute(&mut self, sql: &str, params: &[DbValue]) -> EFResult<u64>;
-    async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<String>>>;
-    async fn begin_transaction(&mut self) -> EFResult<()>;
-    async fn commit_transaction(&mut self) -> EFResult<()>;
-    async fn rollback_transaction(&mut self) -> EFResult<()>;
-}
-
-#[async_trait]
-pub trait IDatabaseProvider: Send + Sync {
-    fn sql_generator(&self) -> Box<dyn ISqlGenerator>;
-    async fn get_connection(&self) -> EFResult<Box<dyn IAsyncConnection>>;
-    async fn execute_migration_command(&self, sql: &str) -> EFResult<()>;
-    fn name(&self) -> &str;
-}
-```
-
----
-
-## DI Integration
-
-```rust
-use rust_dix::*;
-use lref::di::*;
-use lref_provider_sqlite::DbContextOptionsBuilderExt as _;
-
-let provider = ServiceCollection::new()
-    .add_dbcontext(|o| o.use_sqlite("app.db"))
-    .build().unwrap();
-
-// Owned (recommended): &mut self access, no locks
+// Owned resolution (recommended): &mut self access, no locks.
+// Allowed from the root provider: the instance is caller-owned and never cached.
 let mut ctx: DbContext = provider.get_owned().unwrap();
 
-// Shared (within a scope): Arc<DbContext>, &self only
-// use rust_dix::scope::ScopeFactory;
-// let scope = provider.create_scope();
-// let ctx: Arc<DbContext> = scope.get().unwrap();
+// Shared resolution: Arc<DbContext>, &self access, one instance per scope.
+// rust-dix 0.10 enables strict scope validation by default, so create a scope.
+let scope = provider.scope();
+let shared: Arc<DbContext> = scope.get().unwrap();
 ```
 
-**Provider factory**: `use_sqlite()` injects a closure into `DbContextOptions`. `DbContext::from_options()` calls it to create the provider — core stays fully decoupled.
+> Upgrading from rust-ef 2.0 / rust-dix 0.7? Root `get::<DbContext>()` now returns
+> `RdiError::ScopedFromRootProvider`. Use `provider.scope()` (or owned resolution).
+> For a temporary transition, build with
+> `ServiceCollection::build_with(ServiceProviderOptions::lenient())`.
+> See [CHANGELOG.md](https://github.com/Rust-Framework/rust-ef/blob/main/CHANGELOG.md).
 
----
+### More registration variants (2.1)
 
-## QueryBuilder API
+- **Typed keys**: `#[derive(DbContextKey)]` generates `IDbContextKey` and the
+  rust-dix 0.10 `From<Key> for ServiceKey` contract, so registration,
+  `DbContextResolver` and `#[inject(owned, key = Db::Read)]` all use the same
+  typed key.
+- **Dynamic tenant/sharded contexts**: `add_dbcontext_anykey(|key, options| ...)`
+  registers one fallback for any requested key, with bounded-LRU per-key
+  provider/pool caching (`add_dbcontext_anykey_with_capacity`).
+  Use the default entity model + query filters for isolation.
+- **Async startup**: `add_dbcontext_async` / `add_dbcontext_keyed_async` defer
+  provider creation to `build_async().await` and return typed `RdiError` failures;
+  an optional `options.async_preflight(...)` hook validates the pool asynchronously.
+  The `DbContext` stays a synchronous Scoped service, so owned injection is unchanged.
 
-All query operations go through the `linq!` macro — the string-based APIs (`include_named` / `order_by("col")` / `sum("col")` / `find_by_id` etc.) have been removed. The macro expands to `#[doc(hidden)]` `*_internal` methods at compile time.
+See the handbook DI chapter and `docs/v2.1-migration-guide.md`.
+
+## Query and save
 
 ```rust
-// Form A: filter closure (reusable BoolExpr or direct query)
-let expr = linq!(|b: Blog| b.rating > 5);
+let mut ctx: DbContext = provider.get_owned()?;
+
+ctx.set::<Blog>();
+ctx.ensure_created().await?;       // create tables (dev/test); migrations are preferred in production
+
+ctx.add::<Blog>(Blog {
+    blog_id: 0,
+    url: "https://example.com".into(),
+    rating: 5,
+    posts: HasMany::new(),
+});
+ctx.save_changes().await?;
+
+let expr = linq!(|b: Blog| b.rating >= 4);
 let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
-
-// Form B: multi-clause query (filter + clauses separated by `;`)
-let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.published;
-    include b.posts then b.comments;
-    order_by b.created_at desc;
-).to_list().await?;
-
-// Aggregates (terminals)
-let total: f64 = linq!(ctx.set::<Blog>(); sum b.views).await?;
-let top: i32 = linq!(ctx.set::<Blog>(); max b.rating).await?.unwrap_or(0);
-let n: i64 = linq!(ctx.set::<Blog>(); count).await?;
-
-// JOIN via multi-param closure
-let rows = linq!(ctx.set::<Blog>();
-    inner_join |a: Blog, b: Post| a.blog_id == b.blog_id
-).to_list().await?;
-
-// Bulk update
-let affected = linq!(ctx.set::<Blog>(), |b: Blog| b.rating < 0.1;
-    set b.published, false;
-    execute_update
-).await?;
-
-// Bulk delete
-let affected = linq!(ctx.set::<Blog>(), |b: Blog| b.rating < 1)
-    .execute_delete().await?;
-
-// Form C: value-producing (for ModelBuilder)
-builder.has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
-builder.has_index(linq!(index |b: Blog| (b.author_id, b.created_at)));
-builder.has_key(linq!(key |b: Blog| b.blog_id));
-
-// Terminals on QueryBuilder<T>
-ctx.set::<Blog>().query().find(1).await?            // Option<T> (PK metadata, no hardcoded "id")
-ctx.set::<Blog>().query().first().await?           // T (errors if empty)
-ctx.set::<Blog>().query().first_or_default().await?// Option<T>
-ctx.set::<Blog>().query().last().await?            // T (PK desc when no explicit order)
-ctx.set::<Blog>().query().last_or_default().await? // Option<T>
-ctx.set::<Blog>().query().single().await?          // T (errors if !=1)
-ctx.set::<Blog>().query().single_or_default().await? // Option<T> (errors if >1)
-ctx.set::<Blog>().query().count().await?           // i64
-ctx.set::<Blog>().query().long_count().await?     // i64 (alias)
-ctx.set::<Blog>().query().any().await?             // bool
-ctx.set::<Blog>().query().all(|b| b.published).await?  // bool (Rust-side predicate)
-ctx.set::<Blog>().query().contains(1).await?      // bool (PK existence)
-ctx.set::<Blog>().query().distinct().to_list().await?   // SELECT DISTINCT
 ```
+
+## Features
+
+| Area | Highlights |
+|------|-----------|
+| Entity mapping | `#[derive(EntityType)]`, 12+ field attributes, navigation types, compile-time registration |
+| Query | `linq!` expression trees, filter/join/group_by/aggregation, CTEs, window functions, lazy loading (opt-in) |
+| Persistence | `save_changes()`, parameterized SQL, transactions and savepoints, cascade delete, bulk `execute_update` / `execute_delete` |
+| Migrations | model diff, Up/Down SQL, migration history, FK `ON DELETE` |
+| DI | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_anykey` / async variants on rust-dix 0.10 (Scoped, owned + shared resolution, typed keys, dynamic contexts) |
+| Interceptors | before/after/failure hooks around `save_changes()` |
+| Observability | optional `tracing` spans and slow-query warnings |
+
+## Crate layout
+
+| Crate | Purpose |
+|-------|---------|
+| `rust-ef` | core: `DbContext`, `DbSet`, query builder, change tracking, migrations |
+| `rust-ef-macros` | `#[derive(EntityType)]`, `linq!`, `column!`, `#[entity]` |
+| `rust-ef-sqlite` / `rust-ef-postgres` / `rust-ef-mysql` | database providers |
+| `rust-ef-cli` | migration / scaffold CLI (not published) |
+
+The core is provider- and DI-agnostic: providers inject a factory into
+`DbContextOptions`, and `crates/core/src/di.rs` is the only rust-dix integration
+surface.
+
+## Core modules
+
+```
+entity.rs              IEntityType, IFromRow, IGetKeyValues, IEntitySnapshot
+metadata.rs            EntityTypeMeta, PropertyMeta, NavigationMeta
+registration.rs        compile-time entity / configuration registration (inventory)
+provider/              IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
+db_context/            DbContext, DbContextOptions, save pipeline
+db_set.rs              IDbSet<T>, DbSet<T>
+query/                 IQueryable<T>, QueryBuilder<T>, linq! internals
+change_executor/       INSERT / UPDATE / DELETE execution
+model_builder.rs       ModelBuilder, IEntityTypeConfiguration<T>
+tracking.rs            ChangeTracker (property-level snapshots)
+relations.rs           BelongsTo, HasMany, HasOne, DeleteBehavior
+navigation_loader.rs   eager loading (Include / ThenInclude)
+lazy.rs                opt-in lazy navigation loading
+cascade.rs             cascade save / delete
+transaction.rs         context-scoped transactions and savepoints
+interceptor.rs         ISaveChangesInterceptor pipeline
+migration/             MigrationEngine, diffing, history
+di.rs                  rust-dix 0.10 integration
+```
+
+## Cargo features
+
+| Feature | Enables |
+|---------|---------|
+| `serde` | Serde impls for `DbValue` |
+| `chrono` | `DateTime<Utc>` / `NaiveDateTime` / `NaiveDate` mapping |
+| `uuid` | `uuid::Uuid` mapping |
+| `decimal` | `rust_decimal::Decimal` mapping |
+| `tracing` | query spans and slow-query warnings |
+
+## Documentation
+
+- Handbook: <https://rf2026.github.io/rust-ef/>
+- API docs: <https://docs.rs/rust-ef>
+- Examples: [`examples/blog`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/blog), [`examples/soft_delete`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/soft_delete), [`examples/audit`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/audit)
 
 ## License
 
-MIT
+MIT — see [LICENSE](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE).

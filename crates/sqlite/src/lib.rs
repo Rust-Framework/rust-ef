@@ -1,5 +1,7 @@
 //! SQLite provider for Rust Entity Framework.
 
+#![forbid(unsafe_code)]
+
 pub mod connection;
 pub mod di_extension;
 pub mod pool_strategy;

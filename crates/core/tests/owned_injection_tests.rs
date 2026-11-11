@@ -77,7 +77,7 @@ impl SharedContextHandler {
 }
 
 fn build_provider() -> Arc<ServiceProvider> {
-    // rust-dix 0.6+: `build()` returns `Arc<ServiceProvider>` directly.
+    // rust-dix 0.8+: `build()` returns `Arc<ServiceProvider>` directly.
     ServiceCollection::from_injected()
         .add_dbcontext(|o| {
             o.use_sqlite_in_memory();
@@ -122,20 +122,41 @@ async fn owned_handler_gets_fresh_instance_each_call() {
 #[tokio::test]
 async fn shared_handler_uses_arc_resolution() {
     // Arc<DbContext> field → #[inject] uses get() (shared Arc).
-    // Arc<DbContext> only supports &self methods (e.g. ensure_created).
+    // Under rust-dix 0.8+ strict scope validation the shared context and the
+    // handler that injects it must both be resolved from a scope — the root
+    // provider rejects Scoped resolution. Arc<DbContext> only supports &self
+    // methods (e.g. ensure_created).
     let provider = build_provider();
 
-    // Need to register the DbSet first via an owned context
+    // Need to register the DbSet first via an owned context.
+    let scope = provider.scope();
     {
-        let mut ctx: DbContext = provider.get_owned().expect("get_owned ctx");
+        let mut ctx: DbContext = scope.get_owned().expect("get_owned ctx");
         ctx.set::<Widget>();
     }
 
-    let handler: SharedContextHandler = provider.get_owned().expect("get_owned handler");
+    let handler: SharedContextHandler = scope.get_owned().expect("get_owned handler");
     let result = handler.ensure_schema().await;
     assert!(
         result.is_ok(),
         "shared handler must work with &self methods"
+    );
+}
+
+#[tokio::test]
+async fn shared_handler_from_root_is_rejected() {
+    // A handler whose constructor injects a shared Arc<DbContext> cannot be
+    // resolved from the root provider under strict scope validation, even
+    // though the handler itself is resolved owned. This is the handler-graph
+    // manifestation of `ScopedFromRootProvider`.
+    let provider = build_provider();
+    let err = match provider.get_owned::<SharedContextHandler>() {
+        Ok(_) => panic!("root resolution of a Scoped-injecting handler must fail"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, rust_dix::RdiError::ScopedFromRootProvider { .. }),
+        "expected ScopedFromRootProvider, got {err:?}"
     );
 }
 

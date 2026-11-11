@@ -32,15 +32,18 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// 推荐：owned 解析，直接 &mut self 访问
-// rust-dix 0.6+: get_owned() 返回 Result<T, RdiError>
+// 推荐：owned 解析，直接 &mut self 访问（调用方持有，不进容器缓存）
+// rust-dix 0.10: get_owned() 返回 Result<T, RdiError>
 let mut ctx: DbContext = provider.get_owned().unwrap();
 
 // 或：共享解析（Arc<DbContext>，&self 访问，同一 scope 内共享）
-// use rust_dix::scope::ScopeFactory;
-// let scope = provider.create_scope();
+// rust-dix 0.10: Scoped 服务从根解析会被严格 scope 校验拒绝，需先建 scope
+// let scope = provider.scope();
 // let ctx: Arc<DbContext> = scope.get().unwrap();
 ```
+
+> `DbContext` 是 Scoped 生命周期。`rust-dix 0.10` 默认严格 scope 校验：根 `provider.get::<DbContext>()`
+> 返回 `ScopedFromRootProvider`；`get_owned()` / `get_keyed_owned()` 仍可从根解析（调用方持有）。
 
 ## 多数据库 Keyed 注册
 
@@ -55,13 +58,20 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// Owned 解析（推荐）：
+// Owned 解析（推荐，可从根解析）：
 let mut primary: DbContext = provider.get_keyed_owned("primary").unwrap();
 let mut logs: DbContext = provider.get_keyed_owned("logs").unwrap();
 
-// 共享解析：
-// let primary: Arc<DbContext> = scope.get_keyed("primary");
+// 共享解析（必须在 scope 内）：
+// let scope = provider.scope();
+// let primary: Arc<DbContext> = scope.get_keyed("primary").unwrap();
 ```
+
+## 从 rust-dix 0.7 迁移
+
+0.7 的根 provider 会把 Scoped 服务缓存为根级单例。迁移期如仍需旧行为，可用
+`build_with(ServiceProviderOptions::lenient())`；长期请改用 `provider.scope()` + `get_owned()`。
+详见 [rust-dix 集成与注册模式](../10-di-interceptors/di-registration.md)。
 
 ## 关键点
 

@@ -16,9 +16,9 @@ An **EFCore-inspired ORM for Rust** — `DbContext` / `DbSet<T>` / `IEntityType`
 
 ```toml
 [dependencies]
-rust-ef = "2.0"
-rust-ef-sqlite = "2.0"
-rust-dix = "0.7"
+rust-ef = "2.1"
+rust-ef-sqlite = "2.1"
+rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -87,7 +87,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // 2. Resolve as owned DbContext (&mut self access, no locks)
-    //    rust-dix 0.6+: get_owned() returns Result<T, RdiError>
+    //    rust-dix 0.10: get_owned() returns Result<T, RdiError> and is allowed
+    //    from the root provider (caller-owned, never cached).
     let mut ctx: DbContext = provider.get_owned()?;
 
     ctx.save_changes().await?;
@@ -122,8 +123,11 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let primary: Arc<DbContext> = provider.get_keyed("primary");
-let logs: Arc<DbContext> = provider.get_keyed("logs");
+// rust-dix 0.10: Scoped DbContext is not resolvable from the root provider;
+// shared resolution requires a scope (owned resolution works from the root).
+let scope = provider.scope();
+let primary: Arc<DbContext> = scope.get_keyed("primary").unwrap();
+let logs: Arc<DbContext> = scope.get_keyed("logs").unwrap();
 // primary manages Blog; logs manages LogEntry — isolated by context_key
 ```
 
@@ -268,8 +272,9 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-let read: Arc<DbContext> = provider.get_keyed("read");
-let write: Arc<DbContext> = provider.get_keyed("write");
+let scope = provider.scope();
+let read: Arc<DbContext> = scope.get_keyed("read").unwrap();
+let write: Arc<DbContext> = scope.get_keyed("write").unwrap();
 
 // SQLite on one file: write context uses use_sqlite_with("app.db", |o| { o.max_pool_size(1); }).
 ```
@@ -294,9 +299,10 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// Each request creates a scope. Handlers own a fresh DbContext via get_owned().
-// rust-dix 0.6+: get_owned() returns Result<T, RdiError>
-let mut ctx: DbContext = provider.get_owned().unwrap();
+// Each request creates a scope (`rust-webx` does this automatically per HTTP request).
+// rust-dix 0.10: resolve the Scoped DbContext from that scope.
+let scope = provider.scope();
+let mut ctx: DbContext = scope.get_owned().unwrap();
 
 // Inject into handlers via DI — bare T field marked #[inject(owned)] → owned resolution
 #[derive(Inject)]
@@ -501,7 +507,7 @@ FromDbContextOptions (DI bridge)
 | No `DbSet<Blog>` struct fields | `DbContext` uses type-map; sets lazy-created via `set::<T>()` |
 | `provider_factory` in options | Provider extensions inject factory closures; core stays decoupled |
 | `SetOps<T>` dispatchers | Type-erased `save_changes()` iterates all entity types |
-| Keyed registration for multi-DB | `add_dbcontext_keyed` + `provider.get_keyed()` |
+| Keyed registration for multi-DB | `add_dbcontext_keyed` + `scope.get_keyed()` / `get_keyed_owned()` |
 | Interceptor pipeline | `options.add_interceptor(...)` for cross-cutting concerns |
 
 ---
@@ -514,7 +520,7 @@ FromDbContextOptions (DI bridge)
 | **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation, IN/NOT IN subqueries |
 | **Advanced Query** | CTE (`linq!(with ...)` syntax sugar), Window functions (10 kinds), Lazy Loading (opt-in) |
 | **Persistence** | `save_changes()`, parameterized queries, transactions, cascade delete (v1.5.2) |
-| **DI** | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_from_options`, `Arc<DbContext>`, multi-DB context key isolation |
+| **DI** | `add_dbcontext` / `add_dbcontext_keyed` (+ typed `#[derive(DbContextKey)]`, `add_dbcontext_anykey`, async variants), `Arc<DbContext>`, multi-DB context key isolation |
 | **Interception** | `ISaveChangesInterceptor` — on_saving/on_saved/on_save_failed hooks |
 | **Migrations** | Model diff, Up/Down SQL, history tracking, `MigrationStore`, FK ON DELETE clauses (v1.5.2) |
 | **CLI** | `rust-ef-cli`: `migration init/add/apply/revert/list/script`, `scaffold dbcontext` |
@@ -540,6 +546,10 @@ FromDbContextOptions (DI bridge)
 | `#[on_delete]` | `OnDelete(DeleteBehavior)` Fluent API (v1.5.2) |
 
 ---
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and supported versions.
 
 ## License
 

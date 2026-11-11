@@ -1,6 +1,9 @@
 //! Procedural macros for Rust Entity Framework (rust-ef).
 
+#![forbid(unsafe_code)]
+
 mod column_macro;
+mod db_context_key;
 mod entity;
 mod entity_config;
 mod linq;
@@ -35,6 +38,31 @@ pub fn derive_entity_type(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn column(input: TokenStream) -> TokenStream {
     column_macro::expand_column(input)
+}
+
+/// Derive a typed keyed-`DbContext` key.
+///
+/// The enum's variants become `IDbContextKey::name()` values (snake-case by
+/// default, overridable with `#[key("...")]`) and the type implements
+/// `From<Key> for rust_dix::ServiceKey`. This makes
+/// `#[inject(owned, key = Key::Read)]` and `add_dbcontext_keyed(Key::Read, ...)`
+/// share the same typed key.
+///
+/// ```ignore
+/// #[derive(DbContextKey, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// enum Db {
+///     Read,
+///     Write,
+///     #[key("audit-log")]
+///     Audit,
+/// }
+/// ```
+///
+/// The enum must derive `Debug + Clone + Copy + PartialEq + Eq + Hash` (the
+/// bounds required by `rust_dix::ServiceKey::new`).
+#[proc_macro_derive(DbContextKey, attributes(key))]
+pub fn derive_db_context_key(input: TokenStream) -> TokenStream {
+    db_context_key::expand(syn::parse_macro_input!(input as syn::DeriveInput)).into()
 }
 
 /// Compile-time LINQ-to-SQL.

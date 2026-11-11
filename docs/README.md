@@ -40,7 +40,11 @@ docs/
 
 - [v1.5 语义化版本迁移指南](v1.5-semver-migration-guide.md)
 - [v1.8 迁移指南](v1.8-migration-guide.md)
+- [v2.1 迁移指南（rust-dix 0.10 / 类型化 key / AnyKey / 异步）](v2.1-migration-guide.md)
+- [rust-dix 0.10 能力评估与采纳矩阵](rust-dix-0.10-adoption.md)
 
 ## 维护
 
 编辑 `docs/rust-ef/` 下的 Markdown 即可；Docbit 启动时会自动确保 `INDEX.json` 存在。
+
+发布流程见 [发布清单](RELEASE.md)。
