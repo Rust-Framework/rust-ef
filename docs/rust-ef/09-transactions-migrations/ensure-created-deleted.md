@@ -15,6 +15,8 @@ ctx.ensure_created().await?;
 
 同时会执行 `has_data` 注册的种子数据插入。
 
+`ensure_created` 生成 `CREATE TABLE`（含列默认值、注释、计算列、CHECK 约束、MySQL 表选项），但**不生成独立的索引与外键**（与 SQLite 内联外键一样只出现在迁移脚本中）；`to_view` / `#[table(..., view)]` 映射的视图不参与建表。需要完整的 `UNIQUE` / 复合索引 / 外键约束时，使用 `MigrationEngine::generate` + `apply`。
+
 ## EnsureDeleted
 
 删除所有已注册实体对应的表：

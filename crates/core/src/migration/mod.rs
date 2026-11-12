@@ -6,6 +6,7 @@
 //!   - Generate Up/Down SQL with dialect-specific type mappings
 //!   - Maintain `__ef_migrations_history` tracking table
 
+mod ddl_expr;
 mod dialect;
 mod diff;
 mod engine;
@@ -13,14 +14,19 @@ mod engine_ops;
 mod engine_sql;
 mod history;
 mod schema_change;
+mod snapshot;
 mod snapshot_io;
 mod types;
 
 pub use dialect::MigrationDialect;
 pub use engine::MigrationEngine;
 pub use history::{
-    create_migration_history_table_sql, MigrationHistoryEntry, MigrationStore,
-    MIGRATION_HISTORY_TABLE, PRODUCT_VERSION,
+    create_migration_history_table_sql, validate_migration_id, MigrationHistoryEntry,
+    MigrationStore, MIGRATION_HISTORY_TABLE, PRODUCT_VERSION,
 };
+pub use snapshot::{build_registered_snapshot, save_registered_snapshot, write_snapshot};
 pub use snapshot_io::parse_model_snapshot_json;
-pub use types::{Migration, ModelSnapshot, SnapshotColumn, SnapshotEntityType};
+pub use types::{
+    Migration, ModelSnapshot, SnapshotCheck, SnapshotColumn, SnapshotEntityType,
+    SnapshotForeignKey, SnapshotIndex, SnapshotIndexColumn, SnapshotTableOptions,
+};

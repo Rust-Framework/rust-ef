@@ -1,6 +1,6 @@
-# CTE 与 Window 函数（v1.1）
+# CTE 与 Window 函数
 
-v1.1.0 引入了对 **CTE（Common Table Expressions）** 和 **Window 函数** 的支持，通过 `linq!` 宏提供类型安全的语法糖，同时保留 raw SQL 模式以应对复杂场景。
+**CTE（Common Table Expressions）** 和 **Window 函数** 通过 `linq!` 宏提供类型安全的语法糖；无法表达时退回参数化原始 SQL。
 
 ## CTE 语法糖（推荐）
 
@@ -159,7 +159,7 @@ let rows = linq!(
 
 ## IN / NOT IN 子查询
 
-v1.1.0 同时支持 `IN` / `NOT IN` 标量子查询，通过 `in_subquery` 语法表达：
+`IN` / `NOT IN` 标量子查询通过 `in_subquery` 语法表达：
 
 ```rust
 // 查询有文章的 Blog

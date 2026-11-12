@@ -16,7 +16,8 @@
 - [ ] 分页查询是否先过滤再 `skip`/`take`？
 - [ ] 导航属性使用前是否用 `linq!(...; include b.x)` 预加载？
 - [ ] 形式 B 的 source 是否含 turbofish `::<Type>`（不能用裸变量）？
-- [ ] 是否已移除所有字符串 API（`include_named`/`order_by("col")`/`sum("col")`/`find_by_id` 等）？
+- [ ] 是否避免了字符串 API（`include_named`/`order_by("col")`/`sum("col")`/`find_by_id` 等）？
+- [ ] 动态条件是否直接链式 `filter(linq!(...))`，没有为列表新建 `XxxFilter` 结构？（只有条件极度复杂且多处复用时才抽私有函数）
 
 ## 变更层
 

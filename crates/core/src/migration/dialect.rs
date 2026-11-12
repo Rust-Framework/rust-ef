@@ -12,10 +12,13 @@ pub enum MigrationDialect {
 
 impl MigrationDialect {
     /// Quote an identifier according to dialect rules.
+    ///
+    /// Dotted identifiers are treated as `schema.table` and each part is quoted
+    /// separately (e.g. `"audit"."logs"` / `` `audit`.`logs` ``).
     pub fn quote(&self, ident: &str) -> String {
         match self {
-            MigrationDialect::Postgres | MigrationDialect::Sqlite => format!("\"{}\"", ident),
-            MigrationDialect::MySql => format!("`{}`", ident),
+            MigrationDialect::Postgres | MigrationDialect::Sqlite => quote_qualified(ident, '"'),
+            MigrationDialect::MySql => quote_qualified(ident, '`'),
         }
     }
 
@@ -24,7 +27,19 @@ impl MigrationDialect {
         // type_name comes from std::any::type_name::<T>() which returns
         // fully-qualified paths (e.g. "alloc::string::String"). Use ends_with
         // / contains matching to handle both simple and qualified names.
-        let tn = col.type_name.as_str();
+        //
+        // Explicit `HasColumnType` wins verbatim (user is responsible for dialect
+        // portability).
+        if let Some(explicit) = &col.column_type {
+            if !explicit.trim().is_empty() {
+                return explicit.trim().to_string();
+            }
+        }
+
+        // `Option<T>` is unwrapped to its inner type so nullable columns keep
+        // their inner mapping (e.g. `Option<String>` + max_length → VARCHAR(n)
+        // instead of TEXT, which is not indexable on MySQL).
+        let tn = inner_type_name(&col.type_name);
 
         // Auto-increment handling (must be checked before plain i32/i64)
         if col.is_auto_increment {
@@ -76,6 +91,11 @@ impl MigrationDialect {
         } else if tn.ends_with("bool") {
             "BOOLEAN"
         } else if tn.ends_with("String") {
+            if col.is_fixed_length {
+                // Fixed-length string (`CHAR(n)`); a length is required by
+                // MySQL. `max_length` normally supplies it.
+                return format!("CHAR({})", col.max_length.unwrap_or(1));
+            }
             return match col.max_length {
                 Some(n) => format!("VARCHAR({})", n),
                 None => "TEXT".into(),
@@ -86,10 +106,12 @@ impl MigrationDialect {
                 MigrationDialect::MySql | MigrationDialect::Sqlite => "BLOB".into(),
             };
         } else if tn.contains("NaiveDateTime") {
-            return match self {
-                MigrationDialect::Postgres => "TIMESTAMP".into(),
-                MigrationDialect::MySql => "DATETIME".into(),
-                MigrationDialect::Sqlite => "TEXT".into(),
+            return match (self, col.precision) {
+                (MigrationDialect::Postgres, Some(p)) => format!("TIMESTAMP({p})"),
+                (MigrationDialect::MySql, Some(p)) => format!("DATETIME({p})"),
+                (MigrationDialect::Postgres, None) => "TIMESTAMP".into(),
+                (MigrationDialect::MySql, None) => "DATETIME".into(),
+                (MigrationDialect::Sqlite, _) => "TEXT".into(),
             };
         } else if tn.contains("NaiveDate") {
             return match self {
@@ -99,10 +121,12 @@ impl MigrationDialect {
             };
         } else if tn.contains("DateTime") {
             // chrono::DateTime<Utc> → TIMESTAMPTZ (PG) / DATETIME (MySQL) / TEXT (SQLite)
-            return match self {
-                MigrationDialect::Postgres => "TIMESTAMPTZ".into(),
-                MigrationDialect::MySql => "DATETIME".into(),
-                MigrationDialect::Sqlite => "TEXT".into(),
+            return match (self, col.precision) {
+                (MigrationDialect::Postgres, Some(p)) => format!("TIMESTAMPTZ({p})"),
+                (MigrationDialect::MySql, Some(p)) => format!("DATETIME({p})"),
+                (MigrationDialect::Postgres, None) => "TIMESTAMPTZ".into(),
+                (MigrationDialect::MySql, None) => "DATETIME".into(),
+                (MigrationDialect::Sqlite, _) => "TEXT".into(),
             };
         } else if tn.contains("Uuid") {
             return match self {
@@ -111,14 +135,80 @@ impl MigrationDialect {
                 MigrationDialect::Sqlite => "TEXT".into(),
             };
         } else if tn.contains("Decimal") {
+            let (p, s) = (col.precision.unwrap_or(38), col.scale.unwrap_or(18));
             return match self {
-                MigrationDialect::Postgres => "NUMERIC".into(),
-                MigrationDialect::MySql => "DECIMAL(38,18)".into(),
+                MigrationDialect::Postgres => {
+                    if col.precision.is_some() {
+                        format!("NUMERIC({p},{s})")
+                    } else {
+                        "NUMERIC".into()
+                    }
+                }
+                MigrationDialect::MySql => format!("DECIMAL({p},{s})"),
                 MigrationDialect::Sqlite => "TEXT".into(),
             };
         } else {
             "TEXT"
         };
         base.to_string()
+    }
+}
+
+/// Quotes a possibly dotted identifier (`schema.table`) part by part.
+pub(crate) fn quote_qualified(ident: &str, quote: char) -> String {
+    ident
+        .split('.')
+        .map(|part| format!("{quote}{part}{quote}"))
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// Returns the inner type name for `Option<T>`, or the input unchanged.
+///
+/// Handles both `Option<T>` and fully-qualified
+/// `core::option::Option<T>` / `std::option::Option<T>` spellings produced by
+/// `std::any::type_name`.
+fn inner_type_name(type_name: &str) -> &str {
+    if let Some(pos) = type_name.find("Option<") {
+        let rest = &type_name[pos + "Option<".len()..];
+        return rest.strip_suffix('>').unwrap_or(rest);
+    }
+    type_name
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn option_string_uses_inner_type_and_max_length() {
+        let col = SnapshotColumn {
+            type_name: "core::option::Option<alloc::string::String>".into(),
+            max_length: Some(32),
+            ..Default::default()
+        };
+        assert_eq!(MigrationDialect::MySql.map_column_type(&col), "VARCHAR(32)");
+        assert_eq!(
+            MigrationDialect::Postgres.map_column_type(&col),
+            "VARCHAR(32)"
+        );
+    }
+
+    #[test]
+    fn option_uuid_and_decimal_use_inner_type() {
+        let uuid = SnapshotColumn {
+            type_name: "core::option::Option<uuid::Uuid>".into(),
+            ..Default::default()
+        };
+        assert_eq!(MigrationDialect::MySql.map_column_type(&uuid), "CHAR(36)");
+
+        let decimal = SnapshotColumn {
+            type_name: "core::option::Option<rust_decimal::Decimal>".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            MigrationDialect::MySql.map_column_type(&decimal),
+            "DECIMAL(38,18)"
+        );
     }
 }

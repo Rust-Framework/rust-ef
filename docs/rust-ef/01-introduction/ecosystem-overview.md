@@ -42,7 +42,7 @@ tokio = { version = "1", features = ["full"] }
 > CLI（`rust-ef-cli`）2.x 未发布到 crates.io，需要从仓库构建：
 > `cargo install --path crates/cli`。
 
-## 可选 Feature（v0.5 已实现）
+## 可选 Feature
 
 | Feature | 说明 | 依赖 |
 |---------|------|------|

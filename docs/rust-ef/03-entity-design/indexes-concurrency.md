@@ -20,6 +20,64 @@ pub struct Article {
 
 当前版本的 `#[index]` 和 `#[unique]` 主要影响 **MigrationEngine 生成的 DDL**。查询执行时不会自动使用索引——这由数据库优化器决定。
 
+## 复合索引、唯一索引、部分索引与表达式索引
+
+单列 `#[index]` / `#[unique]` 之外，可在 `#[entity(T)]` 配置里声明完整的索引：
+
+```rust
+#[derive(Default)]
+pub struct OrderConfig;
+
+#[entity(Order)]
+impl IEntityTypeConfiguration<Order> for OrderConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, Order>) {
+        // 复合唯一约束：UNIQUE(tenant_id, request_key)
+        entity
+            .has_index(&[Order::COLUMN_TENANT_ID, Order::COLUMN_REQUEST_KEY])
+            .is_unique();
+
+        // 多列普通索引 + 显式名字
+        entity
+            .has_index(&[Order::COLUMN_TENANT_ID, Order::COLUMN_STATUS])
+            .has_name("ix_orders_tenant_status");
+
+        // 部分唯一索引（PostgreSQL / SQLite：... WHERE status = 'PENDING'）
+        entity
+            .has_index(&[Invite::COLUMN_TENANT_ID, Invite::COLUMN_CODE])
+            .is_unique()
+            .has_filter(linq!(filter |i: Invite| i.status == "PENDING"));
+
+        // 表达式/函数索引：UNIQUE (coalesce(tenant_id, 0))
+        entity
+            .has_index_expression(&["coalesce(tenant_id, 0)"])
+            .is_unique()
+            .has_name("ux_orders_coalesce_tenant");
+    }
+}
+```
+
+语义与方言差异：
+
+| API | 生成 SQL | 说明 |
+|-----|----------|------|
+| `.has_index(&[a, b])` | `CREATE [UNIQUE] INDEX ... (a, b)` | 一个复合索引（不再退化为两个单列索引）；默认名 `ix_<table>_<cols>`，可用 `.has_name(...)` 覆盖 |
+| `.has_filter(predicate)` | PG/SQLite：`... WHERE <predicate>` | PostgreSQL / SQLite 原生部分索引 |
+| `.has_filter(predicate)` + `.is_unique()`（MySQL） | `CREATE UNIQUE INDEX ... ((CASE WHEN <predicate> THEN col END), ...)` | MySQL 没有部分索引，用函数索引模拟：不匹配的行键为 NULL，UNIQUE 不比较 NULL |
+| `.has_filter(predicate)`（MySQL，非唯一） | `-- WARNING ... skipped` 注释 | MySQL 无法模拟部分普通索引，跳过而不是生成错误 SQL |
+| `.has_index_expression(&["coalesce(...)"])` | `CREATE INDEX ... ((coalesce(...)))` | 表达式按原样输出（方言敏感）：请使用可移植的小写 SQL |
+| `.include(&[cols])` | PostgreSQL：`... INCLUDE (cols)` | MySQL/SQLite 不支持 INCLUDE，输出 warning 并只建键列索引 |
+| `entity.has_alternate_key(&[cols])` | `CREATE UNIQUE INDEX ak_<table>_<cols>` | 等价 EF Core `HasAlternateKey`，可作为外键引用目标 |
+
+> 部分索引的谓词来自 `linq!(filter |x: T| ...)`，值在 DDL 中会渲染成字面量；只支持简单比较与 `AND`/`OR`/`NOT`（子查询在部分索引谓词中没有实用价值）。
+
+## 表级存储选项（MySQL）
+
+```rust
+entity.engine("InnoDB").charset("utf8mb4").collate("utf8mb4_bin");
+```
+
+MySQL 生成 `) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`；即使不配置也会显式输出 `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`，避免继承实例默认（如 latin1）。PostgreSQL / SQLite 忽略这些选项。
+
 ## 并发标记
 
 ```rust
@@ -42,7 +100,7 @@ pub struct Inventory {
 UPDATE inventories SET quantity = ? WHERE product_id = ? AND row_version = ?
 ```
 
-> ⚠️ v0.3 中乐观并发控制元数据已就绪，但完整的冲突检测（`rows_affected == 0` 时返回 `ConcurrencyConflict`）正在完善中。生产环境使用请先验证。
+`rows_affected == 0` 时返回 `EFError::ConcurrencyConflict`；冲突处理策略由调用方决定（不要静默覆盖重试）。
 
 ## 设计要点
 

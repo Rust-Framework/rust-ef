@@ -155,7 +155,11 @@ impl ISqlGenerator for SqliteSqlGenerator {
     }
 
     fn quote_identifier(&self, identifier: &str) -> String {
-        format!("\"{}\"", identifier)
+        identifier
+            .split('.')
+            .map(|part| format!("\"{part}\""))
+            .collect::<Vec<_>>()
+            .join(".")
     }
 
     fn auto_increment_syntax(&self) -> &'static str {

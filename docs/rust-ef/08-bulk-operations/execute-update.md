@@ -1,6 +1,6 @@
 # 批量更新 ExecuteUpdate
 
-当需要按条件更新大量记录时，`ExecuteUpdate` 直接在数据库端执行 UPDATE，无需先加载实体到内存。通过 `linq!` 宏的 `set` + `execute_update` 子句表达。字符串 API（`set_column("col", val)`）已移除。
+当需要按条件更新大量记录时，`ExecuteUpdate` 直接在数据库端执行 UPDATE，无需先加载实体到内存。通过 `linq!` 宏的 `set` + `execute_update` 子句表达；不要使用字符串列名 API（`set_column("col", val)`）。
 
 ## 基本用法
 

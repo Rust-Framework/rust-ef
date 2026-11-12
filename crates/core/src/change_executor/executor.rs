@@ -38,7 +38,7 @@ impl ChangeExecutor {
         }
         let gen = provider.sql_generator();
         let meta = entities[0].1;
-        let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+        let scalar_props: Vec<_> = meta.writable_scalar_properties().collect();
         if scalar_props.is_empty() {
             return Ok(0);
         }
@@ -161,7 +161,7 @@ impl ChangeExecutor {
         }
         let gen = provider.sql_generator();
         let meta = entities[0].1;
-        let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+        let scalar_props: Vec<_> = meta.writable_scalar_properties().collect();
         if scalar_props.is_empty() {
             return Ok(0);
         }

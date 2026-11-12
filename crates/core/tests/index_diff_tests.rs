@@ -25,6 +25,15 @@ fn make_prop(name: &str, type_name: &str, has_index: bool, is_unique: bool) -> P
         max_length: None,
         is_unique,
         has_index,
+        column_type: None,
+        precision: None,
+        scale: None,
+        is_fixed_length: false,
+        collation: None,
+        comment: None,
+        computed_sql: None,
+        computed_stored: false,
+        default_value: None,
         is_not_mapped: false,
     }
 }

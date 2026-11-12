@@ -16,8 +16,8 @@
 
 ```toml
 [dependencies]
-rust-ef = "2.1"
-rust-ef-sqlite = "2.1"
+rust-ef = "2.3"
+rust-ef-sqlite = "2.3"
 rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -199,7 +199,7 @@ let blogs = linq!(ctx.set::<Blog>(); include b.posts then b.comments)
     .await?;
 ```
 
-### 导航（懒加载，v1.1 起可选）/ Navigation (Lazy Loading, opt-in since v1.1)
+### 导航（懒加载，可选）/ Navigation (Lazy Loading, opt-in)
 
 ```rust
 // 在 options 层开启懒加载
@@ -518,10 +518,10 @@ FromDbContextOptions (DI bridge)
 | **实体 Entity** | `#[derive(EntityType)]` 支持 14 种属性、导航类型、自动发现 |
 | **查询 Query** | `linq!` 表达式树、`filter` / `filter_column`、join、group_by、聚合、IN/NOT IN 子查询 |
 | **进阶查询 Advanced Query** | CTE（`linq!(with ...)` 语法糖）、窗口函数（10 种）、懒加载（可选） |
-| **持久化 Persistence** | `save_changes()`、参数化查询、事务、级联删除（v1.5.2） |
+| **持久化 Persistence** | `save_changes()`、参数化查询、事务、级联删除 |
 | **DI 依赖注入** | `add_dbcontext` / `add_dbcontext_keyed`（含类型化 `#[derive(DbContextKey)]`、`add_dbcontext_anykey`、异步变体）、`Arc<DbContext>`、多数据库 context key 隔离 |
 | **拦截 Interception** | `ISaveChangesInterceptor` —— on_saving/on_saved/on_save_failed 钩子 |
-| **迁移 Migrations** | 模型差异、Up/Down SQL、历史跟踪、`MigrationStore`、外键 ON DELETE 子句（v1.5.2） |
+| **迁移 Migrations** | 模型差异、Up/Down SQL、历史跟踪、`MigrationStore`、复合/部分/表达式索引、复合外键、CHECK 约束、列默认值/注释/计算列、MySQL 表选项、schema 限定表、视图 |
 | **CLI** | `rust-ef-cli`：`migration init/add/apply/revert/list/script`、`scaffold dbcontext` |
 
 ---
@@ -541,8 +541,8 @@ FromDbContextOptions (DI bridge)
 | `#[not_mapped]` | `[NotMapped]` |
 | `#[index]` / `#[unique]` | `[Index]` |
 | `#[concurrency_check]` | `[ConcurrencyCheck]` |
-| `#[context("key")]` | 多数据库 context key 隔离（v1.1） |
-| `#[on_delete]` | `OnDelete(DeleteBehavior)` Fluent API（v1.5.2） |
+| `#[context("key")]` | 多数据库 context key 隔离 |
+| `#[on_delete]` | `OnDelete(DeleteBehavior)` Fluent API |
 
 ---
 

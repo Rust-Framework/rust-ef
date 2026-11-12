@@ -16,6 +16,8 @@ println!("Up SQL:\n{}", migration.up_sql);
 println!("Down SQL:\n{}", migration.down_sql);
 ```
 
+差分覆盖：表/列增删、列类型/精度/定长/排序规则/注释、默认值、计算列、单列与复合索引（含唯一、部分、表达式索引与 PostgreSQL INCLUDE）、标量与复合外键、CHECK 约束、MySQL 表选项、表注释。索引和 CHECK 的定义会保存在快照中（`model_snapshot.json`），增删或修改会生成对应的 `CREATE` / `DROP` 语句；`Down` 会用旧定义重建被删除的索引与约束。
+
 ## 种子数据
 
 ```rust
@@ -29,17 +31,21 @@ ctx.ensure_created().await?;  // 建表后自动插入种子数据
 ## CLI 工具
 
 ```bash
-# 添加迁移
-rust-ef migration add AddUserTable --output ./Migrations
+# 1. 应用内导出当前模型快照（见“自动升级流程”）
+cargo run --bin snapshot
 
-# 应用迁移
-rust-ef migration apply --connection "sqlite:app.db"
+# 2. 添加迁移（--snapshot 是当前快照，Migrations/model_snapshot.json 是上次基线）
+rust-ef migration add AddUserTable \
+  --snapshot current_snapshot.json --dir Migrations --dialect sqlite
+
+# 3. 应用迁移（或启动时 ctx.migrate("Migrations").await?）
+rust-ef migration apply --connection "sqlite:app.db" --dir Migrations
 
 # 回滚
-rust-ef migration revert --connection "sqlite:app.db" --target PreviousMigration
+rust-ef migration revert --connection "sqlite:app.db" --dir Migrations --target PreviousMigration
 
 # 生成脚本
-rust-ef migration script --from InitialCreate --to AddUserTable
+rust-ef migration script --dir Migrations --from InitialCreate --to AddUserTable
 ```
 
 ## 设计要点

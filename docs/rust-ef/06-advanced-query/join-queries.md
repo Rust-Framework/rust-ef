@@ -1,6 +1,6 @@
 # JOIN 查询
 
-当 `include` 不足以表达查询需求时，可用 `linq!` 宏的 `inner_join` / `left_join` 子句手动 JOIN。字符串 API（`inner_join("t", "a", "b")` 等）已移除。
+当 `include` 不足以表达查询需求时，用 `linq!` 宏的 `inner_join` / `left_join` 子句手动 JOIN；不要使用字符串形式（`inner_join("t", "a", "b")` 等）。
 
 ## INNER JOIN
 

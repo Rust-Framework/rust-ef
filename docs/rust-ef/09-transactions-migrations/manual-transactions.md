@@ -88,7 +88,6 @@ ctx.use_transaction_with(IsolationLevel::ReadCommitted, |ctx| {
 - SQLite 只接受 `Serializable`；其他级别返回 `EFError::Provider`，不会静默降级；
 - 事务开始后仍可通过句柄的 `set_isolation` 修改，但仅 PostgreSQL 在首条语句前有效；新代码优先用 `*_with`。
 
-<a id="事务覆盖范围当前版本起"></a>
 ## 事务覆盖范围
 
 在 `begin_transaction` / `use_transaction` 内，所有通过 `ctx` 发出的语句都复用同一条事务连接：
@@ -101,10 +100,6 @@ ctx.use_transaction_with(IsolationLevel::ReadCommitted, |ctx| {
 | 通过 `provider()` 取得的 raw SQL | ✅ |
 
 因此“先批量改 A，再联查 A/B/C，再改 C”能读到本事务未提交的写；任一步失败，整体回滚。
-
-> v1.8 及更早：查询、导航加载和批量 DML 会各自从连接池取新连接，读不到未提交写，`execute_update` / `execute_delete` 还会立即提交、不受事务保护。该缺陷已在 1.9 修复。
->
-> 2.0 起 `begin_transaction` 也采用相同的作用域语义；1.x 的 standalone 行为已移除。
 
 ## 事务不可嵌套
 

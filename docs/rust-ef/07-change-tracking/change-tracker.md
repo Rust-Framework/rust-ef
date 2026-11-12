@@ -51,6 +51,6 @@ rust-ef 当前的 `ChangeTracker` 为**手动快照式**跟踪，与 EFCore 的�
 
 **当前推荐工作流**：查询后显式 `attach()` → 修改属性 → 调用 `update()` 标记 → `save_changes()`。或直接 `update(entity)` 跳过快照比对。
 
-此项架构性差距将在 v0.5+ 评估代理式跟踪方案（可能需 nightly 特性或显著重写）。
+当前采用快照式变更检测：`detect_changes()` 对比加载态快照；不提供代理式自动跟踪。
 
 下一章：[批量操作](../08-bulk-operations/INDEX.md)

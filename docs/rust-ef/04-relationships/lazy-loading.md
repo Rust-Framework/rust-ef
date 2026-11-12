@@ -1,6 +1,6 @@
-# Lazy Loading：按需加载（v1.1）
+# Lazy Loading：按需加载
 
-Lazy Loading 允许在首次访问导航属性时自动从数据库加载关联数据，无需在查询时显式 `include`。v1.1.0 起支持，**默认关闭**（opt-in），以保留 v1.0 的 eager-only 行为。
+Lazy Loading 允许在首次访问导航属性时自动从数据库加载关联数据，无需在查询时显式 `include`。**默认关闭**（opt-in），避免意外的 N+1 查询。
 
 ## 启用 Lazy Loading
 
@@ -87,7 +87,7 @@ assert!(!blogs[0].posts.is_loaded());      // 仍然 false
 
 | 实践 | 说明 |
 |------|------|
-| **默认关闭** | 保留 v1.0 eager-only 行为，避免意外的 N+1 查询 |
+| **默认关闭** | 避免意外的 N+1 查询；列表页优先 `include` |
 | **按需开启** | 仅在确实需要延迟加载的场景启用 |
 | **Include 优先** | 已知需要关联数据时，始终用 `include` 预加载更高效 |
 | **避免循环中 load()** | 循环内逐条 `load()` 会产生 N+1 查询，应改用 `include` |

@@ -41,7 +41,7 @@ impl ChangeExecutor {
         }
         let gen = provider.sql_generator();
         let meta = entities[0].1;
-        let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+        let scalar_props: Vec<_> = meta.writable_scalar_properties().collect();
         let pk_props: Vec<_> = scalar_props.iter().filter(|p| p.is_primary_key).collect();
         let has_concurrency_tokens = scalar_props.iter().any(|p| p.is_concurrency_token);
 
@@ -203,7 +203,7 @@ impl ChangeExecutor {
         // all entities share the same EntityTypeMeta (same type E), so
         // scalar_props and concurrency_tokens are identical for every row.
         let meta0 = entities[0].1;
-        let scalar_props: Vec<&PropertyMeta> = meta0.mapped_scalar_properties().collect();
+        let scalar_props: Vec<&PropertyMeta> = meta0.writable_scalar_properties().collect();
         let concurrency_tokens: Vec<&PropertyMeta> = scalar_props
             .iter()
             .copied()
@@ -303,7 +303,7 @@ impl ChangeExecutor {
         }
         let gen = provider.sql_generator();
         let meta = entities[0].1;
-        let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+        let scalar_props: Vec<_> = meta.writable_scalar_properties().collect();
         let has_concurrency_tokens = scalar_props.iter().any(|p| p.is_concurrency_token);
         let pk_props: Vec<_> = scalar_props.iter().filter(|p| p.is_primary_key).collect();
 
@@ -406,7 +406,7 @@ impl ChangeExecutor {
         // all entities share the same EntityTypeMeta (same type E).
         let meta0 = entities[0].1;
         let concurrency_tokens: Vec<&PropertyMeta> = meta0
-            .mapped_scalar_properties()
+            .writable_scalar_properties()
             .filter(|p| p.is_concurrency_token)
             .collect();
         let table_name = meta0.table_name.as_ref();

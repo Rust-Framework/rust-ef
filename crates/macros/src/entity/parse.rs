@@ -4,9 +4,11 @@ use quote::quote;
 use syn::spanned::Spanned;
 
 use super::helpers::{
-    detect_navigation_type, extract_column_name, extract_foreign_key_field_name,
-    extract_foreign_key_target, extract_max_length, extract_on_delete, extract_sequence_name,
-    extract_through_type, has_attr, is_navigation_field, type_ident_string, NavigationDiscriminant,
+    detect_navigation_type, extract_collation, extract_column_name, extract_column_type,
+    extract_computed, extract_field_comment, extract_foreign_key_field_name,
+    extract_foreign_key_target, extract_max_length, extract_on_delete, extract_precision,
+    extract_sequence_name, extract_through_type, has_attr, is_navigation_field, type_ident_string,
+    NavigationDiscriminant,
 };
 
 /// Holds all parsed field data needed by `gen::generate_impls`.
@@ -20,6 +22,7 @@ pub(super) struct EntityContext<'a> {
     pub(super) table_name: String,
     pub(super) property_builders: Vec<proc_macro2::TokenStream>,
     pub(super) navigation_builders: Vec<proc_macro2::TokenStream>,
+    pub(super) foreign_key_builders: Vec<proc_macro2::TokenStream>,
     pub(super) primary_key_names: Vec<proc_macro2::TokenStream>,
     pub(super) pk_column_names: Vec<String>,
     pub(super) fk_column_names: Vec<String>,
@@ -53,6 +56,7 @@ pub(super) fn parse_fields<'a>(
         table_name: table_name.to_string(),
         property_builders: Vec::new(),
         navigation_builders: Vec::new(),
+        foreign_key_builders: Vec::new(),
         primary_key_names: Vec::new(),
         pk_column_names: Vec::new(),
         fk_column_names: Vec::new(),
@@ -424,6 +428,27 @@ pub(super) fn parse_fields<'a>(
                 Some(name) => quote! { Some(std::borrow::Cow::Borrowed(#name)) },
                 None => quote! { None },
             };
+            let column_type_lit = match extract_column_type(&field.attrs) {
+                Some(v) => quote! { Some(std::borrow::Cow::Borrowed(#v)) },
+                None => quote! { None },
+            };
+            let (precision_lit, scale_lit) = match extract_precision(&field.attrs) {
+                Some((p, s)) => (quote! { Some(#p) }, quote! { Some(#s) }),
+                None => (quote! { None }, quote! { None }),
+            };
+            let is_fixed_length = has_attr(&field.attrs, "fixed_length");
+            let collation_lit = match extract_collation(&field.attrs) {
+                Some(v) => quote! { Some(std::borrow::Cow::Borrowed(#v)) },
+                None => quote! { None },
+            };
+            let comment_lit = match extract_field_comment(&field.attrs) {
+                Some(v) => quote! { Some(std::borrow::Cow::Borrowed(#v)) },
+                None => quote! { None },
+            };
+            let (computed_sql_lit, computed_stored) = match extract_computed(&field.attrs) {
+                Some((sql, stored)) => (quote! { Some(std::borrow::Cow::Borrowed(#sql)) }, stored),
+                None => (quote! { None }, false),
+            };
             ctx.property_builders.push(quote! {
                 rust_ef::metadata::PropertyMeta {
                     field_name: std::borrow::Cow::Borrowed(#field_name_str),
@@ -440,6 +465,15 @@ pub(super) fn parse_fields<'a>(
                     max_length: #max_length,
                     is_unique: #is_unique,
                     has_index: #has_index,
+                    column_type: #column_type_lit,
+                    precision: #precision_lit,
+                    scale: #scale_lit,
+                    is_fixed_length: #is_fixed_length,
+                    collation: #collation_lit,
+                    comment: #comment_lit,
+                    computed_sql: #computed_sql_lit,
+                    computed_stored: #computed_stored,
+                    default_value: None,
                     is_not_mapped: false,
                 }
             });
@@ -451,6 +485,25 @@ pub(super) fn parse_fields<'a>(
                     let target_ident = syn::Ident::new(&target, field_name.span());
                     let fk_ident = syn::Ident::new(&format!("FK_{}", target), field_name.span());
                     let col = column_name.clone();
+                    let on_delete_tokens = extract_on_delete(&field.attrs);
+                    // Scalar `#[foreign_key(Target)]` now participates in DDL:
+                    // it points at the target's primary key column.
+                    ctx.foreign_key_builders.push(quote! {
+                        rust_ef::metadata::ForeignKeyMeta {
+                            name: None,
+                            columns: vec![std::borrow::Cow::Borrowed(#col)],
+                            referenced_table: std::borrow::Cow::Borrowed(<#target_ident>::TABLE),
+                            referenced_columns: vec![std::borrow::Cow::Borrowed(
+                                <#target_ident>::pk_column_name(),
+                            )],
+                            on_delete: {
+                                let behavior: ::core::option::Option<
+                                    rust_ef::relations::DeleteBehavior,
+                                > = #on_delete_tokens;
+                                behavior.map(|b| std::borrow::Cow::Borrowed(b.to_sql_clause()))
+                            },
+                        }
+                    });
                     ctx.fk_const_decls.push(quote! {
                         #[allow(non_upper_case_globals)]
                         pub const #fk_ident: &'static str = #col;

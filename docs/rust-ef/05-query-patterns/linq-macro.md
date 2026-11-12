@@ -218,7 +218,7 @@ let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 ```
 
 ```rust
-// ❌ 使用已移除的字符串 API（include_named/order_by("col")/sum("col") 等均已删除）
+// ❌ 字符串 API 不可用（include_named/order_by("col")/sum("col") 等）
 let blogs = ctx.set::<Blog>().query().include_named("posts").to_list().await?;
 
 // ✅ 用 linq! 多子句形式

@@ -10,7 +10,7 @@ pub fn generate_insert_sql(
     _property_values: &EntitySnapshot,
 ) -> String {
     let gen = provider.sql_generator();
-    let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+    let scalar_props: Vec<_> = meta.writable_scalar_properties().collect();
     let columns: Vec<&str> = scalar_props
         .iter()
         .map(|p| p.column_name.as_ref())
@@ -81,7 +81,7 @@ pub fn collect_insert_params(
     meta: &EntityTypeMeta,
     property_values: &EntitySnapshot,
 ) -> Vec<DbValue> {
-    meta.mapped_scalar_properties()
+    meta.writable_scalar_properties()
         .map(|p| {
             property_values
                 .get(p.field_name.as_ref())

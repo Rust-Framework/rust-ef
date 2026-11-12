@@ -63,14 +63,21 @@ pub(crate) fn cell_to_db_value(row: &MySqlRow, col_idx: usize) -> DbValue {
     if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col_idx) {
         return v.map(DbValue::NaiveDate).unwrap_or(DbValue::Null);
     }
-    // Uuid (CHAR(36))
-    if let Ok(v) = row.try_get::<Option<uuid::Uuid>, _>(col_idx) {
-        return v.map(DbValue::Uuid).unwrap_or(DbValue::Null);
-    }
     // String (VARCHAR, TEXT, CHAR) — also catches DECIMAL since MySQL
     // returns DECIMAL as string to preserve precision.
+    //
+    // IMPORTANT: String must be probed **before** `uuid::Uuid`. sqlx-mysql's
+    // `Decode for Uuid` is `Uuid::from_slice(bytes)`, which accepts *any*
+    // 16-byte slice — so a 16-character VARCHAR (e.g. a code or short id)
+    // would silently decode as a UUID and be stringified to 36 characters.
+    // UUID columns are CHAR(36); they decode here as `DbValue::String` and
+    // `TryFrom<DbValue> for Uuid` parses them back losslessly.
     if let Ok(v) = row.try_get::<Option<String>, _>(col_idx) {
         return v.map(DbValue::String).unwrap_or(DbValue::Null);
+    }
+    // Uuid (BINARY(16) / CHAR(36) fallback when String decoding failed).
+    if let Ok(v) = row.try_get::<Option<uuid::Uuid>, _>(col_idx) {
+        return v.map(DbValue::Uuid).unwrap_or(DbValue::Null);
     }
     // bytes (BLOB, BINARY)
     if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col_idx) {

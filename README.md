@@ -16,8 +16,8 @@ An **EFCore-inspired ORM for Rust** — `DbContext` / `DbSet<T>` / `IEntityType`
 
 ```toml
 [dependencies]
-rust-ef = "2.1"
-rust-ef-sqlite = "2.1"
+rust-ef = "2.3"
+rust-ef-sqlite = "2.3"
 rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -199,7 +199,7 @@ let blogs = linq!(ctx.set::<Blog>(); include b.posts then b.comments)
     .await?;
 ```
 
-### Navigation (Lazy Loading, opt-in since v1.1)
+### Navigation (Lazy Loading, opt-in)
 
 ```rust
 // Enable lazy loading at the options level
@@ -516,13 +516,13 @@ FromDbContextOptions (DI bridge)
 
 | Category | Feature |
 |----------|---------|
-| **Entity** | `#[derive(EntityType)]` with 14 attributes, navigation types, auto-discovery |
+| **Entity** | `#[derive(EntityType)]` with 20+ attributes (`#[table(name, schema, comment, view)]`, `keyless`, `column_type`, `precision`, `collation`, `comment`, `computed`, ...), navigation types, auto-discovery, `#[derive(DbEnum)]` |
 | **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation, IN/NOT IN subqueries |
 | **Advanced Query** | CTE (`linq!(with ...)` syntax sugar), Window functions (10 kinds), Lazy Loading (opt-in) |
-| **Persistence** | `save_changes()`, parameterized queries, transactions, cascade delete (v1.5.2) |
+| **Persistence** | `save_changes()`, parameterized queries, transactions, cascade delete |
 | **DI** | `add_dbcontext` / `add_dbcontext_keyed` (+ typed `#[derive(DbContextKey)]`, `add_dbcontext_anykey`, async variants), `Arc<DbContext>`, multi-DB context key isolation |
 | **Interception** | `ISaveChangesInterceptor` — on_saving/on_saved/on_save_failed hooks |
-| **Migrations** | Model diff, Up/Down SQL, history tracking, `MigrationStore`, FK ON DELETE clauses (v1.5.2) |
+| **Migrations** | Model diff, Up/Down SQL, history tracking, `MigrationStore`, composite/partial/expression indexes, composite FKs, CHECK constraints, column defaults/comments/computed columns, MySQL table options, schema-qualified tables, views |
 | **CLI** | `rust-ef-cli`: `migration init/add/apply/revert/list/script`, `scaffold dbcontext` |
 
 ---
@@ -542,8 +542,8 @@ FromDbContextOptions (DI bridge)
 | `#[not_mapped]` | `[NotMapped]` |
 | `#[index]` / `#[unique]` | `[Index]` |
 | `#[concurrency_check]` | `[ConcurrencyCheck]` |
-| `#[context("key")]` | Multi-DB context key isolation (v1.1) |
-| `#[on_delete]` | `OnDelete(DeleteBehavior)` Fluent API (v1.5.2) |
+| `#[context("key")]` | Multi-DB context key isolation |
+| `#[on_delete]` | `OnDelete(DeleteBehavior)` Fluent API |
 
 ---
 

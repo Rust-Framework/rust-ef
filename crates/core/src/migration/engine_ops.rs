@@ -1,5 +1,6 @@
 //! `MigrationEngine` database operations — apply/revert migrations, ensure schema, seed data.
 
+use super::dialect::MigrationDialect;
 use super::engine::MigrationEngine;
 use super::history::{
     create_migration_history_table_sql, seed_insert_sql, split_sql_statements,
@@ -19,6 +20,12 @@ impl MigrationEngine {
     }
 
     /// Applies a migration's Up SQL against a database provider.
+    ///
+    /// PostgreSQL/SQLite execute the whole script (including the history row)
+    /// in one transaction, so a failed statement rolls the migration back
+    /// atomically. MySQL DDL implicitly commits, so its statements are executed
+    /// individually (partial application is possible; the migration stays
+    /// unrecorded and must be repaired manually).
     pub async fn apply(
         &self,
         provider: &dyn IDatabaseProvider,
@@ -29,10 +36,37 @@ impl MigrationEngine {
         }
         self.ensure_history_table(provider).await?;
         let sql = migration.up_sql.replace("{migration_id}", &migration.id);
-        for statement in split_sql_statements(&sql) {
-            if !statement.is_empty() {
+        self.execute_script(provider, &sql).await
+    }
+
+    /// Executes a migration script with the best available atomicity.
+    async fn execute_script(&self, provider: &dyn IDatabaseProvider, sql: &str) -> EFResult<()> {
+        let statements = split_sql_statements(sql);
+        if statements.is_empty() {
+            return Ok(());
+        }
+
+        // MySQL DDL forces an implicit commit per statement; a transaction
+        // cannot make the script atomic. Keep the provider's DDL path (the
+        // prepared-statement protocol rejects DDL).
+        if self.dialect == MigrationDialect::MySql {
+            for statement in statements {
                 provider.execute_migration_command(&statement).await?;
             }
+            return Ok(());
+        }
+
+        let mut conn = provider.get_connection().await?;
+        conn.begin_transaction().await?;
+        for statement in &statements {
+            if let Err(err) = conn.execute(statement, &[]).await {
+                let _ = conn.rollback_transaction().await;
+                return Err(err);
+            }
+        }
+        if let Err(err) = conn.commit_transaction().await {
+            let _ = conn.rollback_transaction().await;
+            return Err(err);
         }
         Ok(())
     }
@@ -50,12 +84,7 @@ impl MigrationEngine {
             )));
         }
         let sql = migration.down_sql.replace("{migration_id}", &migration.id);
-        for statement in split_sql_statements(&sql) {
-            if !statement.is_empty() {
-                provider.execute_migration_command(&statement).await?;
-            }
-        }
-        Ok(())
+        self.execute_script(provider, &sql).await
     }
 
     /// Returns migrations already recorded in the database history table.
@@ -254,12 +283,7 @@ impl MigrationEngine {
         let snapshot = self.create_snapshot("__ensure_created__", entity_types);
         let changes = self.initial_create(&snapshot);
         let sql = self.generate_ddl_sql(&changes);
-        for statement in split_sql_statements(&sql) {
-            if !statement.is_empty() {
-                provider.execute_migration_command(&statement).await?;
-            }
-        }
-        Ok(())
+        self.execute_script(provider, &sql).await
     }
 
     /// Drops all tables for the given entity types.
@@ -270,7 +294,7 @@ impl MigrationEngine {
         entity_types: &[EntityTypeMeta],
     ) -> EFResult<()> {
         let q = |s: &str| self.dialect.quote(s);
-        for meta in entity_types {
+        for meta in entity_types.iter().filter(|m| !m.is_view) {
             let sql = format!("DROP TABLE IF EXISTS {};", q(meta.table_name.as_ref()));
             provider.execute_migration_command(&sql).await?;
         }
@@ -289,7 +313,7 @@ impl MigrationEngine {
         }
 
         let gen = provider.sql_generator();
-        let scalar_props: Vec<_> = meta.mapped_scalar_properties().collect();
+        let scalar_props: Vec<_> = meta.writable_scalar_properties().collect();
         if scalar_props.is_empty() {
             return Ok(());
         }

@@ -18,6 +18,18 @@
 | `Vec<u8>` | `Bytes` | BYTEA | BLOB | BLOB |
 | `Option<T>` | 同 `T` 或 `Null` | 同 `T`（可空） | 同 `T`（可空） | 同 `T`（可空） |
 
+`Option<T>` 会解包内层类型再映射：例如 `Option<String>` + `#[max_length(32)]` 生成 `VARCHAR(32)`（MySQL 可建索引），而不是退化为 `TEXT`；`Option<uuid::Uuid>` → `CHAR(36)`，`Option<rust_decimal::Decimal>` → `DECIMAL(38,18)`。
+
+## 列类型覆盖与精度
+
+| 配置 | 效果 |
+|---|---|
+| `#[column_type("JSON")]` / `.has_column_type(...)` | 原样输出列类型，跳过内置映射（方言敏感） |
+| `#[precision(12, 2)]` / `.has_precision(12, 2)` | Decimal：MySQL `DECIMAL(12,2)`、PG `NUMERIC(12,2)`；时间：`DATETIME(6)` / `TIMESTAMP(6)` |
+| `#[fixed_length]` / `.is_fixed_length()` | 字符串 → `CHAR(n)`（`n = max_length`，缺省 1） |
+| `#[collation("utf8mb4_bin")]` / `.has_collation(...)` | 列级 `COLLATE` |
+| `#[computed("a * b", stored)]` | `GENERATED ALWAYS AS (...)`，自动排除 INSERT/UPDATE |
+
 ### 自增主键
 
 `#[primary_key] #[auto_increment]` 的列在 DDL 生成时按方言特化：

@@ -1,6 +1,6 @@
 # GROUP BY 与 HAVING
 
-`group_by` 与 `having` 通过 `linq!` 宏的子句表达。字符串 API（`group_by(&[...])` / `having("...")`）已移除。
+`group_by` 与 `having` 通过 `linq!` 宏的子句表达；不要使用字符串形式（`group_by(&[...])` / `having("...")`）。
 
 ## GROUP BY
 

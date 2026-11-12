@@ -18,11 +18,85 @@ pub struct ModelSnapshot {
 }
 
 /// Serialized form of EntityTypeMeta for snapshot storage.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SnapshotEntityType {
     pub type_name: String,
     pub table_name: String,
     pub columns: Vec<SnapshotColumn>,
+    /// Declarative indexes (composite / unique / partial / expression).
+    pub indexes: Vec<SnapshotIndex>,
+    /// Composite foreign keys (single-column FKs live on the column).
+    pub foreign_keys: Vec<SnapshotForeignKey>,
+    /// Table-level CHECK constraints.
+    pub checks: Vec<SnapshotCheck>,
+    /// MySQL table options.
+    pub table_options: SnapshotTableOptions,
+    /// Maps to an existing view (no table DDL).
+    pub is_view: bool,
+    /// Keyless entity (no primary key).
+    pub is_keyless: bool,
+    /// Table comment.
+    pub comment: Option<String>,
+}
+
+/// One key part of a snapshot index.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SnapshotIndexColumn {
+    /// Column name or raw SQL expression.
+    pub value: String,
+    /// Whether `value` is a raw expression.
+    pub is_expression: bool,
+}
+
+/// A declared index in a model snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SnapshotIndex {
+    /// Explicit or derived index name.
+    pub name: String,
+    /// Key parts, in order.
+    pub columns: Vec<SnapshotIndexColumn>,
+    /// UNIQUE index.
+    pub is_unique: bool,
+    /// Rendered partial-index predicate (dialect-specific literals).
+    pub filter: Option<String>,
+    /// Non-key included columns (`INCLUDE`).
+    pub include: Vec<String>,
+}
+
+/// A composite foreign key in a model snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SnapshotForeignKey {
+    /// Explicit or derived constraint name.
+    pub name: String,
+    /// Dependent columns.
+    pub columns: Vec<String>,
+    /// Principal table.
+    pub referenced_table: String,
+    /// Principal columns.
+    pub referenced_columns: Vec<String>,
+    /// `ON DELETE` clause.
+    pub on_delete: Option<String>,
+}
+
+/// A CHECK constraint in a model snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SnapshotCheck {
+    pub name: String,
+    pub expression: String,
+}
+
+/// MySQL table options in a model snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SnapshotTableOptions {
+    pub engine: Option<String>,
+    pub charset: Option<String>,
+    pub collate: Option<String>,
+}
+
+impl SnapshotTableOptions {
+    pub fn is_empty(&self) -> bool {
+        self.engine.is_none() && self.charset.is_none() && self.collate.is_none()
+    }
 }
 
 /// Serialized form of PropertyMeta for snapshot storage.
@@ -51,4 +125,22 @@ pub struct SnapshotColumn {
     /// ON DELETE clause for the FK constraint (e.g. "CASCADE", "SET NULL").
     /// `None` means no explicit clause (DB default applies).
     pub fk_on_delete: Option<String>,
+    /// Raw SQL DEFAULT expression (`None` = no default).
+    pub default_value: Option<String>,
+    /// Explicit database type (`HasColumnType`), overrides dialect mapping.
+    pub column_type: Option<String>,
+    /// Decimal/temporal precision.
+    pub precision: Option<u32>,
+    /// Decimal scale.
+    pub scale: Option<u32>,
+    /// Fixed-length string type (`CHAR(n)`).
+    pub is_fixed_length: bool,
+    /// Column collation.
+    pub collation: Option<String>,
+    /// Column comment.
+    pub comment: Option<String>,
+    /// Computed/generated column expression.
+    pub computed_sql: Option<String>,
+    /// Persisted (`STORED`) computed column.
+    pub computed_stored: bool,
 }

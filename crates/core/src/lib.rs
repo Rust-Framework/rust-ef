@@ -54,7 +54,7 @@ pub use async_trait;
 
 pub use inventory;
 
-pub use rust_ef_macros::{column, entity, linq, DbContextKey, EntityType};
+pub use rust_ef_macros::{column, entity, linq, DbContextKey, DbEnum, EntityType};
 
 /// Re-exports of the most commonly used types.
 pub mod prelude {
@@ -94,5 +94,6 @@ pub mod prelude {
     pub use rust_ef_macros::entity;
     pub use rust_ef_macros::linq;
     pub use rust_ef_macros::DbContextKey;
+    pub use rust_ef_macros::DbEnum;
     pub use rust_ef_macros::EntityType;
 }

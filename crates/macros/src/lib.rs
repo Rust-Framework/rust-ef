@@ -4,6 +4,7 @@
 
 mod column_macro;
 mod db_context_key;
+mod db_enum;
 mod entity;
 mod entity_config;
 mod linq;
@@ -28,7 +29,14 @@ use proc_macro::TokenStream;
         through,
         concurrency_check,
         on_delete,
-        context
+        context,
+        keyless,
+        column_type,
+        precision,
+        fixed_length,
+        collation,
+        comment,
+        computed
     )
 )]
 pub fn derive_entity_type(input: TokenStream) -> TokenStream {
@@ -63,6 +71,26 @@ pub fn column(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(DbContextKey, attributes(key))]
 pub fn derive_db_context_key(input: TokenStream) -> TokenStream {
     db_context_key::expand(syn::parse_macro_input!(input as syn::DeriveInput)).into()
+}
+
+/// Derive string-backed database mapping for a unit-only enum.
+///
+/// Generates `From<Enum> for DbValue`, `TryFrom<DbValue> for Enum`,
+/// `as_str()` and `from_db_str()`. Variant names default to the Rust variant
+/// identifier; override with `#[db_value("...")]`.
+///
+/// ```ignore
+/// #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, DbEnum)]
+/// enum Status {
+///     #[default]
+///     Pending,
+///     #[db_value("PAID")]
+///     Paid,
+/// }
+/// ```
+#[proc_macro_derive(DbEnum, attributes(db_value))]
+pub fn derive_db_enum(input: TokenStream) -> TokenStream {
+    db_enum::expand_db_enum(input)
 }
 
 /// Compile-time LINQ-to-SQL.

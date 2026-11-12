@@ -101,7 +101,7 @@
             {
               "id": "derive-attributes",
               "title": "EntityType 派生与属性配置",
-              "summary": "#[table]、#[column]、#[required] 等 12+ 属性",
+              "summary": "#[table]、#[column]、#[required] 等 20+ 属性与 #[derive(DbEnum)]",
               "readingTime": 12,
               "difficulty": "beginner"
             },
@@ -124,6 +124,13 @@
               "title": "类型映射参考表",
               "summary": "Rust ↔ DbValue ↔ 三方数据库列类型与可选 feature",
               "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "efcore-parity",
+              "title": "EFCore 实体配置对齐矩阵",
+              "summary": "EntityTypeBuilder / PropertyBuilder 逐项对照与剩余边界",
+              "readingTime": 12,
               "difficulty": "intermediate"
             }
           ]
@@ -330,6 +337,13 @@
               "id": "migrations-seed",
               "title": "迁移引擎与种子数据",
               "summary": "MigrationEngine、has_data 与 Up/Down SQL",
+              "readingTime": 12,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "auto-upgrade",
+              "title": "自动升级流程（下一次迭代加字段）",
+              "summary": "快照导出、迁移生成、DbContext::migrate 与 SQLite 边界",
               "readingTime": 12,
               "difficulty": "intermediate"
             }

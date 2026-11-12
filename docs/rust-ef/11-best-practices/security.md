@@ -83,12 +83,12 @@ builder.connection_string(&user_supplied_url);  // 绝不要这样做
 
 ### TLS / 传输加密
 
-自 v1.6 起，PostgreSQL 与 MySQL Provider 均采用 **secure-by-default** 策略——`new()` 默认强制 TLS，`new_insecure()` 为本地开发逃生舱。
+PostgreSQL 与 MySQL Provider 采用 **secure-by-default** 策略——`new()` 默认强制 TLS，`new_insecure()` 为本地开发逃生舱。
 
 ```rust
 use rust_ef_postgres::{PostgresProvider, PgTlsMode};
 
-// 方式 1: secure-by-default（v1.6+，生产推荐）
+// 方式 1: secure-by-default（生产推荐）
 // 使用平台默认根证书库构建 TlsConnector
 let provider = PostgresProvider::new(&url, 5)?;
 
@@ -107,7 +107,7 @@ let provider = PostgresProvider::new_with_tls(
 ```rust
 use rust_ef_mysql::{MySqlProvider, MySqlTlsMode};
 
-// secure-by-default（v1.6+）
+// secure-by-default
 let provider = MySqlProvider::new(&url).await?;          // 强制 Required
 let provider = MySqlProvider::new_lazy(&url)?;           // 强制 Required（延迟连接）
 
@@ -198,13 +198,13 @@ builder.has_query_filter(linq!(filter |b: Blog| b.tenant_id == current_tenant_id
 
 ## 审计结论
 
-**v1.0 安全审计状态: ✅ 通过**
+**安全审计状态: ✅ 通过**
 
 - SQL 注入：所有运行时值参数化绑定，无字符串拼接注入面
 - 标识符来源：编译期实体元数据，不接受运行时输入
 - 连接字符串：部署配置层，非运行时用户输入
 - 迁移脚本：开发者受信代码，设计行为
-- 已知限制：无（v1.6 起 `new()` 默认强制 TLS，`new_insecure()` 为本地开发逃生舱）
+- 已知限制：无（`new()` 默认强制 TLS，`new_insecure()` 为本地开发逃生舱）
 
 ---
 

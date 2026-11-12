@@ -12,11 +12,18 @@ pub(super) fn generate_impls(
     ctx: &EntityContext<'_>,
     fields: &syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
     context_key_tokens: proc_macro2::TokenStream,
+    is_view: bool,
+    is_keyless: bool,
+    table_comment: Option<String>,
 ) -> proc_macro2::TokenStream {
     let struct_name = ctx.struct_name;
     let type_name_str = &ctx.struct_name_str;
     let table_name = &ctx.table_name;
     let field_count = ctx.from_row_fields.len();
+    let table_comment_lit = match &table_comment {
+        Some(c) => quote! { Some(std::borrow::Cow::Borrowed(#c)) },
+        None => quote! { None },
+    };
 
     // Generate FromRow field parsers for scalar fields
     let mut from_row_assignments = Vec::new();
@@ -115,6 +122,7 @@ pub(super) fn generate_impls(
 
     let property_builders = &ctx.property_builders;
     let navigation_builders = &ctx.navigation_builders;
+    let foreign_key_builders = &ctx.foreign_key_builders;
     let primary_key_names = &ctx.primary_key_names;
     let fk_const_decls = &ctx.fk_const_decls;
     let fk_index_arms = &ctx.fk_index_arms;
@@ -145,6 +153,15 @@ pub(super) fn generate_impls(
                     primary_keys: vec![
                         #(#primary_key_names,)*
                     ],
+                    indexes: vec![],
+                    foreign_keys: vec![
+                        #(#foreign_key_builders,)*
+                    ],
+                    checks: vec![],
+                    table_options: rust_ef::metadata::TableOptions::default(),
+                    is_view: #is_view,
+                    is_keyless: #is_keyless,
+                    comment: #table_comment_lit,
                     property_index: std::sync::OnceLock::new(),
                     navigation_index: std::sync::OnceLock::new(),
                 }

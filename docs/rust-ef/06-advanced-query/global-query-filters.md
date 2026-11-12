@@ -2,7 +2,7 @@
 
 全局查询过滤器用于为所有查询自动附加 WHERE 条件，典型场景包括**软删除**和**多租户隔离**。
 
-通过 `linq!` 宏的**形式 C**（`filter` 关键字）产出 `BoolExpr` 值，传入 `ModelBuilder.has_query_filter::<T>`。字符串 API（`has_query_filter("...")`）已移除。
+通过 `linq!` 宏的**形式 C**（`filter` 关键字）产出 `BoolExpr` 值，传入 `ModelBuilder.has_query_filter::<T>`；不要使用字符串 SQL 形式。
 
 ## 注册过滤器
 

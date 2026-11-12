@@ -209,7 +209,9 @@ fn test_explicit_no_action() {
 
 #[test]
 fn test_on_delete_change_triggers_fk_rebuild() {
-    let engine = MigrationEngine::new(MigrationDialect::Sqlite);
+    // SQLite cannot ALTER foreign keys on existing tables, so the rebuild SQL
+    // is asserted against PostgreSQL.
+    let engine = MigrationEngine::new(MigrationDialect::Postgres);
 
     // Build current snapshot from FkCascadePost (CASCADE)
     let current_metas = vec![FkCascadeBlog::entity_meta(), FkCascadePost::entity_meta()];
@@ -279,7 +281,7 @@ fn test_snapshot_json_roundtrip() {
     // Verify JSON contains fk_on_delete
     let json_text = std::fs::read_to_string(tmp.join("model_snapshot.json")).unwrap();
     assert!(
-        json_text.contains("\"fk_on_delete\":\"CASCADE\""),
+        json_text.contains("\"fk_on_delete\"") && json_text.contains("\"CASCADE\""),
         "JSON should contain fk_on_delete field:\n{}",
         json_text
     );

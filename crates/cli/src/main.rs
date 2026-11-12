@@ -4,13 +4,10 @@ mod scaffold;
 
 use clap::{Parser, Subcommand};
 use rust_ef::error::{EFError, EFResult};
-use rust_ef::metadata::EntityTypeMeta;
 use rust_ef::migration::{
-    parse_model_snapshot_json, MigrationDialect, MigrationEngine, MigrationStore, ModelSnapshot,
-    PRODUCT_VERSION,
+    parse_model_snapshot_json, MigrationDialect, MigrationEngine, MigrationStore, PRODUCT_VERSION,
 };
 use rust_ef::provider::IDatabaseProvider;
-use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -209,15 +206,51 @@ fn cmd_add(
         std::fs::read_to_string(snapshot_path).map_err(|e| EFError::migration(e.to_string()))?;
     let target_snapshot = parse_model_snapshot_json(&text)?
         .ok_or_else(|| EFError::migration("snapshot must describe at least one entity type"))?;
+    let baseline = dir.join("model_snapshot.json");
+    if snapshot_path == &baseline {
+        return Err(EFError::migration(
+            "--snapshot must point at the *current* model snapshot, not the \
+             Migrations/model_snapshot.json baseline (diffing a file against \
+             itself yields an empty migration)",
+        ));
+    }
     let store = MigrationStore::new(dir);
     let previous = store.load_snapshot()?;
-    let target_metas = snapshot_to_metas(&target_snapshot);
     let engine = MigrationEngine::new(dialect.to_migration_dialect());
-    let migration = engine.generate(name, &target_metas, &previous)?;
+    let id = timestamped_migration_id(name)?;
+    let mut migration = engine.generate_from_snapshot(&id, &target_snapshot, &previous)?;
+    migration.description = name.to_string();
     store.save(&migration)?;
     store.save_snapshot(&target_snapshot)?;
     println!("Created migration '{}' in {}", migration.id, dir.display());
     Ok(())
+}
+
+/// Builds a sortable migration id: `{unix_seconds}_{sanitized-name}`.
+///
+/// `MigrationStore::load_all` sorts by id, so the timestamp prefix guarantees
+/// creation order even when names are not alphabetical.
+fn timestamped_migration_id(name: &str) -> EFResult<String> {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.trim_matches('_').is_empty() {
+        return Err(EFError::migration(
+            "migration name must contain at least one alphanumeric character",
+        ));
+    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Ok(format!("{seconds:010}_{sanitized}"))
 }
 
 async fn cmd_apply(connection: &str, provider: ProviderArg, dir: &PathBuf) -> EFResult<()> {
@@ -424,45 +457,4 @@ fn detect_provider(connection: &str) -> ProviderArg {
     } else {
         ProviderArg::Sqlite
     }
-}
-
-fn snapshot_to_metas(snapshot: &ModelSnapshot) -> Vec<EntityTypeMeta> {
-    snapshot
-        .entity_types
-        .iter()
-        .map(|et| EntityTypeMeta {
-            type_id: std::any::TypeId::of::<()>(),
-            type_name: Cow::Owned(et.type_name.clone()),
-            table_name: Cow::Owned(et.table_name.clone()),
-            properties: et
-                .columns
-                .iter()
-                .map(|c| rust_ef::metadata::PropertyMeta {
-                    field_name: Cow::Owned(c.field_name.clone()),
-                    column_name: Cow::Owned(c.column_name.clone()),
-                    type_id: std::any::TypeId::of::<i32>(),
-                    type_name: Cow::Owned(c.type_name.clone()),
-                    is_primary_key: c.is_primary_key,
-                    is_auto_increment: c.is_auto_increment,
-                    is_sequence: c.is_sequence,
-                    sequence_name: c.sequence_name.clone().map(Cow::Owned),
-                    is_required: c.is_required,
-                    is_foreign_key: c.is_foreign_key,
-                    is_concurrency_token: false,
-                    max_length: c.max_length,
-                    is_unique: c.is_unique,
-                    has_index: c.has_index,
-                    is_not_mapped: false,
-                })
-                .collect(),
-            navigations: Vec::new(),
-            primary_keys: et
-                .columns
-                .iter()
-                .filter(|c| c.is_primary_key)
-                .map(|c| Cow::Owned(c.field_name.clone()))
-                .collect(),
-            ..EntityTypeMeta::default()
-        })
-        .collect()
 }

@@ -9,6 +9,272 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.0] — 2026-11-12 — EFCore 实体配置对齐：列类型/精度/注释/计算列、备用键、视图、schema 与 DbEnum
+
+> **English** · **简体中文**
+
+### English
+
+#### Added — EntityTypeBuilder / PropertyBuilder parity
+
+- **`HasColumnType`**: `#[column_type("...")]` / `property_named(...).has_column_type("...")`
+  emits the column type verbatim (e.g. `JSON`, `MEDIUMTEXT`, `ENUM(...)`).
+- **`HasPrecision`**: `#[precision(p, s)]` / `.has_precision(p, s)` maps
+  `Decimal` to `DECIMAL(p,s)`/`NUMERIC(p,s)` and temporal types to
+  `DATETIME(p)`/`TIMESTAMP(p)`.
+- **`IsFixedLength`**: `#[fixed_length]` / `.is_fixed_length()` → `CHAR(n)`.
+- **`HasCollation`**: `#[collation("...")]` / `.has_collation("...")` → column
+  `COLLATE` before nullability.
+- **`HasComment`**: `#[comment("...")]` / `.has_comment("...")` for columns and
+  `#[table("t", comment = "...")]` / `entity.has_comment("...")` for tables
+  (MySQL inline/ALTER, PostgreSQL `COMMENT ON`, SQLite ignored).
+- **`HasComputedColumnSql`**: `#[computed("expr", stored)]` /
+  `.has_computed_column_sql("expr").is_stored()` emits
+  `GENERATED ALWAYS AS (...)`; computed columns are automatically excluded from
+  INSERT/UPDATE.
+- **`HasAlternateKey`**: `entity.has_alternate_key(&[cols])` → unique
+  `ak_<table>_<cols>` index usable as an FK target.
+- **`ToView` / `HasNoKey` / `ToTable(schema)`**: `#[table("v", view)]`,
+  `#[keyless]`, `#[table("t", schema = "...")]` and Fluent `to_view` /
+  `has_no_key` / `to_schema`. Views are excluded from table DDL; dotted
+  schema-qualified names are quoted per part by all dialects/providers.
+- **`Ignore`**: `entity.ignore("field")`.
+- **`IsConcurrencyToken` / `IsNullable` via Fluent**:
+  `.is_concurrency_token()` / `.is_optional()`.
+- **`HasIndex(...).IncludeProperties`**: `.include(&[...])` → PostgreSQL
+  `INCLUDE (...)`; MySQL/SQLite emit a warning and create the index without it.
+- **`#[derive(DbEnum)]`**: string-backed enum conversion equivalent to
+  `HasConversion<string>()` — generates `From<Enum> for DbValue`,
+  `TryFrom<DbValue> for Enum`, `as_str()` and `from_db_str()`; supports
+  `#[db_value("...")]` per variant.
+
+#### Migration / snapshot / automated upgrade
+
+- **Snapshot export helper**: `build_registered_snapshot` / `save_registered_snapshot`
+  build a snapshot from inventory-registered entities (the CLI cannot see the
+  application model), enabling `rust-ef migration add --snapshot ...`.
+- **`DbContext::migrate(dir)`**: EF Core `Database.Migrate()` equivalent —
+  loads `up.sql`/`down.sql` pairs and applies pending migrations.
+- **Atomic scripts** (PostgreSQL/SQLite): a migration's statements and history
+  row run in one transaction; a failure rolls back. MySQL remains statement-by-
+  statement because DDL implicitly commits.
+- **`generate_from_snapshot`**: the CLI diffs snapshots directly (preserves
+  rendered partial-index predicates and other snapshot-only details).
+- SQLite upgrade safety: adding/dropping FK or CHECK on an existing table emits
+  a `-- WARNING` comment instead of invalid `ALTER TABLE` SQL; `DROP
+  COLUMN`/`DROP TABLE` and unsafe `ADD COLUMN ... NOT NULL` (no default) are
+  flagged in comments.
+- `split_sql_statements` now respects single-quoted literals (`;` inside
+  defaults/comments/CHECK expressions) and strips `--` comments.
+- Snapshot JSON now round-trips column type, precision/scale, fixed length,
+  collation, comments, computed columns, `INCLUDE`, `is_view`, `is_keyless` and
+  table comments.
+- Diff/DDL emit table-comment changes, computed-column changes (PostgreSQL
+  warns to drop/re-add) and per-part quoting for `schema.table`.
+- `ensure_deleted` no longer drops views.
+
+#### Notes / compatibility
+
+- `EntityTypeMeta` gained `is_view`, `is_keyless`, `comment`;
+  `PropertyMeta` gained `column_type`, `precision`, `scale`, `is_fixed_length`,
+  `collation`, `comment`, `computed_sql`, `computed_stored`, `default_value`
+  (column defaults now live on the property instead of a side table);
+  `SnapshotColumn` / `SnapshotEntityType` / `SnapshotIndex` gained matching
+  fields. Manual struct literals need the new fields (or
+  `..EntityTypeMeta::default()`).
+- `#[derive(DbEnum)]` requires the enum to also derive `Default` (the
+  `EntityType` row parser falls back to `Default` for unknown values).
+- See the full parity matrix in `docs/rust-ef/03-entity-design/efcore-parity.md`.
+
+### 简体中文
+
+#### 新增 — EntityTypeBuilder / PropertyBuilder 对齐
+
+- **`HasColumnType`**：`#[column_type("...")]` / `.has_column_type("...")` 原样输出列类型
+  （`JSON`、`MEDIUMTEXT`、`ENUM(...)` 等）。
+- **`HasPrecision`**：`#[precision(p, s)]` / `.has_precision(p, s)`；Decimal →
+  `DECIMAL(p,s)`/`NUMERIC(p,s)`，时间类型 → `DATETIME(p)`/`TIMESTAMP(p)`。
+- **`IsFixedLength`**：`#[fixed_length]` / `.is_fixed_length()` → `CHAR(n)`。
+- **`HasCollation`**：`#[collation("...")]` / `.has_collation("...")`，列级
+  `COLLATE` 放在可空性之前。
+- **`HasComment`**：列 `#[comment("...")]` / `.has_comment("...")`；表
+  `#[table("t", comment = "...")]` / `entity.has_comment("...")`（MySQL 内联/
+  ALTER，PG `COMMENT ON`，SQLite 忽略）。
+- **`HasComputedColumnSql`**：`#[computed("expr", stored)]` /
+  `.has_computed_column_sql("expr").is_stored()` 生成
+  `GENERATED ALWAYS AS (...)`；计算列自动从 INSERT/UPDATE 排除。
+- **`HasAlternateKey`**：`entity.has_alternate_key(&[cols])` → 唯一索引
+  `ak_<table>_<cols>`，可作为外键引用目标。
+- **`ToView` / `HasNoKey` / `ToTable(schema)`**：`#[table("v", view)]`、
+  `#[keyless]`、`#[table("t", schema = "...")]` 与 Fluent `to_view` /
+  `has_no_key` / `to_schema`。视图不参与建表 DDL；`schema.table` 由各方言/
+  Provider 分段引用。
+- **`Ignore`**：`entity.ignore("field")`。
+- **Fluent 并发/可空**：`.is_concurrency_token()` / `.is_optional()`。
+- **`HasIndex(...).IncludeProperties`**：`.include(&[...])` → PostgreSQL
+  `INCLUDE (...)`；MySQL/SQLite 输出 warning 并忽略 include。
+- **`#[derive(DbEnum)]`**：字符串枚举映射（等价 `HasConversion<string>()`），生成
+  `From<Enum> for DbValue`、`TryFrom<DbValue> for Enum`、`as_str()`、
+  `from_db_str()`，支持 `#[db_value("...")]`。
+
+#### 迁移 / 快照 / 自动升级
+
+- **快照导出助手**：`build_registered_snapshot` / `save_registered_snapshot`
+  从 inventory 注册的实体生成快照（CLI 看不到应用模型），打通
+  `rust-ef migration add --snapshot ...`。
+- **`DbContext::migrate(dir)`**：等价 EF Core `Database.Migrate()`，加载
+  `up.sql`/`down.sql` 并应用待执行迁移。
+- **脚本原子性**（PostgreSQL/SQLite）：一次迁移的全部语句 + 历史行在同一事务
+  执行，失败回滚；MySQL DDL 隐式提交，仍逐条执行。
+- **`generate_from_snapshot`**：CLI 直接对快照做 diff（保留已渲染的部分索引
+  谓词等仅存在于快照的字段）。
+- SQLite 升级安全：对既有表增删 FK/CHECK 输出 `-- WARNING` 注释而不是非法
+  `ALTER TABLE`；`DROP COLUMN`/`DROP TABLE` 与无默认值的 `ADD COLUMN ...
+  NOT NULL` 会输出警告注释。
+- `split_sql_statements` 尊重单引号字符串（默认值/注释/CHECK 中的 `;`），并
+  移除 `--` 注释。
+- 快照完整往返列类型、精度/标度、定长、排序规则、注释、计算列、INCLUDE、
+  `is_view`、`is_keyless` 与表注释。
+- 差分/DDL 支持表注释变更、计算列变更（PostgreSQL 输出 drop/re-add 警告）与
+  `schema.table` 分段引用。
+- `ensure_deleted` 不再删除视图。
+
+#### 注意 / 兼容性
+
+- `EntityTypeMeta` 新增 `is_view`、`is_keyless`、`comment`；`PropertyMeta` 新增
+  `column_type`、`precision`、`scale`、`is_fixed_length`、`collation`、`comment`、
+  `computed_sql`、`computed_stored`、`default_value`（列默认值改挂到属性上，移除
+  侧表 `column_defaults`）；`SnapshotColumn` / `SnapshotEntityType` /
+  `SnapshotIndex` 同步新增字段；手写结构体字面量需补齐（或
+  `..EntityTypeMeta::default()`）。
+- `#[derive(DbEnum)]` 要求枚举同时 `derive(Default)`（行解析兜底）。
+- 完整对照见 `docs/rust-ef/03-entity-design/efcore-parity.md`。
+
+---
+
+## [2.2.0] — 2026-11-12 — 数据库级约束对齐：复合/部分/表达式索引、复合外键、CHECK、默认值与表选项
+
+> **English** · **简体中文**
+
+### English
+
+#### Added — model-level DDL constraints
+
+- **Declarative indexes**: `EntityTypeBuilder::has_index(&[cols])` now emits one
+  composite index instead of degrading to single-column indexes. The returned
+  `IndexBuilder` supports `.is_unique()`, `.has_name(name)`, and
+  `.has_filter(linq!(filter |x: T| ...))` (partial index).
+- **Partial indexes**: PostgreSQL/SQLite emit `... WHERE <predicate>`. MySQL has
+  no partial indexes, so a filtered **unique** index is emulated with a
+  functional `CASE WHEN <predicate> THEN <col> END` unique index; a filtered
+  non-unique index is skipped with a warning comment instead of producing
+  invalid SQL.
+- **Expression indexes**: `has_index_expression(&["coalesce(channel_id, '')"])`
+  (`.is_unique()` supported).
+- **Composite foreign keys**: `has_foreign_key(&[cols], Ref::TABLE, &[ref_cols])`
+  with `.on_delete(...)` / `.has_name(...)`.
+- **Scalar `#[foreign_key(Target)]` now participates in DDL**: it generates a
+  single-column FK to `Target`'s primary key (previously only the `FK_<Target>`
+  constant was generated).
+- **CHECK constraints**: `entity.has_check(name, sql)` and
+  `property_named(col).has_check(sql)` (auto-named `CK_<table>_<column>`), emitted
+  inline in `CREATE TABLE` for PostgreSQL/MySQL/SQLite.
+- **Column defaults**: `property_named(col).has_default(sql)` emits `DEFAULT`
+  in `CREATE TABLE`, `ADD COLUMN`, and `ALTER COLUMN` (PG `SET/DROP DEFAULT`,
+  MySQL `MODIFY COLUMN`).
+- **MySQL table options**: `entity.engine("InnoDB").charset("utf8mb4").collate("utf8mb4_bin")`.
+  MySQL DDL always emits `ENGINE`/`DEFAULT CHARSET` (defaults `InnoDB`/`utf8mb4`).
+- **`Option<T>` inner type mapping**: `Option<String>` + `max_length` now maps to
+  `VARCHAR(n)` (indexable on MySQL) instead of `TEXT`; `Option<Uuid>` /
+  `Option<Decimal>` map to their inner types.
+- **Migration diffing** covers declared indexes, composite FKs, CHECK
+  constraints, column defaults, and MySQL table options; Down migrations restore
+  dropped index/CHECK/FK definitions.
+- **SQLite migration scripts** emit foreign keys inline in `CREATE TABLE`
+  (SQLite cannot `ALTER TABLE ADD CONSTRAINT`).
+
+#### Fixed
+
+- **rust-ef-mysql**: `cell_to_db_value` probed `uuid::Uuid` before `String`;
+  sqlx-mysql's UUID decoder accepts *any* 16-byte slice, so 16-character
+  `VARCHAR` values were silently decoded as UUIDs (36-char text). `String` is
+  now probed first; UUID columns (`CHAR(36)`) parse back via
+  `TryFrom<DbValue> for Uuid`.
+- PostgreSQL `ALTER COLUMN` now syncs column defaults (`SET DEFAULT` /
+  `DROP DEFAULT`) instead of leaving them stale.
+- Migration snapshots now round-trip `max_length`, column defaults, indexes,
+  FKs, CHECKs, and table options (serde_json-based snapshot IO).
+
+#### Notes / compatibility
+
+- `EntityTypeMeta` gained `indexes`, `foreign_keys`, `checks`, and
+  `table_options`; manual struct literals must add
+  `..EntityTypeMeta::default()`.
+- `SnapshotColumn` gained `default_value`; `SnapshotEntityType` gained
+  `indexes` / `foreign_keys` / `checks` / `table_options`.
+- `EntityTypeBuilder::has_index` now returns `IndexBuilder<'_ , T>` instead of
+  `&mut Self` (call sites that used it as a statement are unaffected).
+- `ensure_created` still creates tables + seeds only; it does **not** create
+  standalone indexes or foreign keys. Use `MigrationEngine::generate` + `apply`
+  for the full constraint set.
+
+### 简体中文
+
+#### 新增 — 模型层数据库约束
+
+- **声明式索引**：`EntityTypeBuilder::has_index(&[cols])` 现在生成一个复合索引
+  （不再退化为多个单列索引）；返回的 `IndexBuilder` 支持 `.is_unique()`、
+  `.has_name(name)`、`.has_filter(linq!(filter |x: T| ...))`（部分索引）。
+- **部分索引**：PostgreSQL/SQLite 生成 `... WHERE <predicate>`；MySQL 没有部分
+  索引，过滤的 **UNIQUE** 索引用函数索引
+  `(CASE WHEN <predicate> THEN <col> END)` 模拟，过滤的普通索引输出 warning
+  注释并跳过（而不是生成非法 SQL）。
+- **表达式索引**：`has_index_expression(&["coalesce(channel_id, '')"])`（支持
+  `.is_unique()`）。
+- **复合外键**：`has_foreign_key(&[cols], Ref::TABLE, &[ref_cols])`，可链式
+  `.on_delete(...)` / `.has_name(...)`。
+- **标量 `#[foreign_key(Target)]` 参与 DDL**：生成指向 `Target` 主键的单列
+  FK（此前只生成 `FK_<Target>` 常量）。
+- **CHECK 约束**：`entity.has_check(name, sql)` 与
+  `property_named(col).has_check(sql)`（自动命名 `CK_<table>_<column>`），在
+  `CREATE TABLE` 内联（PG/MySQL/SQLite）。
+- **列默认值**：`property_named(col).has_default(sql)` 在 `CREATE TABLE`、
+  `ADD COLUMN`、`ALTER COLUMN` 中生成 `DEFAULT`（PG `SET/DROP DEFAULT`，
+  MySQL `MODIFY COLUMN`）。
+- **MySQL 表选项**：`entity.engine("InnoDB").charset("utf8mb4").collate("utf8mb4_bin")`；
+  MySQL DDL 始终显式输出 `ENGINE`/`DEFAULT CHARSET`（默认 `InnoDB`/`utf8mb4`）。
+- **`Option<T>` 内层类型映射**：`Option<String>` + `max_length` 现在生成
+  `VARCHAR(n)`（MySQL 可建索引），不再退化为 `TEXT`；`Option<Uuid>` /
+  `Option<Decimal>` 同样按内层类型映射。
+- **迁移差分**覆盖声明式索引、复合外键、CHECK、列默认值与 MySQL 表选项；
+  Down 迁移会按旧定义重建被删除的索引/CHECK/FK。
+- **SQLite 迁移脚本**把外键内联到 `CREATE TABLE`（SQLite 不支持
+  `ALTER TABLE ADD CONSTRAINT`）。
+
+#### 修复
+
+- **rust-ef-mysql**：`cell_to_db_value` 先探测 `uuid::Uuid` 再探测 `String`；
+  sqlx-mysql 的 UUID 解码接受任意 16 字节切片，导致 16 字符 `VARCHAR`
+  被静默解码成 UUID（36 字符文本）。现在先探测 `String`；UUID 列（`CHAR(36)`）
+  通过 `TryFrom<DbValue> for Uuid` 无损还原。
+- PostgreSQL `ALTER COLUMN` 现在同步列默认值（`SET DEFAULT` / `DROP DEFAULT`），
+  不再保留旧默认值。
+- 迁移快照现在完整往返 `max_length`、列默认值、索引、外键、CHECK 与表选项
+  （基于 serde_json 的快照 IO）。
+
+#### 注意 / 兼容性
+
+- `EntityTypeMeta` 新增 `indexes`、`foreign_keys`、`checks`、`table_options`；
+  手写结构体字面量需补 `..EntityTypeMeta::default()`。
+- `SnapshotColumn` 新增 `default_value`；`SnapshotEntityType` 新增
+  `indexes` / `foreign_keys` / `checks` / `table_options`。
+- `EntityTypeBuilder::has_index` 返回 `IndexBuilder<'_, T>`（作为语句调用的
+  现有代码不受影响）。
+- `ensure_created` 仍只建表 + 种子，**不生成**独立索引与外键；完整约束请用
+  `MigrationEngine::generate` + `apply`。
+
+---
+
 ## [2.1.0] — 2026-11-11 — rust-dix 0.10：MEDI scope、类型化 key、动态上下文与异步初始化
 
 > **English** · **简体中文**

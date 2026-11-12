@@ -1,9 +1,9 @@
 //! Migration history table management and filesystem migration store.
 
 use super::dialect::MigrationDialect;
-use super::snapshot_io::{migration_io_err, snapshot_to_json};
+use super::snapshot_io::migration_io_err;
 use super::types::{Migration, ModelSnapshot};
-use crate::error::EFResult;
+use crate::error::{EFError, EFResult};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -49,18 +49,80 @@ pub(super) fn seed_insert_sql(
 }
 
 /// Split a migration script into individual executable statements.
+///
+/// Semicolons inside single-quoted string literals (defaults, comments, CHECK
+/// expressions) do not terminate a statement; `--` line comments are removed.
 pub(super) fn split_sql_statements(sql: &str) -> Vec<String> {
-    sql.lines()
-        .filter(|l| {
-            let trimmed = l.trim();
-            !trimmed.is_empty() && !trimmed.starts_with("--")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .split(';')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut in_string = false;
+    let mut chars = sql.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                in_string = !in_string;
+                current.push(c);
+            }
+            '-' if !in_string && chars.peek() == Some(&'-') => {
+                // Skip the rest of the comment line.
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        current.push('\n');
+                        break;
+                    }
+                }
+            }
+            ';' if !in_string => {
+                let statement = current.trim();
+                if !statement.is_empty() {
+                    statements.push(statement.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+
+    let statement = current.trim();
+    if !statement.is_empty() {
+        statements.push(statement.to_string());
+    }
+    statements
+}
+
+/// Validates a migration id used as a directory name and history key.
+///
+/// Rejects empty ids, path separators, `..`, drive letters, control characters,
+/// and ids longer than the history table's 150-character column.
+pub fn validate_migration_id(id: &str) -> EFResult<()> {
+    if id.is_empty() {
+        return Err(EFError::migration("migration id must not be empty"));
+    }
+    if id.len() > 150 {
+        return Err(EFError::migration(format!(
+            "migration id '{id}' exceeds 150 characters"
+        )));
+    }
+    if id == "." || id == ".." {
+        return Err(EFError::migration(format!("invalid migration id '{id}'")));
+    }
+    if id
+        .chars()
+        .any(|c| c == '/' || c == '\\' || c == ':' || c.is_control())
+    {
+        return Err(EFError::migration(format!(
+            "migration id '{id}' must not contain path separators, ':' or control characters"
+        )));
+    }
+    // Windows strips trailing dots/spaces from directory names, which would
+    // make the on-disk id differ from the history key.
+    if id.ends_with('.') || id.ends_with(' ') {
+        return Err(EFError::migration(format!(
+            "migration id '{id}' must not end with '.' or a space"
+        )));
+    }
+    Ok(())
 }
 
 /// SQL to create the migration history table.
@@ -120,7 +182,12 @@ impl MigrationStore {
     }
 
     /// Saves a migration as `{id}/up.sql` and `{id}/down.sql`.
+    ///
+    /// `id` must be a safe, ordered directory name (no path separators/`..`);
+    /// use a timestamp prefix so [`Self::load_all`] applies migrations in
+    /// creation order.
     pub fn save(&self, migration: &Migration) -> EFResult<()> {
+        validate_migration_id(&migration.id)?;
         fs::create_dir_all(&self.root).map_err(migration_io_err)?;
         let dir = self.root.join(&migration.id);
         fs::create_dir_all(&dir).map_err(migration_io_err)?;
@@ -145,6 +212,7 @@ impl MigrationStore {
     }
 
     pub fn load(&self, id: &str) -> EFResult<Migration> {
+        validate_migration_id(id)?;
         let dir = self.root.join(id);
         let up_sql = fs::read_to_string(dir.join("up.sql")).map_err(migration_io_err)?;
         let down_sql = fs::read_to_string(dir.join("down.sql")).map_err(migration_io_err)?;
@@ -158,9 +226,7 @@ impl MigrationStore {
 
     /// Writes a model snapshot JSON file for the next diff baseline.
     pub fn save_snapshot(&self, snapshot: &ModelSnapshot) -> EFResult<()> {
-        fs::create_dir_all(&self.root).map_err(migration_io_err)?;
-        let json = snapshot_to_json(snapshot);
-        fs::write(self.root.join("model_snapshot.json"), json).map_err(migration_io_err)
+        super::snapshot::write_snapshot(self.root.join("model_snapshot.json"), snapshot)
     }
 
     pub fn load_snapshot(&self) -> EFResult<Option<ModelSnapshot>> {

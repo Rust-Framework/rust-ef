@@ -1,6 +1,6 @@
 # 自动实体注册与发现
 
-rust-ef 提供基于 `inventory` 的编译期自动注册机制，对齐 EFCore 的 `IEntityTypeConfiguration<T>` 配置分离模式。**v1.1.0 起，`DbContext::from_options()` 自动调用 `discover_entities()`**，开发者只需写好实体和配置，框架自动完成元数据注册——无需任何手动调用。
+rust-ef 提供基于 `inventory` 的编译期自动注册机制，对齐 EFCore 的 `IEntityTypeConfiguration<T>` 配置分离模式。`DbContext::from_options()` 会自动发现并注册实体与配置，开发者只需写好实体和 `#[entity(T)]` 配置，无需手动调用。
 
 ## 核心机制
 
@@ -12,7 +12,7 @@ rust-ef 提供基于 `inventory` 的编译期自动注册机制，对齐 EFCore 
 | `DbContext::discover_entities()` | 运行时迭代 `inventory::iter`，填充实体元数据与 Fluent API 配置（幂等，可重复调用） |
 | `DbContext::ensure_created()` | 调用 `model_builder.build()` 应用所有 Fluent API 覆盖后建表 |
 
-## 基本用法（v1.1.0 推荐模式）
+## 基本用法
 
 定义实体类型时，`#[derive(EntityType)]` 会自动将其注册到全局注册表。`DbContext::from_options()` 自动发现所有注册的实体。
 
@@ -35,7 +35,7 @@ ctx.ensure_created().await?;  // 元数据已就绪，直接建表
 
 无需再为每个实体类型手动调用 `ctx.set::<Blog>()` 或 `ctx.discover_entities()`。
 
-> **注意**：手动调用 `ctx.discover_entities()` 仍然兼容（幂等空操作），自 v1.1.0 起不再需要。
+> **注意**：手动调用 `ctx.discover_entities()` 仍然兼容（幂等空操作），不是必需步骤。
 
 ## 配置分离（IEntityTypeConfiguration）
 
@@ -64,7 +64,7 @@ impl IEntityTypeConfiguration<Blog> for BlogConfig {
 
 `DbContext::from_options()` 自动发现所有 `#[entity(T)]` 配置并应用到 `ModelBuilder`，确保 `ensure_created()` 创建的表结构与配置一致。
 
-## 多数据库上下文隔离（v1.1.0）
+## 多数据库上下文隔离
 
 当应用使用多个 keyed `DbContext` 时，可通过 `#[context("key")]` 属性将实体标记到指定上下文，`#[entity(T, "key")]` 将配置应用到指定上下文：
 
@@ -178,9 +178,8 @@ ctx.save_changes().await?;
 ## 向后兼容
 
 - `ctx.set::<T>()` 仍然可用，行为幂等
-- 手动调用 `ctx.discover_entities()` 仍然兼容（v1.1.0 起为幂等空操作）
-- 不调用 `discover_entities()` 时，旧代码行为兼容
-- **重要**：v0.5.1 修复了 `ensure_created()` 绕过 Fluent API 配置的 Bug。即使不使用 `discover_entities()`，通过 `ctx.model().entity::<T>().to_table("...")` 配置的覆盖现在会真正生效
+- 手动调用 `ctx.discover_entities()` 仍然兼容（幂等空操作），不是必需步骤
+- `ensure_created()` 通过 `model_builder.build()` 应用所有 Fluent API 与 `#[entity(T)]` 配置覆盖
 
 ## 调试技巧
 

@@ -3,6 +3,7 @@
 //! These types form the metadata layer of rust-ef, analogous to EFCore's
 //! `IEntityType`, `IProperty`, `INavigation`, etc.
 
+use crate::query::BoolExpr;
 use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -46,6 +47,35 @@ pub struct PropertyMeta {
     pub has_index: bool,
     /// Whether this property is excluded from mapping (NotMapped).
     pub is_not_mapped: bool,
+    /// Explicit database column type (`HasColumnType`), emitted verbatim for every
+    /// dialect. Overrides the Rust-type mapping (e.g. `"JSON"`,
+    /// `"MEDIUMTEXT"`, `"DECIMAL(12,2)"`).
+    pub column_type: Option<Cow<'static, str>>,
+    /// Numeric/decimal precision (`HasPrecision(p, s)`), also used as the
+    /// fractional-seconds precision for temporal types.
+    pub precision: Option<u32>,
+    /// Numeric/decimal scale (`HasPrecision(p, s)`).
+    pub scale: Option<u32>,
+    /// Whether string columns use a fixed-length type (`CHAR(n)`).
+    pub is_fixed_length: bool,
+    /// Column-level collation (`HasCollation`).
+    pub collation: Option<Cow<'static, str>>,
+    /// Column/table comment (`HasComment`).
+    pub comment: Option<Cow<'static, str>>,
+    /// Generated/computed column expression (`HasComputedColumnSql`).
+    pub computed_sql: Option<Cow<'static, str>>,
+    /// Whether a computed column is persisted (`STORED`) or virtual.
+    pub computed_stored: bool,
+    /// Raw SQL DEFAULT expression (`HasDefaultValue` / `HasDefaultValueSql`).
+    pub default_value: Option<Cow<'static, str>>,
+}
+
+impl PropertyMeta {
+    /// Returns `true` for generated/computed columns (excluded from
+    /// INSERT/UPDATE and column defaults).
+    pub fn is_computed(&self) -> bool {
+        self.computed_sql.is_some()
+    }
 }
 
 /// Builder for configuring [`PropertyMeta`].
@@ -72,6 +102,15 @@ impl PropertyMetaBuilder {
                 is_unique: false,
                 has_index: false,
                 is_not_mapped: false,
+                column_type: None,
+                precision: None,
+                scale: None,
+                is_fixed_length: false,
+                collation: None,
+                comment: None,
+                computed_sql: None,
+                computed_stored: false,
+                default_value: None,
             },
         }
     }
@@ -133,6 +172,43 @@ impl PropertyMetaBuilder {
 
     pub fn is_not_mapped(mut self, v: bool) -> Self {
         self.meta.is_not_mapped = v;
+        self
+    }
+
+    pub fn column_type(mut self, name: &'static str) -> Self {
+        self.meta.column_type = Some(Cow::Borrowed(name));
+        self
+    }
+
+    pub fn precision(mut self, precision: u32, scale: u32) -> Self {
+        self.meta.precision = Some(precision);
+        self.meta.scale = Some(scale);
+        self
+    }
+
+    pub fn is_fixed_length(mut self, v: bool) -> Self {
+        self.meta.is_fixed_length = v;
+        self
+    }
+
+    pub fn collation(mut self, name: &'static str) -> Self {
+        self.meta.collation = Some(Cow::Borrowed(name));
+        self
+    }
+
+    pub fn comment(mut self, text: &'static str) -> Self {
+        self.meta.comment = Some(Cow::Borrowed(text));
+        self
+    }
+
+    pub fn computed_sql(mut self, sql: &'static str, stored: bool) -> Self {
+        self.meta.computed_sql = Some(Cow::Borrowed(sql));
+        self.meta.computed_stored = stored;
+        self
+    }
+
+    pub fn default_value(mut self, sql: &'static str) -> Self {
+        self.meta.default_value = Some(Cow::Borrowed(sql));
         self
     }
 
@@ -205,6 +281,172 @@ pub struct NavigationMeta {
 }
 
 // ---------------------------------------------------------------------------
+// IndexMeta / ForeignKeyMeta / CheckMeta / TableOptions
+// ---------------------------------------------------------------------------
+
+/// One key part of an [`IndexMeta`].
+///
+/// Plain columns are emitted quoted; expressions are emitted verbatim (and are
+/// therefore dialect-sensitive — use portable SQL such as
+/// `coalesce(channel_id, '')`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexColumn {
+    /// A (already resolved) database column name.
+    Column(Cow<'static, str>),
+    /// A raw SQL expression, e.g. `coalesce(channel_id, '')`.
+    Expression(Cow<'static, str>),
+}
+
+impl IndexColumn {
+    /// Returns the underlying column/expression text.
+    pub fn as_str(&self) -> &str {
+        match self {
+            IndexColumn::Column(s) | IndexColumn::Expression(s) => s.as_ref(),
+        }
+    }
+
+    /// Whether this key part is a raw expression.
+    pub fn is_expression(&self) -> bool {
+        matches!(self, IndexColumn::Expression(_))
+    }
+}
+
+/// A declarative (possibly composite, partial, or expression) index.
+///
+/// Produced by [`crate::model_builder::EntityTypeBuilder::has_index`] and
+/// consumed by the migration engine. A `filter` turns the index into a partial
+/// index on PostgreSQL/SQLite; on MySQL a filtered *unique* index is emulated
+/// with a functional (`CASE WHEN`) unique index because MySQL has no partial
+/// indexes. Filtered non-unique indexes are skipped on MySQL.
+#[derive(Debug, Clone, Default)]
+pub struct IndexMeta {
+    /// Explicit index name. `None` → derived from table + key parts.
+    pub name: Option<Cow<'static, str>>,
+    /// Index key parts, in order.
+    pub columns: Vec<IndexColumn>,
+    /// Whether this is a UNIQUE index.
+    pub is_unique: bool,
+    /// Optional partial-index predicate (`WHERE <expr>`).
+    pub filter: Option<BoolExpr>,
+    /// Included (non-key) columns (`INCLUDE (...)`); PostgreSQL only.
+    pub include: Vec<Cow<'static, str>>,
+}
+
+impl IndexMeta {
+    /// Derives the default index name for `table` from its key parts.
+    ///
+    /// Format: `ix_<table>_<part1>_<part2>...`, sanitized to identifier-safe
+    /// characters and truncated to 64 characters (MySQL's identifier limit).
+    pub fn derive_name(&self, table: &str) -> String {
+        let mut name = format!("ix_{table}");
+        for col in &self.columns {
+            if col.is_expression() {
+                // Expressions are not identifier-safe; append a short stable
+                // hash so two expression indexes on the same table do not
+                // collide.
+                let mut hash: u64 = 1469598103934665603;
+                for b in col.as_str().as_bytes() {
+                    hash ^= *b as u64;
+                    hash = hash.wrapping_mul(1099511628211);
+                }
+                name.push_str(&format!("_expr{hash:08x}"));
+            } else {
+                name.push('_');
+                name.push_str(col.as_str());
+            }
+        }
+        sanitize_index_name(&name)
+    }
+}
+
+/// Sanitizes a derived index name to `[A-Za-z0-9_]`, max 64 chars.
+pub(crate) fn sanitize_index_name(raw: &str) -> String {
+    let mut out: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if out.len() > 64 {
+        let mut truncated: String = out.chars().take(55).collect();
+        // Short, deterministic suffix to avoid collisions after truncation.
+        let mut hash: u64 = 1469598103934665603;
+        for b in raw.as_bytes() {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(1099511628211);
+        }
+        truncated.push('_');
+        truncated.push_str(&format!("{hash:08x}"));
+        out = truncated;
+    }
+    out
+}
+
+/// A foreign key declared on an entity.
+///
+/// Single-column keys are usually inferred from `BelongsTo` navigations or the
+/// scalar `#[foreign_key(Target)]` attribute; composite keys are declared via
+/// [`crate::model_builder::EntityTypeBuilder::has_foreign_key`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignKeyMeta {
+    /// Explicit constraint name. `None` → derived from table + columns.
+    pub name: Option<Cow<'static, str>>,
+    /// Dependent columns (on this entity's table), in order.
+    pub columns: Vec<Cow<'static, str>>,
+    /// Principal table name.
+    pub referenced_table: Cow<'static, str>,
+    /// Principal columns, in order (same arity as `columns`).
+    pub referenced_columns: Vec<Cow<'static, str>>,
+    /// Optional `ON DELETE` SQL clause (e.g. `"CASCADE"`).
+    pub on_delete: Option<Cow<'static, str>>,
+}
+
+impl ForeignKeyMeta {
+    /// Derives the default constraint name for `table`.
+    pub fn derive_name(&self, table: &str) -> String {
+        let cols: Vec<&str> = self.columns.iter().map(|c| c.as_ref()).collect();
+        sanitize_index_name(&format!(
+            "fk_{table}_{}_{}",
+            cols.join("_"),
+            self.referenced_table
+        ))
+    }
+}
+
+/// A table-level `CHECK` constraint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckMeta {
+    /// Constraint name (required by PostgreSQL/MySQL for later dropping).
+    pub name: Cow<'static, str>,
+    /// SQL boolean expression, e.g. `amount > 0`.
+    pub expression: Cow<'static, str>,
+}
+
+/// MySQL table-level storage options (`ENGINE`, `DEFAULT CHARSET`, `COLLATE`).
+///
+/// Ignored by PostgreSQL and SQLite.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TableOptions {
+    /// Storage engine, e.g. `InnoDB`.
+    pub engine: Option<Cow<'static, str>>,
+    /// Default character set, e.g. `utf8mb4`.
+    pub charset: Option<Cow<'static, str>>,
+    /// Default collation, e.g. `utf8mb4_bin`.
+    pub collate: Option<Cow<'static, str>>,
+}
+
+impl TableOptions {
+    /// Returns `true` when no option is configured.
+    pub fn is_empty(&self) -> bool {
+        self.engine.is_none() && self.charset.is_none() && self.collate.is_none()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // EntityTypeMeta ?describes an entity type as a whole
 // ---------------------------------------------------------------------------
 
@@ -224,6 +466,20 @@ pub struct EntityTypeMeta {
     pub navigations: Vec<NavigationMeta>,
     /// The name of the primary key property (simplified; multi-key via `Vec<String>` in practice).
     pub primary_keys: Vec<Cow<'static, str>>,
+    /// Declarative indexes: composite, unique, partial (`filter`), or expression.
+    pub indexes: Vec<IndexMeta>,
+    /// Declared foreign keys (composite keys and scalar `#[foreign_key]` targets).
+    pub foreign_keys: Vec<ForeignKeyMeta>,
+    /// Table-level CHECK constraints.
+    pub checks: Vec<CheckMeta>,
+    /// MySQL table options.
+    pub table_options: TableOptions,
+    /// Maps to a database view (`ToView`): excluded from table DDL.
+    pub is_view: bool,
+    /// Keyless entity (`HasNoKey`): no primary key; read-only projections/views.
+    pub is_keyless: bool,
+    /// Table/entity comment (`HasComment`).
+    pub comment: Option<Cow<'static, str>>,
     /// Lazily-built `field_name -> properties index` map for O(1) lookup.
     /// Built on first `find_property` call; empty after clone (rebuilt on demand).
     /// `#[doc(hidden)]` — internal cache, do not set manually.
@@ -286,6 +542,16 @@ impl EntityTypeMeta {
     pub fn mapped_scalar_properties(&self) -> impl Iterator<Item = &PropertyMeta> {
         self.properties.iter().filter(|p| !p.is_not_mapped)
     }
+
+    /// Returns mapped properties that can be written by INSERT/UPDATE.
+    ///
+    /// Computed/generated columns are readable but must never appear in
+    /// INSERT/UPDATE (the database computes them).
+    pub fn writable_scalar_properties(&self) -> impl Iterator<Item = &PropertyMeta> {
+        self.properties
+            .iter()
+            .filter(|p| !p.is_not_mapped && !p.is_computed())
+    }
 }
 
 impl Default for EntityTypeMeta {
@@ -301,6 +567,13 @@ impl Default for EntityTypeMeta {
             properties: Vec::new(),
             navigations: Vec::new(),
             primary_keys: Vec::new(),
+            indexes: Vec::new(),
+            foreign_keys: Vec::new(),
+            checks: Vec::new(),
+            table_options: TableOptions::default(),
+            is_view: false,
+            is_keyless: false,
+            comment: None,
             property_index: std::sync::OnceLock::new(),
             navigation_index: std::sync::OnceLock::new(),
         }

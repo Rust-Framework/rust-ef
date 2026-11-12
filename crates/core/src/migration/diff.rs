@@ -5,6 +5,176 @@ use super::types::{SnapshotColumn, SnapshotEntityType};
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
 use std::collections::{HashMap, HashSet};
 
+/// Diffs declarative indexes by name. A changed definition is dropped and
+/// recreated (indexes have no ALTER form in any supported dialect).
+pub(super) fn diff_declared_indexes(
+    table: &str,
+    old_et: &SnapshotEntityType,
+    new_et: &SnapshotEntityType,
+) -> Vec<SchemaChange> {
+    let mut changes = Vec::new();
+    let old: HashMap<&str, &crate::migration::SnapshotIndex> = old_et
+        .indexes
+        .iter()
+        .map(|i| (i.name.as_str(), i))
+        .collect();
+    let new: HashMap<&str, &crate::migration::SnapshotIndex> = new_et
+        .indexes
+        .iter()
+        .map(|i| (i.name.as_str(), i))
+        .collect();
+
+    for (name, new_idx) in &new {
+        match old.get(name) {
+            Some(old_idx) if *old_idx == *new_idx => {}
+            Some(old_idx) => {
+                changes.push(SchemaChange::DropDeclaredIndex {
+                    table: table.to_string(),
+                    index: (*old_idx).clone(),
+                });
+                changes.push(SchemaChange::CreateDeclaredIndex {
+                    table: table.to_string(),
+                    index: (*new_idx).clone(),
+                });
+            }
+            None => changes.push(SchemaChange::CreateDeclaredIndex {
+                table: table.to_string(),
+                index: (*new_idx).clone(),
+            }),
+        }
+    }
+    for (name, old_idx) in &old {
+        if !new.contains_key(name) {
+            changes.push(SchemaChange::DropDeclaredIndex {
+                table: table.to_string(),
+                index: (*old_idx).clone(),
+            });
+        }
+    }
+    changes
+}
+
+/// Diffs CHECK constraints by name.
+pub(super) fn diff_checks(
+    table: &str,
+    old_et: &SnapshotEntityType,
+    new_et: &SnapshotEntityType,
+) -> Vec<SchemaChange> {
+    let mut changes = Vec::new();
+    let old: HashMap<&str, &crate::migration::SnapshotCheck> =
+        old_et.checks.iter().map(|c| (c.name.as_str(), c)).collect();
+    let new: HashMap<&str, &crate::migration::SnapshotCheck> =
+        new_et.checks.iter().map(|c| (c.name.as_str(), c)).collect();
+
+    for (name, new_check) in &new {
+        match old.get(name) {
+            Some(old_check) if *old_check == *new_check => {}
+            Some(old_check) => {
+                changes.push(SchemaChange::DropCheck {
+                    table: table.to_string(),
+                    check: (*old_check).clone(),
+                });
+                changes.push(SchemaChange::AddCheck {
+                    table: table.to_string(),
+                    check: (*new_check).clone(),
+                });
+            }
+            None => changes.push(SchemaChange::AddCheck {
+                table: table.to_string(),
+                check: (*new_check).clone(),
+            }),
+        }
+    }
+    for (name, old_check) in &old {
+        if !new.contains_key(name) {
+            changes.push(SchemaChange::DropCheck {
+                table: table.to_string(),
+                check: (*old_check).clone(),
+            });
+        }
+    }
+    changes
+}
+
+/// Diffs composite foreign keys by name.
+pub(super) fn diff_composite_foreign_keys(
+    table: &str,
+    old_et: &SnapshotEntityType,
+    new_et: &SnapshotEntityType,
+) -> Vec<SchemaChange> {
+    let mut changes = Vec::new();
+    let old: HashMap<&str, &crate::migration::SnapshotForeignKey> = old_et
+        .foreign_keys
+        .iter()
+        .map(|f| (f.name.as_str(), f))
+        .collect();
+    let new: HashMap<&str, &crate::migration::SnapshotForeignKey> = new_et
+        .foreign_keys
+        .iter()
+        .map(|f| (f.name.as_str(), f))
+        .collect();
+
+    for (name, new_fk) in &new {
+        match old.get(name) {
+            Some(old_fk) if *old_fk == *new_fk => {}
+            Some(old_fk) => {
+                changes.push(SchemaChange::DropCompositeForeignKey {
+                    table: table.to_string(),
+                    foreign_key: (*old_fk).clone(),
+                });
+                changes.push(SchemaChange::AddCompositeForeignKey {
+                    table: table.to_string(),
+                    foreign_key: (*new_fk).clone(),
+                });
+            }
+            None => changes.push(SchemaChange::AddCompositeForeignKey {
+                table: table.to_string(),
+                foreign_key: (*new_fk).clone(),
+            }),
+        }
+    }
+    for (name, old_fk) in &old {
+        if !new.contains_key(name) {
+            changes.push(SchemaChange::DropCompositeForeignKey {
+                table: table.to_string(),
+                foreign_key: (*old_fk).clone(),
+            });
+        }
+    }
+    changes
+}
+
+/// Emits `AlterTableComment` when the table comment changes.
+pub(super) fn diff_table_comment(
+    table: &str,
+    old_et: &SnapshotEntityType,
+    new_et: &SnapshotEntityType,
+) -> Vec<SchemaChange> {
+    if old_et.comment == new_et.comment {
+        return Vec::new();
+    }
+    vec![SchemaChange::AlterTableComment {
+        table: table.to_string(),
+        old_comment: old_et.comment.clone(),
+        new_comment: new_et.comment.clone(),
+    }]
+}
+
+/// Emits `AlterTableOptions` when MySQL table options change.
+pub(super) fn diff_table_options(
+    table: &str,
+    old_et: &SnapshotEntityType,
+    new_et: &SnapshotEntityType,
+) -> Vec<SchemaChange> {
+    if old_et.table_options == new_et.table_options || new_et.table_options.is_empty() {
+        return Vec::new();
+    }
+    vec![SchemaChange::AlterTableOptions {
+        table: table.to_string(),
+        options: new_et.table_options.clone(),
+    }]
+}
+
 pub(super) fn fk_target(col: &SnapshotColumn) -> Option<(String, String)> {
     if !col.is_foreign_key {
         return None;
@@ -169,6 +339,15 @@ pub(super) fn columns_structurally_equal(a: &SnapshotColumn, b: &SnapshotColumn)
         && a.is_auto_increment == b.is_auto_increment
         && a.fk_referenced_table == b.fk_referenced_table
         && a.fk_referenced_column == b.fk_referenced_column
+        && a.default_value == b.default_value
+        && a.column_type == b.column_type
+        && a.precision == b.precision
+        && a.scale == b.scale
+        && a.is_fixed_length == b.is_fixed_length
+        && a.collation == b.collation
+        && a.comment == b.comment
+        && a.computed_sql == b.computed_sql
+        && a.computed_stored == b.computed_stored
 }
 
 /// Returns `CreateIndex`/`DropIndex` changes when a column's index state

@@ -97,6 +97,15 @@ mod tests {
             max_length: None,
             is_unique: false,
             has_index: false,
+            column_type: None,
+            precision: None,
+            scale: None,
+            is_fixed_length: false,
+            collation: None,
+            comment: None,
+            computed_sql: None,
+            computed_stored: false,
+            default_value: None,
             is_not_mapped: false,
         });
 
@@ -136,6 +145,15 @@ mod tests {
             has_index: false,
             is_unique: false,
             fk_on_delete: None,
+            default_value: None,
+            column_type: None,
+            precision: None,
+            scale: None,
+            is_fixed_length: false,
+            collation: None,
+            comment: None,
+            computed_sql: None,
+            computed_stored: false,
         };
         assert_eq!(MigrationDialect::Postgres.map_column_type(&col), "BYTEA");
         assert_eq!(MigrationDialect::MySql.map_column_type(&col), "BLOB");
@@ -161,6 +179,15 @@ mod tests {
             has_index: false,
             is_unique: false,
             fk_on_delete: None,
+            default_value: None,
+            column_type: None,
+            precision: None,
+            scale: None,
+            is_fixed_length: false,
+            collation: None,
+            comment: None,
+            computed_sql: None,
+            computed_stored: false,
         };
         let sql = engine.generate_alter_column_sql("posts", "title", &col);
         assert!(sql.contains("MODIFY COLUMN"));
@@ -185,6 +212,15 @@ mod tests {
             has_index: false,
             is_unique: false,
             fk_on_delete: None,
+            default_value: None,
+            column_type: None,
+            precision: None,
+            scale: None,
+            is_fixed_length: false,
+            collation: None,
+            comment: None,
+            computed_sql: None,
+            computed_stored: false,
         };
         assert_eq!(MigrationDialect::Postgres.map_column_type(&col), "SERIAL");
         assert_eq!(

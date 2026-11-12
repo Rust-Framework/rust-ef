@@ -3,7 +3,7 @@
 
 > 本文同时是**读写分离教程**，覆盖：keyed 双 `DbContext` 注册、SQLite/MySQL/PostgreSQL 配置、完整订单 Handler、read-your-writes、副本延迟、只读账号、迁移与排错。
 
-当应用需要连接多个数据库时，使用 `add_dbcontext_keyed`。v1.1.0 起支持通过 `#[context("key")]` 属性实现**实体隔离**——每个 keyed `DbContext` 只管理属于自己的实体。
+当应用需要连接多个数据库时，使用 `add_dbcontext_keyed`。通过 `#[context("key")]` 属性实现**实体隔离**——每个 keyed `DbContext` 只管理属于自己的实体。
 
 ## 读写分离示例
 
@@ -248,7 +248,7 @@ for tenant in &tenants {
 }
 ```
 
-## 实体隔离（v1.1.0+）
+## 实体隔离
 
 当不同 keyed 上下文管理不同的实体集合时，使用 `#[context("key")]` 属性标记实体归属：
 

@@ -27,12 +27,13 @@
   - [主键、自增与必填约束](./03-entity-design/keys-constraints.md)
   - [索引、唯一性与并发标记](./03-entity-design/indexes-concurrency.md)
   - [类型映射参考](./03-entity-design/type-mapping.md)
+  - [EFCore 实体配置对齐矩阵](./03-entity-design/efcore-parity.md)
 
 - [第四章 关系与导航](./04-relationships/INDEX.md)
   - [一对多与 BelongsTo / HasMany](./04-relationships/one-to-many.md)
   - [多对多与 Join 实体](./04-relationships/many-to-many.md)
   - [Eager Loading：Include 与 ThenInclude](./04-relationships/eager-loading.md)
-  - [Lazy Loading：按需加载（v1.1）](./04-relationships/lazy-loading.md)
+  - [Lazy Loading：按需加载](./04-relationships/lazy-loading.md)
 
 ---
 
@@ -48,7 +49,7 @@
   - [聚合函数：SUM / AVG / MIN / MAX](./06-advanced-query/aggregation.md)
   - [GROUP BY 与 HAVING](./06-advanced-query/group-by-having.md)
   - [JOIN 查询](./06-advanced-query/join-queries.md)
-  - [CTE 与 Window 函数（v1.1）](./06-advanced-query/cte-window-functions.md)
+  - [CTE 与 Window 函数](./06-advanced-query/cte-window-functions.md)
   - [全局查询过滤器](./06-advanced-query/global-query-filters.md)
   - [原始 SQL 与已知限制](./06-advanced-query/raw-sql-limitations.md)
 
@@ -74,6 +75,7 @@
   - [手动事务：begin_transaction 与 use_transaction](./09-transactions-migrations/manual-transactions.md)
   - [EnsureCreated 与 EnsureDeleted](./09-transactions-migrations/ensure-created-deleted.md)
   - [迁移引擎与种子数据](./09-transactions-migrations/migrations-seed.md)
+  - [自动升级流程（下一次迭代加字段）](./09-transactions-migrations/auto-upgrade.md)
 
 - [第十章 DI 与拦截器](./10-di-interceptors/INDEX.md)
   - [rust-dix 集成与注册模式](./10-di-interceptors/di-registration.md)

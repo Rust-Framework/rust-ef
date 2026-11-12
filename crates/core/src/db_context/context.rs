@@ -199,6 +199,10 @@ impl DbContext {
             .await?;
 
         for meta in &metas {
+            // Views are read-only mappings; seeding them is not meaningful.
+            if meta.is_view {
+                continue;
+            }
             let rows = self.model_builder.seed_rows_for(&meta.type_id);
             if !rows.is_empty() {
                 MigrationEngine::new(dialect)
@@ -207,6 +211,22 @@ impl DbContext {
             }
         }
         Ok(())
+    }
+
+    /// Applies all pending migrations from `dir` (EF Core `Database.Migrate()`).
+    ///
+    /// Loads `up.sql`/`down.sql` pairs from the migrations directory, applies
+    /// every migration not recorded in `__ef_migrations_history`, and returns
+    /// the number of applied migrations. This is the production upgrade path;
+    /// [`Self::ensure_created`] only creates missing tables and never alters an
+    /// existing schema.
+    pub async fn migrate(&self, dir: impl AsRef<std::path::Path>) -> EFResult<usize> {
+        let store = crate::migration::MigrationStore::new(dir.as_ref());
+        let migrations = store.load_all()?;
+        let dialect = self.provider.migration_dialect();
+        MigrationEngine::new(dialect)
+            .apply_pending(&*self.provider, &migrations)
+            .await
     }
 
     /// Drops all tables for registered entity types.

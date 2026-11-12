@@ -100,7 +100,7 @@ impl MetadataCache {
     ///
     /// Mirrors `DbContext::discover_entities()` (db_context.rs) — keep the
     /// two in sync if the inventory iteration order or filtering changes.
-    fn build(context_key: Option<&str>) -> BuiltMetadata {
+    pub(crate) fn build(context_key: Option<&str>) -> BuiltMetadata {
         let mut model_builder = ModelBuilder::new();
 
         // 1. Apply Fluent configurations matching this context's key.

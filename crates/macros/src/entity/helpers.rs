@@ -142,15 +142,67 @@ pub(crate) fn extract_foreign_key_field_name(
 // Attribute extraction helpers
 // ---------------------------------------------------------------------------
 
-pub(crate) fn extract_table_name(attrs: &[syn::Attribute]) -> String {
-    for attr in attrs {
-        if attr.path().is_ident("table") {
-            if let Ok(lit_str) = attr.parse_args::<LitStr>() {
-                return lit_str.value();
+/// Parsed `#[table(...)]` mapping options.
+pub(crate) struct TableArgs {
+    /// Table or view name (may already contain `schema.`).
+    pub(crate) name: String,
+    /// Optional schema/database prefix.
+    pub(crate) schema: Option<String>,
+    /// Optional table comment.
+    pub(crate) comment: Option<String>,
+    /// Maps to an existing view (`ToView`).
+    pub(crate) view: bool,
+}
+
+impl syn::parse::Parse for TableArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let name: LitStr = input.parse()?;
+        let mut args = TableArgs {
+            name: name.value(),
+            schema: None,
+            comment: None,
+            view: false,
+        };
+
+        while input.peek(syn::Token![,]) {
+            let _: syn::Token![,] = input.parse()?;
+            if input.is_empty() {
+                break;
+            }
+            let option: syn::Ident = input.parse()?;
+            match option.to_string().as_str() {
+                "schema" => {
+                    let _: syn::Token![=] = input.parse()?;
+                    args.schema = Some(input.parse::<LitStr>()?.value());
+                }
+                "comment" => {
+                    let _: syn::Token![=] = input.parse()?;
+                    args.comment = Some(input.parse::<LitStr>()?.value());
+                }
+                "view" => args.view = true,
+                other => {
+                    return Err(syn::Error::new(
+                        option.span(),
+                        format!(
+                            "unknown #[table] option `{other}`; expected `schema = \"...\"`, \
+                             `comment = \"...\"`, or `view`"
+                        ),
+                    ))
+                }
             }
         }
+        Ok(args)
     }
-    String::new()
+}
+
+/// Extracts `#[table("name", schema = "...", comment = "...", view)]`.
+pub(crate) fn extract_table_args(attrs: &[syn::Attribute]) -> syn::Result<Option<TableArgs>> {
+    for attr in attrs {
+        if attr.path().is_ident("table") {
+            return attr.parse_args::<TableArgs>().map(Some);
+        }
+    }
+    Ok(None)
 }
 
 /// Extracts the optional `#[context("key")]` attribute for multi-database
@@ -211,6 +263,94 @@ pub(crate) fn extract_on_delete(attrs: &[syn::Attribute]) -> proc_macro2::TokenS
         }
     }
     quote! { None }
+}
+
+/// Extracts `#[column_type("VARCHAR(36)")]`.
+pub(crate) fn extract_column_type(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("column_type") {
+            if let Ok(lit_str) = attr.parse_args::<LitStr>() {
+                return Some(lit_str.value());
+            }
+        }
+    }
+    None
+}
+
+/// Extracts `#[precision(p, s)]`.
+pub(crate) fn extract_precision(attrs: &[syn::Attribute]) -> Option<(u32, u32)> {
+    for attr in attrs {
+        if attr.path().is_ident("precision") {
+            if let syn::Meta::List(list) = &attr.meta {
+                let tokens = list.tokens.to_string();
+                let parts: Vec<&str> = tokens.split(',').map(|s| s.trim()).collect();
+                if let Some(p) = parts.first().and_then(|s| s.parse::<u32>().ok()) {
+                    let s = parts
+                        .get(1)
+                        .and_then(|s| s.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    return Some((p, s));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extracts `#[collation("...")]`.
+pub(crate) fn extract_collation(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("collation") {
+            if let Ok(lit_str) = attr.parse_args::<LitStr>() {
+                return Some(lit_str.value());
+            }
+        }
+    }
+    None
+}
+
+/// Extracts `#[comment("...")]`.
+pub(crate) fn extract_field_comment(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("comment") {
+            if let Ok(lit_str) = attr.parse_args::<LitStr>() {
+                return Some(lit_str.value());
+            }
+        }
+    }
+    None
+}
+
+/// Extracts `#[computed("a + b")]` / `#[computed("a + b", stored)]`.
+pub(crate) fn extract_computed(attrs: &[syn::Attribute]) -> Option<(String, bool)> {
+    struct ComputedArgs {
+        sql: LitStr,
+        stored: bool,
+    }
+
+    impl syn::parse::Parse for ComputedArgs {
+        fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+            let sql: LitStr = input.parse()?;
+            let mut stored = false;
+            if input.peek(syn::Token![,]) {
+                let _: syn::Token![,] = input.parse()?;
+                let flag: syn::Ident = input.parse()?;
+                stored = flag == "stored";
+            }
+            Ok(ComputedArgs { sql, stored })
+        }
+    }
+
+    for attr in attrs {
+        if attr.path().is_ident("computed") {
+            if let syn::Meta::List(list) = &attr.meta {
+                if let Ok(args) = syn::parse2::<ComputedArgs>(list.tokens.clone()) {
+                    return Some((args.sql.value(), args.stored));
+                }
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn extract_max_length(attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {
