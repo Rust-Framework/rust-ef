@@ -180,9 +180,9 @@ fn compile_in_subquery(
 }
 
 /// Walks a `BoolExpr` tree and collects inline parameter values carried by
-/// self-contained `FilterCondition`s (those produced by `linq!(|b: T| ...)`
-/// Form C). Returns an empty vec for expressions whose values are already
-/// tracked in `QueryState::parameters` (in-builder conditions).
+/// self-contained `FilterCondition`s (produced by `linq!(|b: T| ...)`).
+/// Returns an empty vec for expressions whose values are already tracked in
+/// `QueryState::parameters`.
 pub(crate) fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
     match expr {
         BoolExpr::Filter(f) => f.values().to_vec(),

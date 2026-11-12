@@ -130,7 +130,7 @@ impl OrderHandler {
         self.read
             .set::<Order>()
             .query()
-            .filter(linq!(Order, |o| o.user_id == user_id))
+            .filter(linq!(|o: Order| o.user_id == user_id))
             .to_list()
             .await
     }
@@ -162,7 +162,7 @@ pub async fn list_with_fallback(&mut self, user_id: i32) -> EFResult<Vec<Order>>
             self.write
                 .set::<Order>()
                 .query()
-                .filter(linq!(Order, |o| o.user_id == user_id))
+                .filter(linq!(|o: Order| o.user_id == user_id))
                 .to_list()
                 .await
         }

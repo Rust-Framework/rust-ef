@@ -366,7 +366,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
 
     /// Configures the primary key from column constants.
     ///
-    /// `#[doc(hidden)]` — called by `linq!(key |b: T| b.id)` expansion (Form C).
+    /// `#[doc(hidden)]` — called by `linq!(key |b: T| b.id)` expansion.
     #[doc(hidden)]
     pub fn has_key(&mut self, columns: &'static [&'static str]) -> &mut Self {
         if let Some(config) = self.model.configs.get_mut(&self.type_id) {
@@ -379,7 +379,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     /// Configures a multi-column index from column constants.
     ///
     /// `#[doc(hidden)]` — called by `linq!(index |b: T| (b.author_id, b.created_at))`
-    /// expansion (Form C). Currently marks the first column as indexed; full
+    /// expansion. Currently marks the first column as indexed; full
     /// composite index support will be added in a future iteration.
     #[doc(hidden)]
     pub fn has_index(&mut self, columns: &'static [&'static str]) -> &mut Self {

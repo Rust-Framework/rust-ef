@@ -519,7 +519,7 @@ FromDbContextOptions (DI bridge)
 | 分类 | 特性 |
 |----------|---------|
 | **实体 Entity** | `#[derive(EntityType)]` 支持 14 种属性、导航类型、自动发现 |
-| **查询 Query** | `linq!` 表达式树、`filter` / `where_` 谓词、join、group_by、聚合、IN/NOT IN 子查询 |
+| **查询 Query** | `linq!` 表达式树、可组合 `filter` 谓词、join、group_by、聚合、IN/NOT IN 子查询 |
 | **进阶查询 Advanced Query** | CTE（`linq!(with ...)` 语法糖）、窗口函数（10 种）、懒加载（可选） |
 | **持久化 Persistence** | `save_changes()`、参数化查询、事务、级联删除（v1.5.2） |
 | **DI 依赖注入** | `add_dbcontext` / `add_dbcontext_keyed`（含类型化 `#[derive(DbContextKey)]`、`add_dbcontext_anykey`、异步变体）、`Arc<DbContext>`、多数据库 context key 隔离 |

@@ -113,7 +113,19 @@ fn where_appends_to_conditions_added_earlier() {
 }
 
 #[test]
-fn form_c_yields_a_typed_predicate() {
+fn empty_in_list_matches_no_rows() {
+    // `col IN ()` is not valid SQL; an empty candidate set must match nothing.
+    let ids: Vec<i32> = Vec::new();
+    let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
+        .filter(linq!(|p: Product| ids.contains(p.id)))
+        .compile_sql();
+
+    assert_eq!(sql, "SELECT * FROM predicate_products WHERE 1 = 0");
+    assert!(params.is_empty());
+}
+
+#[test]
+fn predicate_form_yields_a_typed_predicate() {
     // `linq!(...)` is already a `Predicate<Product>`; `into_expr()`
     // exposes the encoded tree for APIs that take a bare `BoolExpr`.
     let predicate: Predicate<Product> = linq!(|p: Product| p.price > 0.0);
@@ -289,6 +301,23 @@ fn global_filter_infers_the_entity_from_the_predicate() {
         .model()
         .get_query_filter(&std::any::TypeId::of::<Product>())
         .is_some());
+}
+
+#[tokio::test]
+async fn empty_in_list_returns_no_rows() {
+    let mut ctx = make_ctx().await;
+    seed(&mut ctx).await;
+
+    let ids: Vec<i32> = Vec::new();
+    let rows = ctx
+        .set::<Product>()
+        .query()
+        .filter(linq!(|p: Product| ids.contains(p.id)))
+        .to_list()
+        .await
+        .expect("empty IN must produce valid SQL");
+
+    assert!(rows.is_empty());
 }
 
 #[tokio::test]

@@ -1,13 +1,16 @@
 //! `syn::Parse` implementation for `LinqInput` — the top-level `linq!` macro
-//! input grammar (Forms A/B/C).
+//! input grammar.
 //!
-//! - **Form A**: `|b: T| body [=> order]` — reusable filter closure
-//! - **Form B**: `source, |b: T| body; clause; clause; ...` — multi-clause query
-//! - **Form C**: `filter |b: T| body` / `index |b: T| fields` / `key |b: T| fields` — value-producing
+//! - **predicate**: `|b: T| body` — a reusable condition, expands to
+//!   `Predicate<T>`
+//! - **query**: `source[, |b: T| body][; clause; clause; ...]` — expands to a
+//!   `QueryBuilder<T>` chain
+//! - **index / key**: `index |b: T| fields` / `key |b: T| fields` — model
+//!   configuration constants
 
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 use quote::quote;
-use syn::{parse::Parse, Expr, ExprPath, ExprUnary, Ident, Token, Type, UnOp};
+use syn::{parse::Parse, Expr, ExprUnary, Ident, Token, Type, UnOp};
 
 use super::super::ast::*;
 
@@ -17,7 +20,8 @@ use super::super::ast::*;
 
 impl Parse for LinqInput {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // Form C dispatch: first token is `index` / `key` keyword.
+        // `index` / `key` are the only keywords; everything else is a predicate
+        // (leading `|`) or a query (source expression).
         if input.peek(Ident) {
             let cursor = input.cursor();
             if let Some((ident, _)) = cursor.ident() {
@@ -35,7 +39,7 @@ impl Parse for LinqInput {
             }
         }
 
-        // Form A / B: parse as query.
+        // Predicate form or query form.
         let query = parse_query(input)?;
         Ok(LinqInput::Query(query))
     }
@@ -89,9 +93,9 @@ pub(super) fn parse_field_or_tuple(input: syn::parse::ParseStream) -> syn::Resul
     }
 }
 
-/// Parses Form A / Form B query input.
+/// Parses predicate-form or query-form input.
 fn parse_query(input: syn::parse::ParseStream) -> syn::Result<QueryInput> {
-    // Form A without source: `|b: T| body [=> order] [; clauses]`
+    // Predicate form: `|b: T| body` (no source).
     if input.peek(Token![|]) {
         let (entity, where_param, where_body) = parse_typed_closure(input)?;
         let order = parse_optional_order(input)?;
@@ -106,75 +110,30 @@ fn parse_query(input: syn::parse::ParseStream) -> syn::Result<QueryInput> {
         });
     }
 
-    // Source expression (or entity type for untyped closure form)
-    let first: Expr = input.parse()?;
-
-    // `source, |b: T| body` or `source; clauses` or `source, |b: T| body; clauses`
-    if input.peek(Token![,]) {
-        let _comma: Token![,] = input.parse()?;
-
-        if input.peek(Token![|]) {
-            // Typed closure: source is a QueryBuilder
-            if is_source_expr(&first) {
-                // G4: Allow both typed (`|b: T| body`) and untyped (`|b| body`)
-                // closures. For untyped, the entity type is inferred from the
-                // source expression's turbofish (e.g. `ctx.set::<Blog>()`).
-                // If the source has no turbofish (e.g. `db_set.query()`), fall
-                // back to requiring a typed closure.
-                let source_entity = source_entity_type(&first).ok();
-                let (entity, where_param, where_body) = match source_entity {
-                    Some(ref se) => parse_closure_with_inference(input, se)?,
-                    None => parse_typed_closure(input)?,
-                };
-                let order = parse_optional_order(input)?;
-                let clauses = parse_optional_clauses(input)?;
-                return Ok(QueryInput {
-                    source: Some(first),
-                    entity,
-                    where_param: Some(where_param),
-                    where_body: Some(where_body),
-                    order,
-                    clauses,
-                });
-            }
-            // Untyped closure: `Blog, |b| body` — first is entity type
-            let entity = expr_as_entity_type(&first)?;
-            let (where_param, where_body) = parse_untyped_closure(input)?;
-            let order = parse_optional_order(input)?;
-            let clauses = parse_optional_clauses(input)?;
-            return Ok(QueryInput {
-                source: None,
-                entity,
-                where_param: Some(where_param),
-                where_body: Some(where_body),
-                order,
-                clauses,
-            });
-        }
-
-        // `source, <expr>` without closure — treat as entity type + where body
-        // (legacy: `linq!(Blog, b.rating > 5)`)
-        let entity = expr_as_entity_type(&first)?;
-        let where_body: Expr = input.parse()?;
-        let order = parse_optional_order(input)?;
-        let clauses = parse_optional_clauses(input)?;
-        return Ok(QueryInput {
-            source: None,
-            entity,
-            where_param: None,
-            where_body: Some(where_body),
-            order,
-            clauses,
-        });
+    // Query form: the source must be an expression carrying a turbofish entity
+    // type (`ctx.set::<Blog>()`, `ctx.set::<Blog>().query()`).
+    let source: Expr = input.parse()?;
+    if !is_value_source(&source) {
+        return Err(syn::Error::new_spanned(
+            &source,
+            "expected a standalone condition (`linq!(|b: Blog| ...)`) or a query source \
+             (`linq!(ctx.set::<Blog>(); ...)`); a bare type name or variable is not a source",
+        ));
     }
+    let source_entity = source_entity_type(&source).map_err(|_| {
+        syn::Error::new_spanned(
+            &source,
+            "expected a standalone condition (`linq!(|b: Blog| ...)`) or a query source with a \
+             turbofish entity type (`linq!(ctx.set::<Blog>(); ...)`)",
+        )
+    })?;
 
-    // `source; clauses` — pure clause query (no where closure)
+    // `source; clauses` — pure clause query (no condition).
     if input.peek(Token![;]) {
-        let entity = source_entity_type(&first)?;
         let clauses = parse_optional_clauses(input)?;
         return Ok(QueryInput {
-            source: Some(first),
-            entity,
+            source: Some(source),
+            entity: source_entity,
             where_param: None,
             where_body: None,
             order: None,
@@ -182,31 +141,34 @@ fn parse_query(input: syn::parse::ParseStream) -> syn::Result<QueryInput> {
         });
     }
 
-    // Legacy: `Blog => order` or `Blog, body` already handled above.
-    // Try: entity type + where body (no comma, e.g. `linq!(Blog b.rating > 5)`)
-    let entity = expr_as_entity_type(&first)?;
-    let where_body = parse_where_rest(input)?;
+    // `source, |b: T| body` or `source, |b| body` (entity inferred from source).
+    let _comma: Token![,] = input.parse().map_err(|_| {
+        syn::Error::new_spanned(
+            &source,
+            "expected `;` (clauses) or `, |b: T| ...` (condition) after the query source",
+        )
+    })?;
+    let (entity, where_param, where_body) = parse_closure_with_inference(input, &source_entity)?;
     let order = parse_optional_order(input)?;
     let clauses = parse_optional_clauses(input)?;
     Ok(QueryInput {
-        source: None,
+        source: Some(source),
         entity,
-        where_param: None,
+        where_param: Some(where_param),
         where_body: Some(where_body),
         order,
         clauses,
     })
 }
 
-fn is_source_expr(expr: &Expr) -> bool {
-    match expr {
-        Expr::Path(ExprPath { path, .. }) => path.segments.len() != 1,
-        _ => true,
-    }
+/// A bare single-segment path is a type name or a variable, not a value the
+/// macro can turn into a `QueryBuilder`; it needs a turbofish source instead.
+fn is_value_source(expr: &Expr) -> bool {
+    !matches!(expr, Expr::Path(p) if p.path.segments.len() == 1)
 }
 
 /// Tries to extract the entity type from a source expression.
-/// Handles `ctx.set::<Blog>()`, `ctx.set::<Blog>().query()`, and bare type paths.
+/// Handles `ctx.set::<Blog>()` and `ctx.set::<Blog>().query()`.
 fn source_entity_type(expr: &Expr) -> syn::Result<Type> {
     // Walk method-call chains to find a turbofish `::<Type>` argument.
     let mut current = expr;
@@ -257,7 +219,7 @@ fn parse_typed_closure(input: syn::parse::ParseStream) -> syn::Result<(Type, Ide
     Ok((entity, param, body))
 }
 
-/// G4: Parses a closure that may be typed (`|b: T| body`) or untyped
+/// Parses a closure that may be typed (`|b: T| body`) or untyped
 /// (`|b| body`). When untyped, the entity type is taken from `fallback`
 /// (extracted from the source expression's turbofish).
 fn parse_closure_with_inference(
@@ -282,20 +244,7 @@ fn parse_closure_with_inference(
     }
 }
 
-/// Parses `|param| body` — returns (param, body). Entity type inferred from context.
-fn parse_untyped_closure(input: syn::parse::ParseStream) -> syn::Result<(Ident, Expr)> {
-    let _open: Token![|] = input.parse()?;
-    let param: Ident = input.parse()?;
-    let _close: Token![|] = input.parse()?;
-    let body = parse_expr_until_fat_arrow_or_semi(input)?;
-    Ok((param, body))
-}
-
-fn parse_where_rest(input: syn::parse::ParseStream) -> syn::Result<Expr> {
-    parse_expr_until_fat_arrow_or_semi(input)
-}
-
-/// Parses optional `=> field` or `=> -field` order clause (Form A backward compat).
+/// Parses optional `=> field` or `=> -field` order clause.
 fn parse_optional_order(input: syn::parse::ParseStream) -> syn::Result<Option<LinqOrder>> {
     if !input.peek(Token![=>]) {
         return Ok(None);
@@ -321,7 +270,7 @@ fn parse_order_expr(expr: &Expr) -> syn::Result<(Expr, bool)> {
     Ok((expr.clone(), false))
 }
 
-/// Parses optional `; clause; clause; ...` clause list (Form B).
+/// Parses optional `; clause; clause; ...` clause list.
 fn parse_optional_clauses(input: syn::parse::ParseStream) -> syn::Result<Vec<LinqClause>> {
     let mut clauses = Vec::new();
     while input.peek(Token![;]) {

@@ -118,21 +118,21 @@ pub async fn run_filter_with_in_operator(
 
     let items = ctx
         .set::<TestItem>()
-        .filter(linq!(TestItem, |t| t.value > 1.5))
+        .filter(linq!(|t: TestItem| t.value > 1.5))
         .to_list()
         .await?;
     assert_eq!(items.len(), 2);
 
     let items_null = ctx
         .set::<TestItem>()
-        .filter(linq!(TestItem, |t| t.value.is_null()))
+        .filter(linq!(|t: TestItem| t.value.is_null()))
         .to_list()
         .await?;
     assert_eq!(items_null.len(), 0);
 
     let items_not_null = ctx
         .set::<TestItem>()
-        .filter(linq!(TestItem, |t| t.name.is_not_null()))
+        .filter(linq!(|t: TestItem| t.name.is_not_null()))
         .to_list()
         .await?;
     assert_eq!(items_not_null.len(), 3);
@@ -191,14 +191,14 @@ pub async fn run_count_and_any(
 
     let any = ctx
         .set::<TestItem>()
-        .filter(linq!(TestItem, |t| t.value == 3))
+        .filter(linq!(|t: TestItem| t.value == 3))
         .any()
         .await?;
     assert!(any);
 
     let any_none = ctx
         .set::<TestItem>()
-        .filter(linq!(TestItem, |t| t.value == 99))
+        .filter(linq!(|t: TestItem| t.value == 99))
         .any()
         .await?;
     assert!(!any_none);

@@ -49,7 +49,7 @@ let rows = query
 | `Predicate::<T>::never()` | `OR` 链起点：`never().or(p) == p`，用于「若干可选 OR 条件」 |
 | `.and(x)` / `.or(x)` / `.not()` | 任意嵌套，`OR` 组自带括号；`x` 可以是 `BoolExpr` 或 `Predicate<T>` |
 | `.and_opt(o)` / `.or_opt(o)` | `o: Option<_>`；`None` 不产生 SQL，可选条件不必写 `if let` |
-| `QueryBuilder::where_(p)` | 以 `AND` 追加到已有条件（含全局过滤器）；值按表达式树顺序绑定 |
+| `QueryBuilder::filter(p)` | 以 `AND` 追加到已有条件（含全局过滤器）；值按表达式树顺序绑定 |
 | `p.into_expr()` / `BoolExpr ⇄ Predicate<T>` | 与 `has_query_filter` 等接收表达式的 API 互转 |
 
 规则与陷阱：
@@ -59,12 +59,12 @@ let rows = query
 - **`and` / `or` 参数直接写 `linq!(...)` 即可**：它本身已经是 `Predicate<T>`；`BoolExpr` 也能通过 `From` 混入，不必手工包装。
 - **可选条件用 `and_opt` / `or_opt`**：`predicate.and_opt(if cond { Some(p) } else { None })`，`None` 不产生 SQL，无需 `if let` 重新赋值。
 - **`contains` 的两种含义**：`ids.contains(b.id)` 是 `IN`（参数是**列**），`b.url.contains(keyword)` 是 `LIKE`（参数是**值**）。
-- **`where_` 与 `filter` 可混用**：两者都是追加 `AND`，`filter` 接收 `linq!(|b: T| ...)` 闭包，`where_` 接收组合好的树。
+- **`filter` 只有一个入口**：接收 `Predicate<T>`（`linq!(|b: T| ...)` 直出）或裸 `BoolExpr`，都是追加 `AND`。
 
 ## 排序
 
 ```rust
-// 形式 B 多子句：order_by 子句
+// 纯子句查询：order_by 子句
 let sorted = linq!(ctx.set::<Blog>(); order_by b.rating desc).to_list().await?;
 
 // 升序（默认）
@@ -105,6 +105,6 @@ let posts = linq!(ctx.set::<Post>(), |p: Post| p.blog_id == target_blog_id;
 |------|------|
 | 先过滤再分页 | 减少排序和分页的数据量 |
 | `skip` + `take` 一起用 | 数据库支持 OFFSET + LIMIT，比内存分页高效 |
-| 形式 B source 须含 turbofish | `linq!(ctx.set::<T>(); ...)` 而非裸变量 |
+| 查询形式的 source 须含 turbofish | `linq!(ctx.set::<T>(); ...)` 而非裸变量 |
 
 下一节：[计数与存在性检查](count-any.md)

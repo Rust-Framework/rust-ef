@@ -217,7 +217,7 @@ mod sqlite_crud {
         // Query with linq filter
         let items = ctx
             .set::<TestItem>()
-            .filter(linq!(TestItem, |t| t.value > 1.5))
+            .filter(linq!(|t: TestItem| t.value > 1.5))
             .to_list()
             .await
             .unwrap();
@@ -226,7 +226,7 @@ mod sqlite_crud {
         // Query with IS NULL via linq
         let items_null = ctx
             .set::<TestItem>()
-            .filter(linq!(TestItem, |t| t.value.is_null()))
+            .filter(linq!(|t: TestItem| t.value.is_null()))
             .to_list()
             .await
             .unwrap();
@@ -235,7 +235,7 @@ mod sqlite_crud {
         // Query with IS NOT NULL via linq
         let items_not_null = ctx
             .set::<TestItem>()
-            .filter(linq!(TestItem, |t| t.name.is_not_null()))
+            .filter(linq!(|t: TestItem| t.name.is_not_null()))
             .to_list()
             .await
             .unwrap();
@@ -301,7 +301,7 @@ mod sqlite_crud {
 
         let any = ctx
             .set::<TestItem>()
-            .filter(linq!(TestItem, |t| t.value == 3))
+            .filter(linq!(|t: TestItem| t.value == 3))
             .any()
             .await
             .unwrap();
@@ -309,7 +309,7 @@ mod sqlite_crud {
 
         let any_none = ctx
             .set::<TestItem>()
-            .filter(linq!(TestItem, |t| t.value == 99))
+            .filter(linq!(|t: TestItem| t.value == 99))
             .any()
             .await
             .unwrap();

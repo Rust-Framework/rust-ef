@@ -3,7 +3,7 @@
 //! Boolean conditions are not compiled to method chains any more: `expand.rs`
 //! turns the where body into a self-contained `BoolExpr` (see `bool.rs`) and
 //! appends it with `QueryBuilder::where_`. That leaves this module with the
-//! Form A `=> order` sugar only.
+//! `=> order` sugar only.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;

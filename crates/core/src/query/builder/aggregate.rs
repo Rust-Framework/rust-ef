@@ -9,7 +9,7 @@ use crate::provider::{DbValue, DbValueConvertError};
 use super::super::ast::{BoolExpr, OrderDirection};
 use super::super::compile::{collect_bool_expr_values, convert_aggregate_cell};
 use super::super::cte::{CteSpec, SetOpSpec, SetOperator};
-use super::super::having_expr::{AggKind, CompareOp, HavingExpr};
+use super::super::having_expr::HavingExpr;
 use super::super::select::SelectQueryBuilder;
 use super::super::window::{WindowFuncKind, WindowSpec};
 use super::core::QueryBuilder;
@@ -21,33 +21,6 @@ impl<T: IEntityType> QueryBuilder<T> {
     #[doc(hidden)]
     pub fn group_by_internal(mut self, columns: &'static [&'static str]) -> Self {
         self.state.group_bys = columns.iter().map(|s| s.to_string()).collect();
-        self
-    }
-
-    /// Adds a HAVING condition.
-    ///
-    /// `#[doc(hidden)]` — called by `linq!(having count(b.id) > 1)` expansion.
-    /// Constructs `agg(column) op ?` with the value pushed to parameters.
-    #[doc(hidden)]
-    pub fn having_internal(
-        mut self,
-        agg: &str,
-        column: &str,
-        op: &str,
-        value: impl Into<DbValue>,
-    ) -> Self {
-        let agg_kind = AggKind::from_name(agg)
-            .unwrap_or_else(|| panic!("invalid aggregate name in having_internal: {agg}"));
-        let cmp_op = CompareOp::from_symbol(op)
-            .unwrap_or_else(|| panic!("invalid operator in having_internal: {op}"));
-        let db_val = value.into();
-        self.state.parameters.push(db_val.clone());
-        self.state.havings.push(HavingExpr::Compare {
-            agg: agg_kind,
-            col: column.to_string(),
-            op: cmp_op,
-            value: db_val,
-        });
         self
     }
 

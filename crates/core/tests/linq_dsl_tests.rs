@@ -1,9 +1,9 @@
-//! Tests for `linq!` Form B (multi-clause query) and Form C (value-producing).
+//! Tests for the `linq!` query form and the `index` / `key` configuration form.
 //!
 //! Covers clauses not already exercised by `linq_tests.rs` / `navigation_tests.rs` /
 //! `sqlite_crud_tests.rs`: `order_by`, `group_by`, `select`, `having`, `min`/`max`
 //! typed return (G1), `count`, `distinct`, `set`+`execute_update`, `take`/`skip`,
-//! `inner_join`/`left_join`, and Form C `filter`/`index`/`key`.
+//! `inner_join`/`left_join`, and the `index`/`key` configuration form.
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::linq;
@@ -429,15 +429,15 @@ async fn test_except_clause() {
 }
 
 #[tokio::test]
-async fn test_form_c_filter_produces_bool_expr() {
+async fn test_predicate_form_produces_bool_expr() {
     use rust_ef::query::BoolExpr;
-    // Form C yields a typed `Predicate<T>`; `into_expr()` exposes the tree.
+    // The predicate form yields a typed `Predicate<T>`; `into_expr()` exposes the tree.
     let expr = linq!(|b: DslBlog| b.published).into_expr();
     assert!(matches!(expr, BoolExpr::Filter(_)));
 }
 
 #[tokio::test]
-async fn test_form_c_index_produces_str_slice() {
+async fn test_index_form_produces_str_slice() {
     let cols: &'static [&'static str] = linq!(index |b: DslBlog| (b.category, b.rating));
     assert_eq!(cols.len(), 2);
     assert!(cols.contains(&"category"));
@@ -445,7 +445,7 @@ async fn test_form_c_index_produces_str_slice() {
 }
 
 #[tokio::test]
-async fn test_form_c_key_produces_str_slice() {
+async fn test_key_form_produces_str_slice() {
     let cols: &'static [&'static str] = linq!(key |b: DslBlog| b.blog_id);
     assert_eq!(cols.len(), 1);
     assert_eq!(cols[0], "blog_id");

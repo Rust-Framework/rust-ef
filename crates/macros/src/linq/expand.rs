@@ -1,9 +1,10 @@
 //! `linq!` macro expansion — the entry point and clause codegen.
 //!
 //! `expand_linq` is the `#[proc_macro]` entry point called by `lib.rs`.
-//! It dispatches to `expand_query` (Form A/B) or `expand_value` (Form C).
+//! It dispatches to `expand_query` (predicate / query form) or `expand_value`
+//! (`index` / `key` form).
 //!
-//! `expand_clauses` translates each `;`-separated Form B clause into a
+//! `expand_clauses` translates each `;`-separated clause into a
 //! `QueryBuilder` method-chain fragment. Terminal clauses (`sum`, `count`,
 //! `execute_update`, etc.) produce the final awaitable expression.
 
@@ -33,7 +34,7 @@ pub fn expand_linq(input: TokenStream) -> TokenStream {
 }
 
 // ---------------------------------------------------------------------------
-// Form A / B expansion
+// Predicate / query expansion
 // ---------------------------------------------------------------------------
 
 fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
@@ -42,7 +43,7 @@ fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
 
     let predicate = compile_where_predicate(entity, input.where_body.as_ref(), where_param)?;
 
-    // Form A `=> order` syntax (only meaningful on a query).
+    // `=> order` sugar (only meaningful on a query).
     let order_chain = if let Some(order) = &input.order {
         let ctx = LinqCtx::single(entity, where_param);
         compile_order(&ctx, &order.body, order.descending)?
@@ -65,7 +66,7 @@ fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
     let source = input.source.as_ref().ok_or_else(|| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
-            "Form B (multi-clause) requires a source expression, e.g. `linq!(ctx.set::<Blog>(); ...)`",
+            "a clause list requires a source expression, e.g. `linq!(ctx.set::<Blog>(); ...)`",
         )
     })?;
 
@@ -405,7 +406,7 @@ fn extract_field_name_only(expr: &Expr) -> syn::Result<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Form C expansion (value-producing)
+// `index` / `key` expansion
 // ---------------------------------------------------------------------------
 
 fn expand_value(input: &ValueInput) -> syn::Result<TokenStream2> {

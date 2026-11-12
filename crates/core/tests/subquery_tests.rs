@@ -223,21 +223,21 @@ async fn test_execute_update_resolves_subquery_predicate() {
 }
 
 #[tokio::test]
-async fn test_form_c_filter_subquery() {
-    // Form C: `linq!(|b: SubBlog| b.posts.any(...))` produces a typed
+async fn test_predicate_filter_subquery() {
+    // Predicate form: `linq!(|b: SubBlog| b.posts.any(...))` produces a typed
     // `Predicate<SubBlog>`; `into_expr()` exposes the encoded tree (used for
     // `has_query_filter`). Verify the Exists variant is built.
     let expr = linq!(|b: SubBlog| b.posts.any(|p: SubPost| p.published)).into_expr();
     assert!(
         matches!(expr, BoolExpr::Exists(_)),
-        "Form C filter with .any() should produce BoolExpr::Exists"
+        "predicate form with .any() should produce BoolExpr::Exists"
     );
 
-    // NOT EXISTS via `none(...)` in Form C.
+    // NOT EXISTS via `none(...)` in the predicate form.
     let expr_none = linq!(|b: SubBlog| b.posts.none(|p: SubPost| p.published)).into_expr();
     assert!(
         matches!(expr_none, BoolExpr::NotExists(_)),
-        "Form C filter with .none() should produce BoolExpr::NotExists"
+        "predicate form with .none() should produce BoolExpr::NotExists"
     );
 }
 

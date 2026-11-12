@@ -520,7 +520,7 @@ FromDbContextOptions (DI bridge)
 | Category | Feature |
 |----------|---------|
 | **Entity** | `#[derive(EntityType)]` with 14 attributes, navigation types, auto-discovery |
-| **Query** | `linq!` expression trees, `filter` / `where_` predicates, join, group_by, aggregation, IN/NOT IN subqueries |
+| **Query** | `linq!` expression trees, composable `filter` predicates, join, group_by, aggregation, IN/NOT IN subqueries |
 | **Advanced Query** | CTE (`linq!(with ...)` syntax sugar), Window functions (10 kinds), Lazy Loading (opt-in) |
 | **Persistence** | `save_changes()`, parameterized queries, transactions, cascade delete (v1.5.2) |
 | **DI** | `add_dbcontext` / `add_dbcontext_keyed` (+ typed `#[derive(DbContextKey)]`, `add_dbcontext_anykey`, async variants), `Arc<DbContext>`, multi-DB context key isolation |

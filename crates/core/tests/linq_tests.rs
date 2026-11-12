@@ -293,7 +293,7 @@ mod linq_tests {
     }
 
     #[tokio::test]
-    async fn test_linq_form_c_in_subquery_uses_argument_column() {
+    async fn test_linq_predicate_in_subquery_uses_argument_column() {
         let mut ctx = make_ctx();
         ctx.set::<LinqBlog>();
         ctx.ensure_created().await.unwrap();
@@ -312,7 +312,7 @@ mod linq_tests {
         });
         ctx.save_changes().await.unwrap();
 
-        // Form C: `ids.contains(b.rating)` → `rating IN (?, ?)`.
+        // Predicate form: `ids.contains(b.rating)` → `rating IN (?, ?)`.
         let ids = [8i32, 2];
         let expr = linq!(|b: LinqBlog| ids.contains(b.rating));
         let rows = ctx
@@ -326,7 +326,7 @@ mod linq_tests {
     }
 
     #[tokio::test]
-    async fn test_linq_legacy_expr_form() {
+    async fn test_linq_source_with_condition() {
         let mut ctx = make_ctx();
         ctx.set::<LinqBlog>();
         ctx.ensure_created().await.unwrap();

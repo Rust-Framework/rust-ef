@@ -122,7 +122,7 @@ fn compile_subquery_parts(
 }
 
 /// Compiles `b.posts.any(|p: Post| p.published)` in the **bool expression**
-/// context (Form C filter, `&&`/`||` combinators) → `BoolExpr::Exists(...)`.
+/// context (`&&` / `||` / `!` combinators) → `BoolExpr::Exists(...)`.
 pub(crate) fn compile_subquery_bool(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,
@@ -194,7 +194,7 @@ fn compile_in_subquery_parts(
 }
 
 /// Compiles `b.field.in_subquery(|p: Post| p.blog_id)` in the **bool
-/// expression** context (Form C filter) → `BoolExpr::InSubquery(...)`.
+/// expression** context → `BoolExpr::InSubquery(...)`.
 pub(crate) fn compile_in_subquery_bool(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,

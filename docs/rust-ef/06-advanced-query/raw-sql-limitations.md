@@ -1,22 +1,31 @@
 # 原始 SQL 与已知限制
 
-## 原始 SQL 片段
+## 条件无法用 `linq!` 表达时
 
-当 `linq!` 无法表达需求时，可注入原始 SQL：
+条件层只有两个出口，值始终走绑定参数：
 
 ```rust
-use rust_ef::query::BoolExpr;
+use rust_ef::query::{BoolExpr, FilterCondition};
 
-let set = ctx.set::<Blog>();
-let query = set.query().filter(|qb| {
-    // 无法直接用 linq! 表达时，退回到原始条件
-    qb // 链式继续...
-});
+// 1) 自包含条件：手写列名（编译期不校验列名，写错只会在查询执行时失败）
+let expr = BoolExpr::Filter(FilterCondition::with_values(
+    "rating", ">", vec![DbValue::F64(0.5)],
+));
+let blogs = ctx.set::<Blog>().query().filter(expr).to_list().await?;
+
+// 2) 一个查询里混用谓词与手写条件
+let blogs = ctx
+    .set::<Blog>()
+    .query()
+    .filter(linq!(|b: Blog| b.active))
+    .filter(expr)
+    .to_list()
+    .await?;
 ```
 
-更直接的方式是通过全局过滤器或 `BoolExpr::Raw`（高级用法，需谨慎处理参数化）。
+`BoolExpr::Raw` 是**框架内部**变体：`RawSql` 的字段与 `BoolExpr::raw()` 都是 `pub(crate)`，外部代码无法构造它，因此不存在"用 Raw 拼 SQL"的注入通道。需要原始 SQL 时走下一节的 provider 连接。
 
-## 已知限制（v0.5）
+## 已知限制
 
 | 限制 | 说明 | 回避策略 |
 |------|------|----------|

@@ -1,4 +1,4 @@
-//! Form C filter → `BoolExpr` value compilation.
+//! Condition expression → `BoolExpr` value compilation.
 //!
 //! Mirrors `compile_expr` but emits `BoolExpr::Filter(...)` / `BoolExpr::And(...)`
 //! / `BoolExpr::Or(...)` / `BoolExpr::Not(...)` value expressions instead of
@@ -11,7 +11,7 @@ use syn::{BinOp, Expr, ExprMethodCall, ExprUnary, UnOp};
 use super::super::context::{extract_field, extract_value, is_field_expr, LinqCtx};
 use super::subquery::{compile_in_subquery_bool, compile_subquery_bool, SubqueryKind};
 
-/// Compiles a boolean expression to a `BoolExpr` value (Form C `filter`).
+/// Compiles a boolean expression to a self-contained `BoolExpr` value.
 pub(crate) fn compile_bool_expr(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<TokenStream2> {
     match expr {
         Expr::Group(g) => compile_bool_expr(ctx, &g.expr),
@@ -101,7 +101,7 @@ pub(crate) fn compile_bool_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Re
     })
 }
 
-/// Compiles method-call boolean expressions for Form C (is_null, is_not_null, contains, etc.).
+/// Compiles method-call conditions (is_null, is_not_null, contains, ...).
 pub(crate) fn compile_bool_method(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,

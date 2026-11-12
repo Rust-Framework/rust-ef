@@ -112,7 +112,7 @@ let affected = linq!(ctx.set::<Blog>(), |b: Blog| b.rating < 1)
     .await?;
 ```
 
-## 8. 形式 B 的 source 用裸变量
+## 8. 查询形式的 source 用裸变量
 
 ```rust
 // ❌ 错误：宏无法从变量推断实体类型（需要 turbofish）

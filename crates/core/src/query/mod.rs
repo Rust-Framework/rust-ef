@@ -1,8 +1,8 @@
 //! Query builder & LINQ-style chainable query API.
 //!
-//! Accumulates filter conditions, orderings, pagination, includes, and
-//! projection metadata through a fluent interface. Terminal methods
-//! (`to_list`, `first`, `count`, etc.) produce real SQL that can be
+//! Accumulates a condition tree ([`Predicate`]), orderings, pagination,
+//! includes, and projection metadata through a fluent interface. Terminal
+//! methods (`to_list`, `first`, `count`, etc.) produce real SQL that can be
 //! executed against a database provider.
 
 mod ast;
