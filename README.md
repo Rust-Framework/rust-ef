@@ -4,11 +4,11 @@
 
 [![Crates.io](https://img.shields.io/crates/v/rust-ef)](https://crates.io/crates/rust-ef)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://rf2026.github.io/rust-ef/)
+[![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://rust-framework.github.io/rust-ef/)
 
 An **EFCore-inspired ORM for Rust** — `DbContext` / `DbSet<T>` / `IEntityType` with rust-dix DI integration, `#[derive(EntityType)]` entities, the `linq!` macro, change tracking, migrations, and multi-database support.
 
-**[Online Documentation](https://rf2026.github.io/rust-ef/)** — a complete developer handbook built with mdBook.
+**[Online Documentation](https://rust-framework.github.io/rust-ef/)** — a complete developer handbook built with mdBook.
 
 ---
 

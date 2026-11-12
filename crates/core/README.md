@@ -9,7 +9,7 @@ the `linq!` macro, change tracking, transactions, migrations, and multi-database
 support, with first-class [`rust-dix` 0.9](https://crates.io/crates/rust-dix)
 dependency-injection integration.
 
-Full handbook: <https://rf2026.github.io/rust-ef/>
+Full handbook: <https://rust-framework.github.io/rust-ef/>
 
 ---
 
@@ -191,7 +191,7 @@ di.rs                  rust-dix 0.10 integration
 
 ## Documentation
 
-- Handbook: <https://rf2026.github.io/rust-ef/>
+- Handbook: <https://rust-framework.github.io/rust-ef/>
 - API docs: <https://docs.rs/rust-ef>
 - Migration guides: [`v2.2`](https://github.com/Rust-Framework/rust-ef/blob/main/docs/v2.2-migration-guide.md) · [`v2.1`](https://github.com/Rust-Framework/rust-ef/blob/main/docs/v2.1-migration-guide.md)
 - Examples: [`examples/blog`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/blog), [`examples/soft_delete`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/soft_delete), [`examples/audit`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/audit)

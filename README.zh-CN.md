@@ -4,11 +4,11 @@
 
 [![Crates.io](https://img.shields.io/crates/v/rust-ef)](https://crates.io/crates/rust-ef)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Rust-Framework/rust-ef/blob/main/LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://rf2026.github.io/rust-ef/)
+[![Documentation](https://img.shields.io/badge/docs-mdBook-blue.svg)](https://rust-framework.github.io/rust-ef/)
 
 一个**受 EFCore 启发的 Rust ORM** —— 提供 `DbContext` / `DbSet<T>` / `IEntityType`，内置 rust-dix 依赖注入（DI）集成、`#[derive(EntityType)]` 实体、`linq!` 宏、变更跟踪（change tracking）、迁移（migrations）以及多数据库支持。
 
-**[在线文档](https://rf2026.github.io/rust-ef/)** —— 使用 mdBook 构建的完整开发者手册。
+**[在线文档](https://rust-framework.github.io/rust-ef/)** —— 使用 mdBook 构建的完整开发者手册。
 
 ---
 
