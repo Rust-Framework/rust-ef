@@ -274,6 +274,23 @@ async fn never_predicate_returns_no_rows() {
     assert!(ids.is_empty());
 }
 
+#[test]
+fn global_filter_infers_the_entity_from_the_predicate() {
+    let mut builder = DbContextOptionsBuilder::new();
+    builder.use_sqlite_in_memory();
+    let options = builder.build();
+    let mut ctx = DbContext::from_options(&options).expect("ctx");
+
+    // No turbofish: `T` comes from the `Predicate<Product>`.
+    ctx.model()
+        .has_query_filter(linq!(|p: Product| !p.is_deleted));
+
+    assert!(ctx
+        .model()
+        .get_query_filter(&std::any::TypeId::of::<Product>())
+        .is_some());
+}
+
 #[tokio::test]
 async fn execute_update_without_set_columns_is_rejected() {
     let mut ctx = make_ctx().await;

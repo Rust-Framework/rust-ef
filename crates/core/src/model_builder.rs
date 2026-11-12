@@ -8,7 +8,7 @@
 use crate::entity::{IEntitySnapshot, IEntityType};
 use crate::entity_snapshot::EntitySnapshot;
 use crate::metadata::EntityTypeMeta;
-use crate::query::{BoolExpr, CompiledFilter};
+use crate::query::{BoolExpr, CompiledFilter, Predicate};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -239,10 +239,13 @@ impl ModelBuilder {
 
     /// Registers a global query filter for entity type `T`.
     ///
-    /// Accepts what `linq!(|b: T| ...)` returns (`Predicate<T>`) as well
-    /// as a bare `BoolExpr`.
-    pub fn has_query_filter<T: IEntityType>(&mut self, filter: impl Into<BoolExpr>) -> &mut Self {
-        let filter = filter.into();
+    /// Accepts what `linq!(|b: T| ...)` returns (`Predicate<T>`, which also
+    /// infers `T`) as well as a bare `BoolExpr`.
+    pub fn has_query_filter<T: IEntityType>(
+        &mut self,
+        filter: impl Into<Predicate<T>>,
+    ) -> &mut Self {
+        let filter = filter.into().into_expr();
         let type_id = TypeId::of::<T>();
         let config = self.configs.entry(type_id).or_default();
         config.query_filter = Some(filter);
