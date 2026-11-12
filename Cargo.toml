@@ -22,3 +22,43 @@ authors = ["Start"]
 
 [workspace.dependencies]
 inventory = "0.3"
+
+# ---------------------------------------------------------------------------
+# Build profiles tuned for `target/` disk usage.
+#
+# Two things made `target/` grow to ~80 GB on Windows:
+#   1. full debug info for *every* dependency: MSVC writes one .pdb per linked
+#      binary, and each integration test here links the whole crate
+#      (~80 MB of symbols per test binary, ~26 GB of .pdb + .exe in total);
+#   2. incremental session directories under `target/debug/incremental` for
+#      every feature/toolchain variant of every test target (~47 GB observed
+#      after weeks of `--all-features` / `chrono,uuid,decimal` gate runs).
+#
+# What these profiles do:
+#   * workspace crates keep line tables, so panics and backtraces still print
+#     `file:line` (full type info is what dominates MSVC .pdb size);
+#   * dependencies carry no debug info (they are read, not single-stepped);
+#   * test/bench units stop using incremental compilation, which removes the
+#     largest and most frequently orphaned cache category;
+#   * plain `dev`/`check` builds keep incremental, so the edit-compile loop
+#     stays fast. Re-enable it for test builds with
+#     CARGO_PROFILE_TEST_INCREMENTAL=true (same pattern as rust-webx/rust-dix).
+#
+# Reclaiming space: `cargo clean` removes everything; the cheaper prune is to
+# delete `target/debug/incremental` only.
+# ---------------------------------------------------------------------------
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+incremental = false
+
+[profile.test.package."*"]
+debug = false
+
+[profile.bench]
+incremental = false
