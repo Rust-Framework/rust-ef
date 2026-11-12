@@ -40,6 +40,11 @@ fn cleanup(path: &Path) {
 async fn anykey_builds_isolated_contexts_per_requested_key() {
     let dir = std::env::temp_dir();
     let base = format!("rust_ef_anykey_{}", std::process::id());
+    // Windows can't delete the DB (or its `-wal`) while the pool still holds it,
+    // so a previous run whose pid was recycled can leave rows behind. Start from
+    // a clean file instead of trusting the previous run's cleanup.
+    cleanup(&dir.join(format!("{}_{}.db", base, "tenant-a")));
+    cleanup(&dir.join(format!("{}_{}.db", base, "tenant-b")));
     let configure_dir = dir.clone();
     let configure_base = base.clone();
     let provider: Arc<ServiceProvider> = ServiceCollection::new()
@@ -154,6 +159,7 @@ fn exact_key_registration_takes_precedence_over_anykey() {
 #[tokio::test]
 async fn anykey_context_uses_the_default_entity_model() {
     let path = db_path("model");
+    cleanup(&path);
     let cs = path.to_string_lossy().to_string();
     let provider: Arc<ServiceProvider> = ServiceCollection::new()
         .add_dbcontext_anykey(move |_key, o| {
