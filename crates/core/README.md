@@ -17,8 +17,8 @@ Full handbook: <https://rf2026.github.io/rust-ef/>
 
 ```toml
 [dependencies]
-rust-ef = "2.1"
-rust-ef-sqlite = "2.1"          # one provider: sqlite / postgres / mysql
+rust-ef = "2.2"
+rust-ef-sqlite = "2.2"          # one provider: sqlite / postgres / mysql
 rust-dix = "0.10"                # DI container
 tokio = { version = "1", features = ["full"] }
 ```
@@ -97,6 +97,20 @@ let shared: Arc<DbContext> = scope.get().unwrap();
 
 See the handbook DI chapter and `docs/v2.1-migration-guide.md`.
 
+## What's new in 2.2
+
+- **Composable predicates**: `linq!(|b: Blog| ...)` returns a typed `Predicate<Blog>`
+  (`and` / `or` / `not` / `and_opt` / `or_opt`, `always()` / `never()` seeds) that you
+  compose per request and apply with `query.filter(predicate)`; `count()` and the page
+  query share one condition. The old `linq!(filter ...)` keyword and the
+  `filter_column` / `or_where` chain API are gone — see `docs/v2.2-migration-guide.md`.
+- **Database-level constraints**: composite / partial / expression indexes, composite
+  foreign keys, `CHECK`, column defaults, MySQL table options, snapshot export and
+  `DbContext::migrate(dir)` with provider-appropriate atomicity.
+- **EFCore entity-configuration parity**: column type / precision / fixed length /
+  collation / comments, computed columns, alternate keys, views, keyless entities,
+  schema-qualified tables, `INCLUDE` columns and `#[derive(DbEnum)]`.
+
 ## Query and save
 
 ```rust
@@ -121,10 +135,10 @@ let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 
 | Area | Highlights |
 |------|-----------|
-| Entity mapping | `#[derive(EntityType)]`, 12+ field attributes, navigation types, compile-time registration |
-| Query | `linq!` expression trees, filter/join/group_by/aggregation, CTEs, window functions, lazy loading (opt-in) |
+| Entity mapping | `#[derive(EntityType)]` with 20+ field attributes, navigation types, compile-time registration, `#[derive(DbEnum)]` |
+| Query | `linq!` expression trees, composable `Predicate<T>` filters, join/group_by/aggregation, CTEs, window functions, lazy loading (opt-in) |
 | Persistence | `save_changes()`, parameterized SQL, transactions and savepoints, cascade delete, bulk `execute_update` / `execute_delete` |
-| Migrations | model diff, Up/Down SQL, migration history, FK `ON DELETE` |
+| Migrations | model diff, Up/Down SQL, migration history, composite/partial/expression indexes, composite FKs, `CHECK`, column defaults/comments/computed columns, MySQL table options, schema-qualified tables, views |
 | DI | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_anykey` / async variants on rust-dix 0.10 (Scoped, owned + shared resolution, typed keys, dynamic contexts) |
 | Interceptors | before/after/failure hooks around `save_changes()` |
 | Observability | optional `tracing` spans and slow-query warnings |
@@ -179,6 +193,7 @@ di.rs                  rust-dix 0.10 integration
 
 - Handbook: <https://rf2026.github.io/rust-ef/>
 - API docs: <https://docs.rs/rust-ef>
+- Migration guides: [`v2.2`](https://github.com/Rust-Framework/rust-ef/blob/main/docs/v2.2-migration-guide.md) · [`v2.1`](https://github.com/Rust-Framework/rust-ef/blob/main/docs/v2.1-migration-guide.md)
 - Examples: [`examples/blog`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/blog), [`examples/soft_delete`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/soft_delete), [`examples/audit`](https://github.com/Rust-Framework/rust-ef/tree/main/examples/audit)
 
 ## License

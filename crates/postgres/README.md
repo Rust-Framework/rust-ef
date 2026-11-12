@@ -17,8 +17,8 @@ EF Core-inspired ORM for Rust.
 
 ```toml
 [dependencies]
-rust-ef = "2.1"
-rust-ef-postgres = "2.1"
+rust-ef = "2.2"
+rust-ef-postgres = "2.2"
 rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```

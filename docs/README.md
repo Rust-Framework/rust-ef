@@ -49,4 +49,4 @@ docs/
 
 编辑 `docs/rust-ef/` 下的 Markdown 即可；Docbit 启动时会自动确保 `INDEX.json` 存在。
 
-发布流程见 [发布清单](RELEASE.md)。
+发布流程见 [发布清单](RELEASE.md)；发布就绪结论与证据见 [2.2.0 生产就绪报告](PRODUCTION_READINESS_SPEC.md)。

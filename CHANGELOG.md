@@ -1372,7 +1372,7 @@ options.use_mysql_with_tls(
 
 - 可观测性维度：⚠️ → ✅（tracing 集成完成）
 - SemVer 维度：⚠️ → ✅（严格化策略落地 + 迁移指南文档化）
-- 详见 `docs/PRODUCTION_READINESS_SPEC.md` 第 4.2 节
+- 详见 `docs/archive/PRODUCTION_READINESS_SPEC_v1.6.md` 第 4.2 节
 
 ---
 
@@ -1955,7 +1955,7 @@ public APIs and a comprehensive documentation set.
   (`rust-ef-macros`, `rust-ef-sqlite`, `rust-ef-postgres`, `rust-ef-mysql`).
 - `README.md` Quick Start dependencies updated from `rust-ef = "0.3"` to
   `rust-ef = "1.0"`; added documentation badge and online docs link.
-- `docs/PRODUCTION_READINESS_SPEC.md` readiness 98% → 100%, all 1.0 GA
+- `docs/archive/PRODUCTION_READINESS_SPEC_v1.6.md` readiness 98% → 100%, all 1.0 GA
   acceptance criteria marked complete.
 - `.gitignore` now excludes `docs/rust-ef/book/` mdBook build output.
 
