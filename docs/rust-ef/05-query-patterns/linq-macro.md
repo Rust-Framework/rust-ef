@@ -146,12 +146,12 @@ let affected = linq!(ctx.set::<Blog>(), |b: Blog| b.rating < 0.1;
 
 ---
 
-## 形式 C：值产生（ModelBuilder 配置）
+## 形式 C：值产生（谓词与配置）
 
 用于无 `QueryBuilder` 实例的场景，产出值而非链式调用：
 
 ```rust
-// 全局查询过滤器 → 产出 BoolExpr
+// 全局查询过滤器 → 产出 Predicate<Blog>（has_query_filter 也接受裸 BoolExpr）
 builder.has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
 
 // 索引定义 → 产出 &'static [&'static str]
@@ -161,18 +161,17 @@ builder.has_index(linq!(index |b: Blog| (b.author_id, b.created_at)));
 builder.has_key(linq!(key |b: Blog| b.blog_id));
 ```
 
-形式 C 的 `filter` 输出自带绑定值，可以直接 `and` / `or` 组合成 `Predicate<T>`，再用 `QueryBuilder::where_` 应用：
+形式 C 的 `filter` 产出**带实体类型的 `Predicate<T>`**，自带绑定值，可直接 `and` / `or` / `and_opt` 组合，再用 `QueryBuilder::where_` 应用：
 
 ```rust
 let mut predicate = Predicate::<Blog>::always()
-    .and(linq!(filter |b: Blog| b.deleted_at.is_null()));
-
-if let Some(keyword) = keyword {
-    predicate = predicate.and(linq!(filter |b: Blog| b.url.contains(keyword)));
-}
+    .and(linq!(filter |b: Blog| b.deleted_at.is_null()))
+    .and_opt(keyword.map(|kw| linq!(filter |b: Blog| b.url.contains(kw))));
 
 let blogs = ctx.set::<Blog>().query().where_(predicate).to_list().await?;
 ```
+
+需要裸 `BoolExpr`（例如跨 API 传递或自建条件）时用 `.into_expr()`。
 
 ---
 

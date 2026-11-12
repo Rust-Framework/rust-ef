@@ -371,11 +371,14 @@ let id = blog.id; // 已被填充！
 ### 不要使用基于字符串的列名
 
 ```rust
-// ❌ 错误：没有编译期检查
-ctx.set::<Blog>().query().filter_column("slug", "=", "hello").to_list().await?;
+// ❌ 错误：手写列名，写错只会在查询执行时才报错
+let expr = BoolExpr::Filter(FilterCondition::with_values(
+    "slug", "=", vec![DbValue::String(slug)],
+));
+ctx.set::<Blog>().query().where_(expr).to_list().await?;
 
-// ✅ 正确：类型安全的 linq! 表达式
-linq!(ctx.set::<Blog>(), |b: Blog| b.slug == "hello").to_list().await?;
+// ✅ 正确：类型安全的 linq! 表达式（列名在编译期校验）
+linq!(ctx.set::<Blog>(), |b: Blog| b.slug == slug).to_list().await?;
 ```
 
 ### 不要在每个查询里重复 `is_deleted` —— 使用全局查询过滤器
@@ -516,7 +519,7 @@ FromDbContextOptions (DI bridge)
 | 分类 | 特性 |
 |----------|---------|
 | **实体 Entity** | `#[derive(EntityType)]` 支持 14 种属性、导航类型、自动发现 |
-| **查询 Query** | `linq!` 表达式树、`filter` / `filter_column`、join、group_by、聚合、IN/NOT IN 子查询 |
+| **查询 Query** | `linq!` 表达式树、`filter` / `where_` 谓词、join、group_by、聚合、IN/NOT IN 子查询 |
 | **进阶查询 Advanced Query** | CTE（`linq!(with ...)` 语法糖）、窗口函数（10 种）、懒加载（可选） |
 | **持久化 Persistence** | `save_changes()`、参数化查询、事务、级联删除（v1.5.2） |
 | **DI 依赖注入** | `add_dbcontext` / `add_dbcontext_keyed`（含类型化 `#[derive(DbContextKey)]`、`add_dbcontext_anykey`、异步变体）、`Arc<DbContext>`、多数据库 context key 隔离 |

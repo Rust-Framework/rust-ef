@@ -8,9 +8,10 @@
 use std::collections::HashSet;
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+use rust_ef::error::EFError;
 use rust_ef::prelude::*;
 use rust_ef::provider::DbValue;
-use rust_ef::query::{Predicate, QueryBuilder, QueryState};
+use rust_ef::query::{BoolExpr, FilterCondition, Predicate, QueryBuilder, QueryState};
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 #[derive(Debug, Clone, EntityType)]
@@ -112,13 +113,66 @@ fn where_appends_to_conditions_added_earlier() {
 }
 
 #[test]
-fn predicate_round_trips_to_bool_expr() {
-    let predicate: Predicate<Product> = linq!(filter |p: Product| p.price > 0.0).into();
+fn form_c_yields_a_typed_predicate() {
+    // `linq!(filter ...)` is already a `Predicate<Product>`; `into_expr()`
+    // exposes the encoded tree for APIs that take a bare `BoolExpr`.
+    let predicate: Predicate<Product> = linq!(filter |p: Product| p.price > 0.0);
 
     let mut state = QueryState::new("predicate_products");
     state.where_expr = Some(predicate.into_expr());
 
     assert!(state.to_sql().contains("price > ?"));
+}
+
+#[test]
+fn identity_predicates_are_reduced_away() {
+    let base = linq!(filter |p: Product| p.price > 1.0);
+    let with_always = Predicate::<Product>::always().and(base.clone());
+    let with_never = Predicate::<Product>::never().or(base);
+
+    let (and_sql, and_params) = QueryBuilder::<Product>::new("predicate_products")
+        .where_(with_always)
+        .compile_sql();
+    let (or_sql, or_params) = QueryBuilder::<Product>::new("predicate_products")
+        .where_(with_never)
+        .compile_sql();
+
+    assert_eq!(and_sql, or_sql);
+    assert_eq!(and_sql, "SELECT * FROM predicate_products WHERE price > ?");
+    assert_eq!(and_params, or_params);
+    assert!(!and_sql.contains("1=1") && !and_sql.contains("1=0"));
+}
+
+#[test]
+fn identity_flags_and_option_combinators() {
+    assert!(Predicate::<Product>::always().is_always());
+    assert!(Predicate::<Product>::never().is_never());
+    assert!(Predicate::<Product>::always().not().is_never());
+    assert!(Predicate::<Product>::never().not().is_always());
+
+    // Optional conditions: `None` contributes no SQL, so handlers do not need
+    // an `if let` around each optional filter.
+    let none: Option<Predicate<Product>> = None;
+    let predicate = Predicate::<Product>::always()
+        .and_opt(none)
+        .and_opt(Some(linq!(filter |p: Product| p.price > 1.0)))
+        .or_opt(None::<Predicate<Product>>);
+
+    let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
+        .where_(predicate)
+        .compile_sql();
+    assert_eq!(sql, "SELECT * FROM predicate_products WHERE price > ?");
+    assert_eq!(params, vec![DbValue::F64(1.0)]);
+}
+
+#[test]
+#[should_panic(expected = "missing bound values")]
+fn hand_built_condition_without_values_is_rejected() {
+    // `FilterCondition::new` declares a placeholder but carries no value; using
+    // it as a self-contained predicate must fail fast instead of handing the
+    // driver a `?` with nothing to bind.
+    let expr = BoolExpr::Filter(FilterCondition::new("price", ">", 1));
+    let _ = QueryBuilder::<Product>::new("predicate_products").where_(expr);
 }
 
 // ---------------------------------------------------------------------------
@@ -218,4 +272,24 @@ async fn count_and_page_share_one_predicate() {
 async fn never_predicate_returns_no_rows() {
     let ids = matching_ids(Predicate::<Product>::never()).await;
     assert!(ids.is_empty());
+}
+
+#[tokio::test]
+async fn execute_update_without_set_columns_is_rejected() {
+    let mut ctx = make_ctx().await;
+    seed(&mut ctx).await;
+
+    let err = ctx
+        .set::<Product>()
+        .query()
+        .where_(product_filter("rust", None))
+        .execute_update()
+        .execute()
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, EFError::Configuration(..)),
+        "expected a configuration error, got {err:?}"
+    );
 }

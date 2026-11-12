@@ -372,11 +372,14 @@ let id = blog.id; // already populated!
 ### Don't use string-based column names
 
 ```rust
-// ❌ WRONG: no compile-time checking
-ctx.set::<Blog>().query().filter_column("slug", "=", "hello").to_list().await?;
+// ❌ WRONG: hand-written column name — a typo only fails when the query runs
+let expr = BoolExpr::Filter(FilterCondition::with_values(
+    "slug", "=", vec![DbValue::String(slug)],
+));
+ctx.set::<Blog>().query().where_(expr).to_list().await?;
 
-// ✅ CORRECT: type-safe linq! expressions
-linq!(ctx.set::<Blog>(), |b: Blog| b.slug == "hello").to_list().await?;
+// ✅ CORRECT: type-safe linq! expressions (column checked at compile time)
+linq!(ctx.set::<Blog>(), |b: Blog| b.slug == slug).to_list().await?;
 ```
 
 ### Don't repeat `is_deleted` in every query — use global query filters
@@ -517,7 +520,7 @@ FromDbContextOptions (DI bridge)
 | Category | Feature |
 |----------|---------|
 | **Entity** | `#[derive(EntityType)]` with 14 attributes, navigation types, auto-discovery |
-| **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation, IN/NOT IN subqueries |
+| **Query** | `linq!` expression trees, `filter` / `where_` predicates, join, group_by, aggregation, IN/NOT IN subqueries |
 | **Advanced Query** | CTE (`linq!(with ...)` syntax sugar), Window functions (10 kinds), Lazy Loading (opt-in) |
 | **Persistence** | `save_changes()`, parameterized queries, transactions, cascade delete (v1.5.2) |
 | **DI** | `add_dbcontext` / `add_dbcontext_keyed` (+ typed `#[derive(DbContextKey)]`, `add_dbcontext_anykey`, async variants), `Arc<DbContext>`, multi-DB context key isolation |

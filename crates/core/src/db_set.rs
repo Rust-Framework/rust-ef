@@ -73,8 +73,8 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
         }
     }
 
-    pub fn set_query_filter(&mut self, filter: BoolExpr) {
-        self.query_filter = Some(filter);
+    pub fn set_query_filter(&mut self, filter: impl Into<BoolExpr>) {
+        self.query_filter = Some(filter.into());
     }
 
     /// Sets the global filter map (table_name → BoolExpr) used by

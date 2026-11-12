@@ -77,7 +77,18 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     }
 
     /// Executes the bulk update.
+    ///
+    /// Returns [`EFError::configuration`](crate::error::EFError::configuration)
+    /// when no `set` column was added — `UPDATE ... SET` without assignments is
+    /// not valid SQL.
     pub async fn execute(self) -> EFResult<u64> {
+        if self.updates.is_empty() {
+            return Err(crate::error::EFError::configuration(
+                "execute_update requires at least one set column (e.g. \
+                 `set_column_internal`)"
+                    .to_string(),
+            ));
+        }
         let sql = self.to_sql();
         let params = self.params();
         let provider = self.provider.as_ref().ok_or_else(|| {

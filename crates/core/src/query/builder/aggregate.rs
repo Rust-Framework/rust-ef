@@ -162,7 +162,13 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// `collect_bool_expr_values` and stored in `params` so that `all_params()`
     /// returns them in the correct order (CTE params first).
     #[doc(hidden)]
-    pub fn with_cte_typed(mut self, name: &str, table: &str, where_expr: BoolExpr) -> Self {
+    pub fn with_cte_typed(
+        mut self,
+        name: &str,
+        table: &str,
+        where_expr: impl Into<BoolExpr>,
+    ) -> Self {
+        let where_expr = where_expr.into();
         let params = collect_bool_expr_values(&where_expr);
         let cte = CteSpec {
             name: name.to_string(),
@@ -194,8 +200,9 @@ impl<T: IEntityType> QueryBuilder<T> {
         table: &str,
         link_fk: &str,
         link_pk: &str,
-        where_expr: BoolExpr,
+        where_expr: impl Into<BoolExpr>,
     ) -> Self {
+        let where_expr = where_expr.into();
         let params = collect_bool_expr_values(&where_expr);
         let cte = CteSpec {
             name: name.to_string(),

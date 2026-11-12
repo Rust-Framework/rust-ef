@@ -427,7 +427,10 @@ fn expand_value(input: &ValueInput) -> syn::Result<TokenStream2> {
             body,
         } => {
             let ctx = LinqCtx::single(entity, Some(param));
-            compile_bool_expr(&ctx, body)
+            let expr = compile_bool_expr(&ctx, body)?;
+            Ok(quote! {
+                rust_ef::query::Predicate::<#entity>::from_expr(#expr)
+            })
         }
         ValueInput::Index { entity, fields } => expand_field_array(entity, fields),
         ValueInput::Key { entity, fields } => expand_field_array(entity, fields),

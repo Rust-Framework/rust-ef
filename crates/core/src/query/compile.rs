@@ -14,6 +14,7 @@ use crate::metadata::EntityTypeMeta;
 use crate::provider::{DbValue, DbValueConvertError};
 
 use super::ast::{BoolExpr, InSubquerySpec, SubquerySpec};
+use super::state::QueryState;
 
 // ---------------------------------------------------------------------------
 // Portable placeholder generator
@@ -278,6 +279,22 @@ fn resolve_subquery_spec(spec: &mut SubquerySpec, outer_meta: &EntityTypeMeta) {
 
         // Outer table: from the outer entity's table_name
         spec.outer_table = outer_meta.table_name.to_string();
+    }
+}
+
+/// Fills in the resolved table/column fields of correlated subqueries in
+/// `state.where_expr` (mutates in place).
+///
+/// Must run before compiling a WHERE clause that may contain `EXISTS` /
+/// `IN (SELECT ...)` nodes — every entry point that compiles SQL for execution
+/// (`to_sql`, `first`, `count`, `execute_update`, `execute_delete`) goes
+/// through it. It is a no-op when the predicate has no subqueries, so entities
+/// whose `entity_meta()` is `unimplemented!()` remain usable for SQL-shape tests.
+pub(crate) fn resolve_state_subqueries<T: crate::entity::IEntityType>(state: &mut QueryState) {
+    if let Some(expr) = &mut state.where_expr {
+        if has_subqueries(expr) {
+            resolve_subqueries(expr, &T::entity_meta());
+        }
     }
 }
 

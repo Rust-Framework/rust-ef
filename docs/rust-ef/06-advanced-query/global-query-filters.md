@@ -2,14 +2,14 @@
 
 全局查询过滤器用于为所有查询自动附加 WHERE 条件，典型场景包括**软删除**和**多租户隔离**。
 
-通过 `linq!` 宏的**形式 C**（`filter` 关键字）产出 `BoolExpr` 值，传入 `ModelBuilder.has_query_filter::<T>`。字符串 API（`has_query_filter("...")`）已移除。
+通过 `linq!` 宏的**形式 C**（`filter` 关键字）产出可组合的 `Predicate<T>` 值，传入 `ModelBuilder.has_query_filter::<T>`（它同时接受裸 `BoolExpr`）。字符串 API（`has_query_filter("...")`）已移除。
 
 ## 注册过滤器
 
 ```rust
 let mut ctx = DbContext::from_options(&options)?;
 
-// 形式 C：linq!(filter |b: T| <bool_expr>) 产出 BoolExpr
+// 形式 C：linq!(filter |b: T| <bool_expr>) 产出 Predicate<T>
 ctx.model().has_query_filter::<Blog>(
     linq!(filter |b: Blog| b.deleted_at.is_null())
 );
@@ -17,6 +17,8 @@ ctx.model().has_query_filter::<Blog>(
 ctx.set::<Blog>();
 ctx.ensure_created().await?;
 ```
+
+需要与其他条件组合时，`Predicate` 可继续 `and` / `or`；需要裸 `BoolExpr`（如跨 API 传递）时用 `.into_expr()`。
 
 也可以用 `BoolExpr::Filter(FilterCondition::with_values(...))` 直接构造，无需宏：
 

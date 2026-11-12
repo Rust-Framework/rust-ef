@@ -32,6 +32,14 @@ pub struct FilterCondition {
 }
 
 impl FilterCondition {
+    /// Creates a condition with a declared parameter count but no values.
+    ///
+    /// `#[doc(hidden)]` — used by `linq!` expansion for value-less operators
+    /// (`IS NULL`) and by the in-builder condition path. Conditions that bind
+    /// values must be built with [`FilterCondition::with_values`], otherwise the
+    /// generated `?` has nothing to bind to (`QueryBuilder::apply_query_filter`
+    /// rejects that mismatch).
+    #[doc(hidden)]
     pub fn new(column: impl Into<String>, operator: impl Into<String>, param_count: usize) -> Self {
         Self {
             column: column.into(),

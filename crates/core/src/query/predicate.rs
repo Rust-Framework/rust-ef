@@ -1,20 +1,20 @@
 //! Composable query predicates — `AND` / `OR` / `NOT` over expression trees.
 //!
-//! `linq!(filter |b: T| ...)` produces a self-contained [`BoolExpr`] fragment
-//! that already carries its bound values. [`Predicate<T>`] tags such a fragment
-//! with the entity it was written for and adds the combinators needed to build
-//! a WHERE clause condition by condition — the rust-ef equivalent of EF Core's
-//! expression-tree `PredicateBuilder`:
+//! `linq!(filter |b: T| ...)` produces a self-contained [`Predicate<T>`] that
+//! already carries its bound values, so predicates can be built condition by
+//! condition and combined before they are applied — the rust-ef equivalent of
+//! EF Core's expression-tree `PredicateBuilder`:
 //!
 //! - [`Predicate::always`] / [`Predicate::never`] seed an `AND` / `OR` chain,
 //! - [`Predicate::and`] / [`Predicate::or`] / [`Predicate::not`] nest freely,
+//!   with [`Predicate::and_opt`] / [`Predicate::or_opt`] for optional filters,
 //! - [`QueryBuilder::where_`] applies the result, appending it with `AND` and
 //!   registering its values in tree order.
 //!
-//! Unlike a `linq!(|b: T| ...)` closure — which is a one-shot chain — a
-//! predicate is a value: it can be built condition by condition, stored,
-//! reused across queries, and it keeps its `OR` groups and bound values in
-//! place when it is applied later.
+//! A predicate is a value, not a one-shot `linq!(|b: T| ...)` closure: it can be
+//! stored, cloned, and reused across the `count()` / page / export queries of
+//! the same request. [`BoolExpr`] is the encoded tree behind it; use
+//! [`Predicate::into_expr`] when an API asks for a bare expression.
 
 use std::marker::PhantomData;
 
@@ -43,29 +43,25 @@ use super::ast::BoolExpr;
 /// }
 ///
 /// fn product_filter(keyword: Option<&str>, min_price: Option<f64>) -> Predicate<Product> {
-///     // AND 链的起始条件；always() 本身不产生 SQL。
-///     let mut predicate = Predicate::<Product>::always()
-///         .and(linq!(filter |p: Product| !p.is_deleted));
+///     let keyword_group = keyword.map(|keyword| {
+///         linq!(filter |p: Product| p.name.contains(keyword))
+///             .or(linq!(filter |p: Product| p.description.contains(keyword)))
+///     });
+///     let min_price = min_price.map(|min_price| linq!(filter |p: Product| p.price >= min_price));
 ///
-///     // Name 或 Description 命中关键字：OR 组作为一个整体与外部 AND。
-///     if let Some(keyword) = keyword {
-///         predicate = predicate.and(
-///             linq!(filter |p: Product| p.name.contains(keyword))
-///                 .or(linq!(filter |p: Product| p.description.contains(keyword))),
-///         );
-///     }
-///
-///     if let Some(min_price) = min_price {
-///         predicate = predicate.and(linq!(filter |p: Product| p.price >= min_price));
-///     }
-///     predicate
+///     // always() 是 AND 链起点，本身不产生 SQL；
+///     // and_opt 让「可选条件」不需要额外 if let。
+///     Predicate::<Product>::always()
+///         .and(linq!(filter |p: Product| !p.is_deleted))
+///         .and_opt(keyword_group)
+///         .and_opt(min_price)
 /// }
 ///
 /// let predicate = product_filter(Some("rust"), Some(9.9));
 /// let sql = QueryBuilder::<Product>::new("products")
 ///     .where_(predicate)
 ///     .to_sql();
-/// // (is_deleted = ?) AND ((name LIKE ?) OR (description LIKE ?)) AND (price >= ?)
+/// // NOT (is_deleted = ?) AND ((name LIKE ?) OR (description LIKE ?)) AND (price >= ?)
 /// assert!(sql.contains("(name LIKE ?) OR (description LIKE ?)"));
 /// ```
 #[derive(Debug, Clone)]
@@ -99,7 +95,11 @@ impl<T: IEntityType> Predicate<T> {
         Self::with_kind(PredicateKind::Never)
     }
 
-    /// Wraps an expression tree produced by `linq!(filter |b: T| ...)`.
+    /// Wraps an expression tree as a predicate.
+    ///
+    /// Prefer `linq!(filter |b: T| ...)`, which is already typed and
+    /// self-contained. This is the unchecked door for reusing a `BoolExpr`
+    /// produced elsewhere (e.g. a filter read back from `ModelBuilder`).
     pub fn from_expr(expr: BoolExpr) -> Self {
         Self::with_kind(PredicateKind::Expr(expr))
     }
@@ -109,6 +109,16 @@ impl<T: IEntityType> Predicate<T> {
             kind,
             _marker: PhantomData,
         }
+    }
+
+    /// Whether the predicate matches every row (the `AND` identity).
+    pub fn is_always(&self) -> bool {
+        matches!(self.kind, PredicateKind::Always)
+    }
+
+    /// Whether the predicate matches no row.
+    pub fn is_never(&self) -> bool {
+        matches!(self.kind, PredicateKind::Never)
     }
 
     /// `self AND other`.
@@ -129,6 +139,15 @@ impl<T: IEntityType> Predicate<T> {
         Self::with_kind(kind)
     }
 
+    /// `self AND other` when `other` is `Some` — the one-liner for an optional
+    /// filter. `None` leaves the predicate unchanged.
+    pub fn and_opt(self, other: Option<impl Into<Predicate<T>>>) -> Self {
+        match other {
+            Some(other) => self.and(other),
+            None => self,
+        }
+    }
+
     /// `self OR other`.
     ///
     /// `never()` is the identity (`never().or(p) == p`) and `always()` is
@@ -144,6 +163,15 @@ impl<T: IEntityType> Predicate<T> {
             }
         };
         Self::with_kind(kind)
+    }
+
+    /// `self OR other` when `other` is `Some`; `None` leaves the predicate
+    /// unchanged.
+    pub fn or_opt(self, other: Option<impl Into<Predicate<T>>>) -> Self {
+        match other {
+            Some(other) => self.or(other),
+            None => self,
+        }
     }
 
     /// `NOT self`.
@@ -181,7 +209,8 @@ impl<T: IEntityType> Predicate<T> {
 }
 
 impl<T: IEntityType> From<BoolExpr> for Predicate<T> {
-    /// Lets `linq!(filter |b: T| ...)` fragments be combined directly.
+    /// Lets `BoolExpr` fragments (e.g. a stored global filter) be combined
+    /// directly. This conversion is unchecked: prefer `linq!(filter ...)`.
     fn from(expr: BoolExpr) -> Self {
         Self::from_expr(expr)
     }

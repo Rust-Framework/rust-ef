@@ -192,17 +192,49 @@ async fn test_any_combined_with_and() {
 }
 
 #[tokio::test]
+async fn test_execute_update_resolves_subquery_predicate() {
+    // Bulk UPDATE must resolve correlated subqueries exactly like a SELECT does;
+    // otherwise the statement reaches the driver with empty table names.
+    let mut ctx = seed().await;
+    let predicate = linq!(filter |b: SubBlog| b.posts.any(|p: SubPost| p.published));
+
+    let builder = ctx
+        .set::<SubBlog>()
+        .query()
+        .where_(predicate)
+        .execute_update()
+        .set_column_internal(SubBlog::COLUMN_URL, "https://updated.example");
+
+    let sql = builder.to_sql();
+    assert!(sql.contains("sub_posts"), "unresolved subquery: {sql}");
+    assert!(!sql.contains("\"\""), "unresolved subquery: {sql}");
+
+    let affected = builder.execute().await.unwrap();
+    assert_eq!(affected, 2, "blogs 1 and 2 have published posts");
+
+    let updated = ctx
+        .set::<SubBlog>()
+        .query()
+        .where_(linq!(filter |b: SubBlog| b.url == "https://updated.example"))
+        .to_list()
+        .await
+        .unwrap();
+    assert_eq!(updated.len(), 2);
+}
+
+#[tokio::test]
 async fn test_form_c_filter_subquery() {
-    // Form C: `linq!(filter |b: SubBlog| b.posts.any(...))` produces a BoolExpr
-    // value (used for `has_query_filter`). Verify the Exists variant is built.
-    let expr: BoolExpr = linq!(filter |b: SubBlog| b.posts.any(|p: SubPost| p.published));
+    // Form C: `linq!(filter |b: SubBlog| b.posts.any(...))` produces a typed
+    // `Predicate<SubBlog>`; `into_expr()` exposes the encoded tree (used for
+    // `has_query_filter`). Verify the Exists variant is built.
+    let expr = linq!(filter |b: SubBlog| b.posts.any(|p: SubPost| p.published)).into_expr();
     assert!(
         matches!(expr, BoolExpr::Exists(_)),
         "Form C filter with .any() should produce BoolExpr::Exists"
     );
 
     // NOT EXISTS via `none(...)` in Form C.
-    let expr_none: BoolExpr = linq!(filter |b: SubBlog| b.posts.none(|p: SubPost| p.published));
+    let expr_none = linq!(filter |b: SubBlog| b.posts.none(|p: SubPost| p.published)).into_expr();
     assert!(
         matches!(expr_none, BoolExpr::NotExists(_)),
         "Form C filter with .none() should produce BoolExpr::NotExists"
