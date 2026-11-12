@@ -9,6 +9,7 @@ use super::super::ast::{
     BoolExpr, FilterCondition, InSubquerySpec, OrderBy, OrderDirection, SubquerySpec,
 };
 use super::super::compile::{collect_bool_expr_values, filters_to_and_expr};
+use super::super::predicate::Predicate;
 use super::super::state::QueryState;
 use super::core::QueryBuilder;
 
@@ -122,6 +123,33 @@ impl<T: IEntityType> QueryBuilder<T> {
     pub fn distinct(mut self) -> Self {
         self.state.distinct = true;
         self
+    }
+
+    /// Appends a composable predicate with `AND`.
+    ///
+    /// Accepts a [`Predicate`] — fragments from `linq!(filter |b: T| ...)`
+    /// combined with [`Predicate::and`] / [`Predicate::or`] / [`Predicate::not`]
+    /// — or a bare [`BoolExpr`]. The fragment's bound values are registered in
+    /// tree order, so they line up with the generated placeholders.
+    ///
+    /// Conditions accumulate with `AND`, and `Predicate::always()` adds no SQL,
+    /// which makes it safe to seed a chain and apply it unconditionally:
+    ///
+    /// ```ignore
+    /// let mut predicate = Predicate::<Product>::always();
+    /// if let Some(keyword) = keyword {
+    ///     predicate = predicate.and(
+    ///         linq!(filter |p: Product| p.name.contains(keyword))
+    ///             .or(linq!(filter |p: Product| p.description.contains(keyword))),
+    ///     );
+    /// }
+    /// let query = ctx.set::<Product>().query().where_(predicate);
+    /// ```
+    pub fn where_(self, predicate: impl Into<Predicate<T>>) -> Self {
+        match predicate.into().into_where_expr() {
+            Some(expr) => self.apply_query_filter(expr),
+            None => self,
+        }
     }
 
     #[doc(hidden)]
