@@ -74,13 +74,8 @@ impl<T: IEntityType> QueryBuilder<T> {
         &self.state
     }
 
-    /// Applies a compile-time LINQ expression tree from `linq!(?)`.
-    pub fn filter(self, f: impl FnOnce(Self) -> Self) -> Self {
-        f(self)
-    }
-
     /// Applies a self-contained filter (a `BoolExpr` produced by
-    /// `linq!(filter |b: T| ...)`, or a predicate's expression) to this query.
+    /// `linq!(|b: T| ...)`, or a predicate's expression) to this query.
     ///
     /// Inline values carried by the expression are appended to the query
     /// parameters in tree order, so they line up with the generated
@@ -98,7 +93,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             filter.total_param_count(),
             values.len(),
             "self-contained BoolExpr is missing bound values: build conditions with \
-             `linq!(filter |b: T| ...)` or `FilterCondition::with_values`, not \
+             `linq!(|b: T| ...)` or `FilterCondition::with_values`, not \
              `FilterCondition::new`"
         );
         self.state.parameters.extend(values);

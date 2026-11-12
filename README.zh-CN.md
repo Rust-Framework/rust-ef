@@ -251,7 +251,7 @@ ctx.save_changes().await?;
 ### 全局查询过滤器（软删除）/ Global Query Filter (Soft Delete)
 
 ```rust
-ctx.model().entity::<Blog>().has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
+ctx.model().entity::<Blog>().has_query_filter(linq!(|b: Blog| b.deleted_at.is_null()));
 ctx.set::<Blog>();
 // 之后的所有查询都会自动追加该过滤表达式
 ```
@@ -375,7 +375,7 @@ let id = blog.id; // 已被填充！
 let expr = BoolExpr::Filter(FilterCondition::with_values(
     "slug", "=", vec![DbValue::String(slug)],
 ));
-ctx.set::<Blog>().query().where_(expr).to_list().await?;
+ctx.set::<Blog>().query().filter(expr).to_list().await?;
 
 // ✅ 正确：类型安全的 linq! 表达式（列名在编译期校验）
 linq!(ctx.set::<Blog>(), |b: Blog| b.slug == slug).to_list().await?;
@@ -389,7 +389,7 @@ linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q && !b.is_deleted)
 
 // ✅ 正确：启动时注册一次
 ctx.model().entity::<Blog>()
-    .has_query_filter(linq!(filter |b: Blog| !b.is_deleted));
+    .has_query_filter(linq!(|b: Blog| !b.is_deleted));
 // 所有查询现在都会自动排除已删除的记录
 
 // 需要看到全部记录的管理员查询：

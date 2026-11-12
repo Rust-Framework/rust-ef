@@ -1,7 +1,7 @@
 //! Composable predicates: `Predicate<T>` + `QueryBuilder::where_`.
 //!
 //! Covers the EF Core `PredicateBuilder`-style workflow — seed an `AND`/`OR`
-//! chain, combine `linq!(filter ...)` fragments with `and` / `or`, then apply
+//! chain, combine `linq!(...)` fragments with `and` / `or`, then apply
 //! the result to a query — at the SQL level (grouping and parameter order) and
 //! against a real SQLite database.
 
@@ -32,7 +32,7 @@ struct Product {
 #[test]
 fn always_seed_adds_no_sql() {
     let query =
-        QueryBuilder::<Product>::new("predicate_products").where_(Predicate::<Product>::always());
+        QueryBuilder::<Product>::new("predicate_products").filter(Predicate::<Product>::always());
 
     assert_eq!(query.to_sql(), "SELECT * FROM predicate_products");
     assert!(query.compile_sql().1.is_empty());
@@ -42,15 +42,15 @@ fn always_seed_adds_no_sql() {
 fn or_group_keeps_its_parentheses_and_value_order() {
     let keyword = "rust";
     let predicate = Predicate::<Product>::always()
-        .and(linq!(filter |p: Product| !p.is_deleted))
+        .and(linq!(|p: Product| !p.is_deleted))
         .and(
-            linq!(filter |p: Product| p.name.contains(keyword))
-                .or(linq!(filter |p: Product| p.description.contains(keyword))),
+            linq!(|p: Product| p.name.contains(keyword))
+                .or(linq!(|p: Product| p.description.contains(keyword))),
         )
-        .and(linq!(filter |p: Product| p.price >= 9.9));
+        .and(linq!(|p: Product| p.price >= 9.9));
 
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
-        .where_(predicate)
+        .filter(predicate)
         .compile_sql();
 
     assert!(
@@ -72,11 +72,11 @@ fn or_group_keeps_its_parentheses_and_value_order() {
 #[test]
 fn never_seed_disappears_from_an_or_chain() {
     let predicate = Predicate::<Product>::never()
-        .or(linq!(filter |p: Product| p.name.contains("a")))
-        .or(linq!(filter |p: Product| p.description.contains("b")));
+        .or(linq!(|p: Product| p.name.contains("a")))
+        .or(linq!(|p: Product| p.description.contains("b")));
 
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
-        .where_(predicate)
+        .filter(predicate)
         .compile_sql();
 
     assert!(!sql.contains("1=0"), "seed must not leak into SQL: {sql}");
@@ -90,7 +90,7 @@ fn never_seed_disappears_from_an_or_chain() {
 #[test]
 fn never_applied_on_its_own_matches_nothing() {
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
-        .where_(Predicate::<Product>::never())
+        .filter(Predicate::<Product>::never())
         .compile_sql();
 
     assert!(sql.contains("1=0"), "{sql}");
@@ -101,7 +101,7 @@ fn never_applied_on_its_own_matches_nothing() {
 fn where_appends_to_conditions_added_earlier() {
     let query = QueryBuilder::<Product>::new("predicate_products")
         .filter(linq!(|p: Product| p.price > 1.0))
-        .where_(linq!(filter |p: Product| p.name.contains("x")));
+        .filter(linq!(|p: Product| p.name.contains("x")));
 
     let (sql, params) = query.compile_sql();
 
@@ -114,9 +114,9 @@ fn where_appends_to_conditions_added_earlier() {
 
 #[test]
 fn form_c_yields_a_typed_predicate() {
-    // `linq!(filter ...)` is already a `Predicate<Product>`; `into_expr()`
+    // `linq!(...)` is already a `Predicate<Product>`; `into_expr()`
     // exposes the encoded tree for APIs that take a bare `BoolExpr`.
-    let predicate: Predicate<Product> = linq!(filter |p: Product| p.price > 0.0);
+    let predicate: Predicate<Product> = linq!(|p: Product| p.price > 0.0);
 
     let mut state = QueryState::new("predicate_products");
     state.where_expr = Some(predicate.into_expr());
@@ -126,15 +126,15 @@ fn form_c_yields_a_typed_predicate() {
 
 #[test]
 fn identity_predicates_are_reduced_away() {
-    let base = linq!(filter |p: Product| p.price > 1.0);
+    let base = linq!(|p: Product| p.price > 1.0);
     let with_always = Predicate::<Product>::always().and(base.clone());
     let with_never = Predicate::<Product>::never().or(base);
 
     let (and_sql, and_params) = QueryBuilder::<Product>::new("predicate_products")
-        .where_(with_always)
+        .filter(with_always)
         .compile_sql();
     let (or_sql, or_params) = QueryBuilder::<Product>::new("predicate_products")
-        .where_(with_never)
+        .filter(with_never)
         .compile_sql();
 
     assert_eq!(and_sql, or_sql);
@@ -155,11 +155,11 @@ fn identity_flags_and_option_combinators() {
     let none: Option<Predicate<Product>> = None;
     let predicate = Predicate::<Product>::always()
         .and_opt(none)
-        .and_opt(Some(linq!(filter |p: Product| p.price > 1.0)))
+        .and_opt(Some(linq!(|p: Product| p.price > 1.0)))
         .or_opt(None::<Predicate<Product>>);
 
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
-        .where_(predicate)
+        .filter(predicate)
         .compile_sql();
     assert_eq!(sql, "SELECT * FROM predicate_products WHERE price > ?");
     assert_eq!(params, vec![DbValue::F64(1.0)]);
@@ -172,7 +172,7 @@ fn hand_built_condition_without_values_is_rejected() {
     // it as a self-contained predicate must fail fast instead of handing the
     // driver a `?` with nothing to bind.
     let expr = BoolExpr::Filter(FilterCondition::new("price", ">", 1));
-    let _ = QueryBuilder::<Product>::new("predicate_products").where_(expr);
+    let _ = QueryBuilder::<Product>::new("predicate_products").filter(expr);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,14 +212,14 @@ async fn seed(ctx: &mut DbContext) {
 /// an `OR` group over two columns, and an optional range condition.
 fn product_filter(keyword: &str, min_price: Option<f64>) -> Predicate<Product> {
     let mut predicate = Predicate::<Product>::always()
-        .and(linq!(filter |p: Product| !p.is_deleted))
+        .and(linq!(|p: Product| !p.is_deleted))
         .and(
-            linq!(filter |p: Product| p.name.contains(keyword))
-                .or(linq!(filter |p: Product| p.description.contains(keyword))),
+            linq!(|p: Product| p.name.contains(keyword))
+                .or(linq!(|p: Product| p.description.contains(keyword))),
         );
 
     if let Some(min_price) = min_price {
-        predicate = predicate.and(linq!(filter |p: Product| p.price >= min_price));
+        predicate = predicate.and(linq!(|p: Product| p.price >= min_price));
     }
     predicate
 }
@@ -230,7 +230,7 @@ async fn matching_ids(predicate: Predicate<Product>) -> Vec<i32> {
     let rows = ctx
         .set::<Product>()
         .query()
-        .where_(predicate)
+        .filter(predicate)
         .to_list()
         .await
         .expect("query");
@@ -257,7 +257,7 @@ async fn count_and_page_share_one_predicate() {
     let base = ctx
         .set::<Product>()
         .query()
-        .where_(product_filter("rust", None));
+        .filter(product_filter("rust", None));
 
     let total = base.clone().count().await.expect("count");
     let rows = base.to_list().await.expect("list");
@@ -282,7 +282,7 @@ async fn execute_update_without_set_columns_is_rejected() {
     let err = ctx
         .set::<Product>()
         .query()
-        .where_(product_filter("rust", None))
+        .filter(product_filter("rust", None))
         .execute_update()
         .execute()
         .await

@@ -3,7 +3,7 @@
 //! `compile_bool_expr` compiles a `BoolExpr` tree into a parameterized SQL
 //! WHERE fragment using the provider's `ISqlGenerator` for placeholder
 //! syntax. `collect_bool_expr_values` extracts inline parameter values from
-//! self-contained `FilterCondition`s produced by `linq!(filter |b: T| ...)`.
+//! self-contained `FilterCondition`s produced by `linq!(|b: T| ...)`.
 //!
 //! `PortablePlaceholderGenerator` is a fallback `ISqlGenerator` used for
 //! SQL-only queries without an attached provider (emits `?` placeholders and
@@ -180,7 +180,7 @@ fn compile_in_subquery(
 }
 
 /// Walks a `BoolExpr` tree and collects inline parameter values carried by
-/// self-contained `FilterCondition`s (those produced by `linq!(filter |b: T| ...)`
+/// self-contained `FilterCondition`s (those produced by `linq!(|b: T| ...)`
 /// Form C). Returns an empty vec for expressions whose values are already
 /// tracked in `QueryState::parameters` (in-builder conditions).
 pub(crate) fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {

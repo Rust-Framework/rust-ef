@@ -26,7 +26,7 @@ pub struct FilterCondition {
     param_count: usize,
     /// Inline parameter values (for self-contained `BoolExpr` used outside
     /// `QueryBuilder` state, e.g. global query filters produced by
-    /// `linq!(filter |b: T| ...)`). Empty for in-builder conditions where
+    /// `linq!(|b: T| ...)`). Empty for in-builder conditions where
     /// values are tracked in `QueryState::parameters`.
     pub(crate) values: Vec<DbValue>,
 }
@@ -50,7 +50,7 @@ impl FilterCondition {
     }
 
     /// Creates a condition carrying its own parameter values. Used by
-    /// `linq!(filter |b: T| ...)` (Form C) to produce self-contained
+    /// `linq!(|b: T| ...)` (Form C) to produce self-contained
     /// `BoolExpr` values for global query filters.
     pub fn with_values(
         column: impl Into<String>,

@@ -24,7 +24,7 @@ SELECT * FROM high_earners
 
 ### 复合 WHERE 条件
 
-CTE 闭包体支持任意 `BoolExpr`，包括 `&&`、`||`、`!` 等：
+CTE 闭包体支持完整的布尔表达式，包括 `&&`、`||`、`!` 等：
 
 ```rust
 let sql = linq!(

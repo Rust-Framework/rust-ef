@@ -251,7 +251,7 @@ ctx.save_changes().await?;
 ### Global Query Filter (Soft Delete)
 
 ```rust
-ctx.model().entity::<Blog>().has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
+ctx.model().entity::<Blog>().has_query_filter(linq!(|b: Blog| b.deleted_at.is_null()));
 ctx.set::<Blog>();
 // All subsequent queries automatically append the filter expression
 ```
@@ -376,7 +376,7 @@ let id = blog.id; // already populated!
 let expr = BoolExpr::Filter(FilterCondition::with_values(
     "slug", "=", vec![DbValue::String(slug)],
 ));
-ctx.set::<Blog>().query().where_(expr).to_list().await?;
+ctx.set::<Blog>().query().filter(expr).to_list().await?;
 
 // ✅ CORRECT: type-safe linq! expressions (column checked at compile time)
 linq!(ctx.set::<Blog>(), |b: Blog| b.slug == slug).to_list().await?;
@@ -390,7 +390,7 @@ linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q && !b.is_deleted)
 
 // ✅ CORRECT: register once at startup
 ctx.model().entity::<Blog>()
-    .has_query_filter(linq!(filter |b: Blog| !b.is_deleted));
+    .has_query_filter(linq!(|b: Blog| !b.is_deleted));
 // All queries now automatically exclude deleted records
 
 // Admin queries that need to see all records:

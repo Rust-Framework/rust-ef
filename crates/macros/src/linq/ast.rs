@@ -38,14 +38,8 @@ pub(crate) struct LinqOrder {
     pub descending: bool,
 }
 
-/// Form C value-producing inputs.
+/// Value-producing inputs (Form C).
 pub(crate) enum ValueInput {
-    /// `linq!(filter |b: T| <bool_expr>)` → `BoolExpr`
-    Filter {
-        entity: Type,
-        param: Ident,
-        body: Expr,
-    },
     /// `linq!(index |b: T| (f1, f2, ...))` → `&'static [&'static str]`
     Index { entity: Type, fields: Vec<Expr> },
     /// `linq!(key |b: T| (f1, f2, ...))` → `&'static [&'static str]`

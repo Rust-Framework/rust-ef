@@ -15,45 +15,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Breaking
 
-- **`linq!(filter |b: T| ...)` (Form C) returns `Predicate<T>` instead of `BoolExpr`.** The macro now emits a typed, composable predicate. APIs that take an expression were widened to `impl Into<BoolExpr>` (`ModelBuilder::has_query_filter`, `DbSet::set_query_filter`, `with_cte_typed` / `with_recursive_cte_typed`), so `has_query_filter(linq!(filter |b: Blog| ...))` keeps working. Code that annotated the result (`let e: BoolExpr = linq!(filter ...)`) must use `let e = linq!(filter ...).into_expr()`.
-- **The Form A/B condition chain is gone.** `linq!(|b: T| ...)` where bodies are compiled by the same boolean compiler as Form C and applied through `QueryBuilder::where_` — one AST, one encoder. Removed (internal or `#[doc(hidden)]`): `QueryBuilder::{filter_column, filter_not, filter_in, filter_not_in, filter_is_null, filter_is_not_null, filter_between, filter_like, filter_not_like, or_where, where_exists_internal, where_in_subquery_internal}`, `QueryState::filters`, `QueryState::append_filter`, and `compile::{build_where_clauses, build_where_clause_with_offset, filters_to_and_expr}`.
+- **`linq!` conditions no longer take a `filter` keyword.** `linq!(filter |b: T| ...)` is now `linq!(|b: T| ...)`: a bare condition closure is the predicate form. It returns `Predicate<T>` instead of `BoolExpr`; APIs that take an expression were widened to `impl Into<BoolExpr>` (`ModelBuilder::has_query_filter`, `DbSet::set_query_filter`, `with_cte_typed` / `with_recursive_cte_typed`), so `has_query_filter(linq!(|b: Blog| ...))` keeps working. Code that annotated the result (`let e: BoolExpr = linq!(...)`) must use `.into_expr()`.
+- **`QueryBuilder::filter` / `DbSet::filter` take a predicate, not a closure.** The signature is `filter(impl Into<Predicate<T>>)`; hand-written `FnOnce(QueryBuilder<T>) -> QueryBuilder<T>` closures are no longer accepted. `where_` (introduced while this feature was in development, never released) was folded into `filter`.
+- **The source-less `=> order` sugar is gone.** `linq!(|b: T| cond => b.col)` now fails with a hint; use `linq!(ctx.set::<T>(), |b: T| cond => b.col)` or the `; order_by b.col` clause. The sugar still works when a source is present.
+- **The Form A/B condition chain is gone.** Every condition form compiles through one boolean compiler and is applied through `QueryBuilder::filter` — one AST, one encoder. Removed (internal or `#[doc(hidden)]`): `QueryBuilder::{filter_column, filter_not, filter_in, filter_not_in, filter_is_null, filter_is_not_null, filter_between, filter_like, filter_not_like, or_where, where_exists_internal, where_in_subquery_internal}`, `QueryState::filters`, `QueryState::append_filter`, and `compile::{build_where_clauses, build_where_clause_with_offset, filters_to_and_expr}`.
 - **SQL shape changes** (semantics unchanged): `!b.flag` emits `NOT (flag = ?)` instead of `flag = ?`; every condition is emitted as one parenthesized tree, so `OR` groups nested on the right of `&&` keep their parentheses (they used to bind to the whole left-hand side).
-- **`FilterCondition::new` is `#[doc(hidden)]`.** Conditions that bind values must be built with `FilterCondition::with_values` (or `linq!(filter ...)`); `FilterCondition::new` remains for value-less operators such as `IS NULL`.
+- **`FilterCondition::new` is `#[doc(hidden)]`.** Conditions that bind values must be built with `FilterCondition::with_values` (or `linq!(|b: T| ...)`); `FilterCondition::new` remains for value-less operators such as `IS NULL`.
 
 #### Added
 
-- **`Predicate<T>` — composable WHERE predicates (EF Core `PredicateBuilder` style).** `and` / `or` / `not`, `always()` / `never()` identity seeds that never leak `1=1` / `1=0` into the SQL, plus `and_opt` / `or_opt` for optional filters and `is_always` / `is_never` for guards. `QueryBuilder::where_` appends a predicate with `AND` (a bare `BoolExpr` is accepted too) and registers its values in tree order, so `count()` and the page query share one condition set. `into_expr()` and the `BoolExpr ⇄ Predicate<T>` conversions bridge APIs that take an expression.
-- **Fail-fast on value-less conditions.** Applying a self-contained `BoolExpr` whose parameter count exceeds its carried values (only possible with a hand-built `FilterCondition::new`) panics with a message pointing at `linq!(filter ...)` / `with_values`, instead of handing the driver a `?` with nothing to bind.
+- **`Predicate<T>` — composable WHERE predicates (EF Core `PredicateBuilder` style).** `and` / `or` / `not`, `always()` / `never()` identity seeds that never leak `1=1` / `1=0` into the SQL, plus `and_opt` / `or_opt` for optional filters and `is_always` / `is_never` for guards. `QueryBuilder::filter` appends a predicate with `AND` (a bare `BoolExpr` is accepted too) and registers its values in tree order, so `count()` and the page query share one condition set. `into_expr()` and the `BoolExpr ⇄ Predicate<T>` conversions bridge APIs that take an expression.
+- **Fail-fast on value-less conditions.** Applying a self-contained `BoolExpr` whose parameter count exceeds its carried values (only possible with a hand-built `FilterCondition::new`) panics with a message pointing at `linq!(|b: T| ...)` / `with_values`, instead of handing the driver a `?` with nothing to bind.
 - **`execute_update` resolves correlated subqueries** exactly like `to_sql` / `count` / `execute_delete` (it used to emit `FROM ""`), and returns a configuration error when no `set` column was added.
 
 #### Fixed
 
 - **`x.contains(y)` misclassified a variable argument as a column.** `linq!` treated *any* path argument as a column reference, so `b.url.contains(keyword)` compiled to `url IN (<value expression>)` and failed to compile — the common keyword-search pattern. `.contains()` is now `IN` only when the argument is a field reference (`ids.contains(b.id)`) and `LIKE` otherwise.
-- **Form C (`linq!(filter ...)`) `IN` used the receiver as the column.** `linq!(filter |b: T| ids.contains(b.id))` now emits `b.id IN (...)`, not `ids IN (...)`.
-- **`a && (b || c)` lost the grouping.** The Form A/B method chain appended an `OR` group with "OR with everything accumulated so far", so an `OR` on the right of `&&` bound to the whole left-hand side (`((a AND b) OR c)`). Such groups are now compiled as a self-contained predicate and `AND`-ed in.
+- **The condition form's `IN` used the receiver as the column.** `linq!(|b: T| ids.contains(b.id))` now emits `b.id IN (...)`, not `ids IN (...)`.
+- **`a && (b || c)` lost the grouping.** The condition chain appended an `OR` group with "OR with everything accumulated so far", so an `OR` on the right of `&&` bound to the whole left-hand side (`((a AND b) OR c)`). Such groups are now compiled as a self-contained predicate and `AND`-ed in.
 
 ### 简体中文
 
 #### 破坏性变更
 
-- **`linq!(filter |b: T| ...)`（形式 C）现在返回 `Predicate<T>` 而不是 `BoolExpr`。** 宏直接产出带实体类型的可组合谓词。接收表达式的 API 放宽为 `impl Into<BoolExpr>`（`ModelBuilder::has_query_filter`、`DbSet::set_query_filter`、`with_cte_typed` / `with_recursive_cte_typed`），因此 `has_query_filter(linq!(filter |b: Blog| ...))` 用法不变。显式标注过类型的代码（`let e: BoolExpr = linq!(filter ...)`）改为 `let e = linq!(filter ...).into_expr()`。
-- **形式 A/B 的条件链已移除。** `linq!(|b: T| ...)` 的 where 体由与形式 C 相同的布尔编译器编译，再经 `QueryBuilder::where_` 应用——一份 AST、一个编码器。删除（内部或 `#[doc(hidden)]`）：`QueryBuilder::{filter_column, filter_not, filter_in, filter_not_in, filter_is_null, filter_is_not_null, filter_between, filter_like, filter_not_like, or_where, where_exists_internal, where_in_subquery_internal}`、`QueryState::filters`、`QueryState::append_filter`，以及 `compile::{build_where_clauses, build_where_clause_with_offset, filters_to_and_expr}`。
+- **`linq!` 条件形式不再需要 `filter` 关键字。** `linq!(filter |b: T| ...)` 改为 `linq!(|b: T| ...)`：裸条件闭包就是谓词形式。它返回 `Predicate<T>` 而不是 `BoolExpr`；接收表达式的 API 放宽为 `impl Into<BoolExpr>`（`ModelBuilder::has_query_filter`、`DbSet::set_query_filter`、`with_cte_typed` / `with_recursive_cte_typed`），因此 `has_query_filter(linq!(|b: Blog| ...))` 用法不变。显式标注过类型的代码（`let e: BoolExpr = linq!(...)`）改为 `.into_expr()`。
+- **`QueryBuilder::filter` / `DbSet::filter` 接收谓词而不是闭包。** 签名为 `filter(impl Into<Predicate<T>>)`；手写的 `FnOnce(QueryBuilder<T>) -> QueryBuilder<T>` 闭包不再接受。开发期引入、未发布的 `where_` 已并入 `filter`。
+- **无 source 的 `=> order` 糖移除。** `linq!(|b: T| cond => b.col)` 会给出提示并报错；改用 `linq!(ctx.set::<T>(), |b: T| cond => b.col)` 或 `; order_by b.col` 子句。带 source 时该糖照旧可用。
+- **形式 A/B 的条件链已移除。** 所有条件形式都由同一个布尔编译器编译、经 `QueryBuilder::filter` 应用——一份 AST、一个编码器。删除（内部或 `#[doc(hidden)]`）：`QueryBuilder::{filter_column, filter_not, filter_in, filter_not_in, filter_is_null, filter_is_not_null, filter_between, filter_like, filter_not_like, or_where, where_exists_internal, where_in_subquery_internal}`、`QueryState::filters`、`QueryState::append_filter`，以及 `compile::{build_where_clauses, build_where_clause_with_offset, filters_to_and_expr}`。
 - **SQL 形态变化**（语义不变）：`!b.flag` 生成 `NOT (flag = ?)` 而非 `flag = ?`；所有条件按表达式树整体加括号，`&&` 右侧的 `OR` 组不再被提升到整条条件。
-- **`FilterCondition::new` 标记为 `#[doc(hidden)]`。** 带绑定值的条件请用 `FilterCondition::with_values`（或 `linq!(filter ...)`）；`FilterCondition::new` 仅保留给 `IS NULL` 这类无值算子。
+- **`FilterCondition::new` 标记为 `#[doc(hidden)]`。** 带绑定值的条件请用 `FilterCondition::with_values`（或 `linq!(|b: T| ...)`）；`FilterCondition::new` 仅保留给 `IS NULL` 这类无值算子。
 
 #### 新增
 
-- **`Predicate<T>`：可组合的 WHERE 谓词（对齐 EF Core `PredicateBuilder`）。** 提供 `and` / `or` / `not`、`always()` / `never()` 恒等起点（不会把 `1=1` / `1=0` 写入 SQL），以及可选条件的 `and_opt` / `or_opt` 与状态判断 `is_always` / `is_never`。`QueryBuilder::where_` 以 `AND` 追加谓词（也接受裸 `BoolExpr`），按表达式树顺序登记绑定值，因此 `count()` 与列表查询共用同一套条件。`into_expr()` 与 `BoolExpr ⇄ Predicate<T>` 互转负责与接收表达式的 API 衔接。
+- **`Predicate<T>`：可组合的 WHERE 谓词（对齐 EF Core `PredicateBuilder`）。** 提供 `and` / `or` / `not`、`always()` / `never()` 恒等起点（不会把 `1=1` / `1=0` 写入 SQL），以及可选条件的 `and_opt` / `or_opt` 与状态判断 `is_always` / `is_never`。`QueryBuilder::filter` 以 `AND` 追加谓词（也接受裸 `BoolExpr`），按表达式树顺序登记绑定值，因此 `count()` 与列表查询共用同一套条件。`into_expr()` 与 `BoolExpr ⇄ Predicate<T>` 互转负责与接收表达式的 API 衔接。
 - **无值条件 fail-fast。** 自包含 `BoolExpr` 的参数个数大于其携带值个数时（只可能由手写 `FilterCondition::new` 造成），`apply_query_filter` 直接带明确信息 panic，而不是把一个没有值的 `?` 交给驱动。
 - **`execute_update` 解析相关子查询**，与 `to_sql` / `count` / `execute_delete` 一致（此前会生成 `FROM ""`）；未添加 `set` 列时返回配置错误。
 
 #### 修复
 
 - **`x.contains(y)` 把变量参数误判成列名。** `linq!` 把任何路径参数都当成列引用，导致 `b.url.contains(keyword)` 编译成 `url IN (<值表达式>)` 而编译失败——这正是最常见的关键字搜索写法。现在只有参数是字段引用（`ids.contains(b.id)`）时才生成 `IN`，否则生成 `LIKE`。
-- **形式 C（`linq!(filter ...)`）的 `IN` 用错了列。** `linq!(filter |b: T| ids.contains(b.id))` 现在生成 `b.id IN (...)`，而不是 `ids IN (...)`。
-- **`a && (b || c)` 丢失括号分组。** 形式 A/B 的方法链用「与已有条件整体 OR」来拼 `OR` 组，导致 `&&` 右侧的 `OR` 组绑到了整个左侧（`((a AND b) OR c)`）。这类分组现在编译成自包含谓词再 `AND` 进来。
-
-## [2.1.0] — 2026-11-11 — rust-dix 0.10：MEDI scope、类型化 key、动态上下文与异步初始化
+- **条件形式的 `IN` 用错了列。** `linq!(|b: T| ids.contains(b.id))` 现在生成 `b.id IN (...)`，而不是 `ids IN (...)`。
+- **`a && (b || c)` 丢失括号分组。** 条件链用「与已有条件整体 OR」来拼 `OR` 组，导致 `&&` 右侧的 `OR` 组绑到了整个左侧（`((a AND b) OR c)`）。这类分组现在编译成自包含谓词再 `AND` 进来。
 
 ## [2.1.0] — 2026-11-11 — rust-dix 0.10：MEDI scope、类型化 key、动态上下文与异步初始化
 

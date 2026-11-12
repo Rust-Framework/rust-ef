@@ -110,9 +110,7 @@ mod linq_tests {
             .unwrap();
         assert_eq!(typed.len(), 1);
 
-        let ordered = ctx
-            .set::<LinqBlog>()
-            .filter(linq!(LinqBlog, |b| b.active => b.url))
+        let ordered = linq!(ctx.set::<LinqBlog>(), |b: LinqBlog| b.active => b.url)
             .to_list()
             .await
             .unwrap();
@@ -316,11 +314,11 @@ mod linq_tests {
 
         // Form C: `ids.contains(b.rating)` → `rating IN (?, ?)`.
         let ids = [8i32, 2];
-        let expr = linq!(filter |b: LinqBlog| ids.contains(b.rating));
+        let expr = linq!(|b: LinqBlog| ids.contains(b.rating));
         let rows = ctx
             .set::<LinqBlog>()
             .query()
-            .where_(expr)
+            .filter(expr)
             .to_list()
             .await
             .unwrap();

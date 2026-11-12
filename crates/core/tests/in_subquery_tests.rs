@@ -151,8 +151,9 @@ async fn test_in_subquery_form_c_filter() {
     seed(&mut ctx).await;
 
     // Apply a global filter using Form C syntax.
-    ctx.set::<SubBlog>()
-        .set_query_filter(linq!(filter |b: SubBlog| b.blog_id.in_subquery(|p: SubPost| p.blog_id)));
+    ctx.set::<SubBlog>().set_query_filter(linq!(|b: SubBlog| b
+        .blog_id
+        .in_subquery(|p: SubPost| p.blog_id)));
 
     let blogs = ctx.set::<SubBlog>().query().to_list().await.unwrap();
 

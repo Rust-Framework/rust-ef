@@ -17,15 +17,11 @@ use super::super::ast::*;
 
 impl Parse for LinqInput {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // Form C dispatch: first token is `filter` / `index` / `key` keyword.
+        // Form C dispatch: first token is `index` / `key` keyword.
         if input.peek(Ident) {
             let cursor = input.cursor();
             if let Some((ident, _)) = cursor.ident() {
                 match ident.to_string().as_str() {
-                    "filter" => {
-                        let value = parse_value_filter(input)?;
-                        return Ok(LinqInput::Value(value));
-                    }
                     "index" => {
                         let value = parse_value_index_or_key(input, ValueKind::Index)?;
                         return Ok(LinqInput::Value(value));
@@ -48,26 +44,6 @@ impl Parse for LinqInput {
 enum ValueKind {
     Index,
     Key,
-}
-
-/// Parses `filter |b: T| <body>`.
-fn parse_value_filter(input: syn::parse::ParseStream) -> syn::Result<ValueInput> {
-    let keyword: Ident = input.parse()?;
-    debug_assert_eq!(keyword, "filter");
-
-    let _open: Token![|] = input.parse()?;
-    let param: Ident = input.parse()?;
-    let _colon: Token![:] = input.parse()?;
-    let entity: Type = input.parse()?;
-    let _close: Token![|] = input.parse()?;
-
-    let body: Expr = input.parse()?;
-
-    Ok(ValueInput::Filter {
-        entity,
-        param,
-        body,
-    })
 }
 
 /// Parses `index |b: T| <field_or_tuple>` or `key |b: T| <field_or_tuple>`.

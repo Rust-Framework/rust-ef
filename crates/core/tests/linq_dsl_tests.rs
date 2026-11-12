@@ -432,7 +432,7 @@ async fn test_except_clause() {
 async fn test_form_c_filter_produces_bool_expr() {
     use rust_ef::query::BoolExpr;
     // Form C yields a typed `Predicate<T>`; `into_expr()` exposes the tree.
-    let expr = linq!(filter |b: DslBlog| b.published).into_expr();
+    let expr = linq!(|b: DslBlog| b.published).into_expr();
     assert!(matches!(expr, BoolExpr::Filter(_)));
 }
 

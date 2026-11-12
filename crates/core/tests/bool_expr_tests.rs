@@ -48,7 +48,7 @@ mod bool_expr_tests {
         }
 
         let sql = QueryBuilder::<Item>::new("items")
-            .where_(BoolExpr::Filter(FilterCondition::with_values(
+            .filter(BoolExpr::Filter(FilterCondition::with_values(
                 "id",
                 "IN",
                 vec![DbValue::I32(1), DbValue::I32(2), DbValue::I32(3)],

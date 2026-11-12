@@ -44,7 +44,7 @@ impl<T: IEntityType> QueryBuilder<T> {
                 ))
             })?;
         let col_const = pk_col.to_string();
-        self.where_(BoolExpr::Filter(FilterCondition::with_values(
+        self.filter(BoolExpr::Filter(FilterCondition::with_values(
             col_const,
             "=",
             vec![id.into()],
@@ -60,7 +60,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         for (col, val) in keys {
-            self = self.where_(BoolExpr::Filter(FilterCondition::with_values(
+            self = self.filter(BoolExpr::Filter(FilterCondition::with_values(
                 col.to_string(),
                 "=",
                 vec![val.clone()],
@@ -93,7 +93,7 @@ impl<T: IEntityType> QueryBuilder<T> {
                 ))
             })?;
         let col_const = pk_col.to_string();
-        self.where_(BoolExpr::Filter(FilterCondition::with_values(
+        self.filter(BoolExpr::Filter(FilterCondition::with_values(
             col_const,
             "=",
             vec![id.into()],
@@ -107,7 +107,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Uses `SELECT 1 ... LIMIT 1` — cheaper than `find_by_key(keys).is_some()`.
     pub async fn exists_by_key(mut self, keys: &[(&str, DbValue)]) -> EFResult<bool> {
         for (col, val) in keys {
-            self = self.where_(BoolExpr::Filter(FilterCondition::with_values(
+            self = self.filter(BoolExpr::Filter(FilterCondition::with_values(
                 col.to_string(),
                 "=",
                 vec![val.clone()],

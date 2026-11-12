@@ -196,12 +196,12 @@ async fn test_execute_update_resolves_subquery_predicate() {
     // Bulk UPDATE must resolve correlated subqueries exactly like a SELECT does;
     // otherwise the statement reaches the driver with empty table names.
     let mut ctx = seed().await;
-    let predicate = linq!(filter |b: SubBlog| b.posts.any(|p: SubPost| p.published));
+    let predicate = linq!(|b: SubBlog| b.posts.any(|p: SubPost| p.published));
 
     let builder = ctx
         .set::<SubBlog>()
         .query()
-        .where_(predicate)
+        .filter(predicate)
         .execute_update()
         .set_column_internal(SubBlog::COLUMN_URL, "https://updated.example");
 
@@ -215,7 +215,7 @@ async fn test_execute_update_resolves_subquery_predicate() {
     let updated = ctx
         .set::<SubBlog>()
         .query()
-        .where_(linq!(filter |b: SubBlog| b.url == "https://updated.example"))
+        .filter(linq!(|b: SubBlog| b.url == "https://updated.example"))
         .to_list()
         .await
         .unwrap();
@@ -224,17 +224,17 @@ async fn test_execute_update_resolves_subquery_predicate() {
 
 #[tokio::test]
 async fn test_form_c_filter_subquery() {
-    // Form C: `linq!(filter |b: SubBlog| b.posts.any(...))` produces a typed
+    // Form C: `linq!(|b: SubBlog| b.posts.any(...))` produces a typed
     // `Predicate<SubBlog>`; `into_expr()` exposes the encoded tree (used for
     // `has_query_filter`). Verify the Exists variant is built.
-    let expr = linq!(filter |b: SubBlog| b.posts.any(|p: SubPost| p.published)).into_expr();
+    let expr = linq!(|b: SubBlog| b.posts.any(|p: SubPost| p.published)).into_expr();
     assert!(
         matches!(expr, BoolExpr::Exists(_)),
         "Form C filter with .any() should produce BoolExpr::Exists"
     );
 
     // NOT EXISTS via `none(...)` in Form C.
-    let expr_none = linq!(filter |b: SubBlog| b.posts.none(|p: SubPost| p.published)).into_expr();
+    let expr_none = linq!(|b: SubBlog| b.posts.none(|p: SubPost| p.published)).into_expr();
     assert!(
         matches!(expr_none, BoolExpr::NotExists(_)),
         "Form C filter with .none() should produce BoolExpr::NotExists"

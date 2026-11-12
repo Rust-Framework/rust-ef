@@ -239,7 +239,7 @@ impl ModelBuilder {
 
     /// Registers a global query filter for entity type `T`.
     ///
-    /// Accepts what `linq!(filter |b: T| ...)` returns (`Predicate<T>`) as well
+    /// Accepts what `linq!(|b: T| ...)` returns (`Predicate<T>`) as well
     /// as a bare `BoolExpr`.
     pub fn has_query_filter<T: IEntityType>(&mut self, filter: impl Into<BoolExpr>) -> &mut Self {
         let filter = filter.into();

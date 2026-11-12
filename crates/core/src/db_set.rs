@@ -9,7 +9,7 @@
 use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
 use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
-use crate::query::{BoolExpr, IQueryable, QueryBuilder};
+use crate::query::{BoolExpr, IQueryable, Predicate, QueryBuilder};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -160,12 +160,9 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
             .with_lazy_loading(self.lazy_loading_enabled)
     }
 
-    /// Starts a query filtered by a compile-time LINQ expression tree (`linq!()`)
-    pub fn filter<F>(&self, apply: F) -> QueryBuilder<T>
-    where
-        F: FnOnce(QueryBuilder<T>) -> QueryBuilder<T>,
-    {
-        apply(self.query())
+    /// Starts a query filtered by a predicate (`linq!(|b: T| ...)`).
+    pub fn filter(&self, predicate: impl Into<Predicate<T>>) -> QueryBuilder<T> {
+        self.query().filter(predicate)
     }
 
     /// Checks whether an entity with the given key values exists in the database.

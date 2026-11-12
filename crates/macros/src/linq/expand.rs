@@ -40,23 +40,9 @@ fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
     let entity = &input.entity;
     let where_param = input.where_param.as_ref();
 
-    // Compile the where body into a self-contained predicate and append it with
-    // `where_`. Every form (A/B/C) now shares one boolean compiler, so `&&` /
-    // `||` grouping and value binding cannot drift between them.
-    let where_chain = if let Some(body) = &input.where_body {
-        // `true` body means no actual filter — emit nothing.
-        if is_true_expr(body) {
-            quote! {}
-        } else {
-            let ctx = LinqCtx::single(entity, where_param);
-            let expr = compile_bool_expr(&ctx, body)?;
-            quote! { .where_(#expr) }
-        }
-    } else {
-        quote! {}
-    };
+    let predicate = compile_where_predicate(entity, input.where_body.as_ref(), where_param)?;
 
-    // Form A `=> order` syntax.
+    // Form A `=> order` syntax (only meaningful on a query).
     let order_chain = if let Some(order) = &input.order {
         let ctx = LinqCtx::single(entity, where_param);
         compile_order(&ctx, &order.body, order.descending)?
@@ -64,47 +50,50 @@ fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
         quote! {}
     };
 
-    // If no source and no clauses → Form A reusable closure.
+    // A source-less `linq!(|b: T| ...)` is a reusable predicate value.
     if input.source.is_none() && input.clauses.is_empty() {
-        return Ok(quote! {
-            |__qb: rust_ef::query::QueryBuilder<#entity>| {
-                __qb #where_chain #order_chain
-            }
-        });
-    }
-
-    // Build the base builder expression (source + optional filter).
-    // Always wrap in .filter() to normalize DbSet → QueryBuilder, even when
-    // the where chain is empty (identity closure).
-    let base = match &input.source {
-        Some(source) => {
-            quote! {
-                (#source).filter(|__qb: rust_ef::query::QueryBuilder<#entity>| {
-                    __qb #where_chain #order_chain
-                })
-            }
-        }
-        None => {
-            // No source but has clauses — this is an error for Form B.
-            // But Form A with order but no source is valid (reusable closure with order).
-            if input.clauses.is_empty() {
-                return Ok(quote! {
-                    |__qb: rust_ef::query::QueryBuilder<#entity>| {
-                        __qb #where_chain #order_chain
-                    }
-                });
-            }
-            return Err(syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "Form B (multi-clause) requires a source expression, e.g. `linq!(ctx.set::<Blog>(); ...)`",
+        if let Some(order) = &input.order {
+            return Err(syn::Error::new_spanned(
+                &order.body,
+                "`=> order` needs a source: use `linq!(ctx.set::<T>(), |b: T| <cond> => b.col)` \
+                 or the `; order_by b.col` clause",
             ));
         }
-    };
+        return Ok(predicate);
+    }
 
-    // Expand clauses.
+    let source = input.source.as_ref().ok_or_else(|| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "Form B (multi-clause) requires a source expression, e.g. `linq!(ctx.set::<Blog>(); ...)`",
+        )
+    })?;
+
     let clause_chain = expand_clauses(input, entity)?;
 
-    Ok(quote! { #base #clause_chain })
+    // `.filter(predicate)` normalizes the source (DbSet or QueryBuilder) into a
+    // QueryBuilder and appends the condition with AND.
+    Ok(quote! { (#source).filter(#predicate) #order_chain #clause_chain })
+}
+
+/// Compiles a where body into a `Predicate<T>` value expression.
+fn compile_where_predicate(
+    entity: &Type,
+    body: Option<&Expr>,
+    param: Option<&Ident>,
+) -> syn::Result<TokenStream2> {
+    match body {
+        // `linq!(|b: T| true)` / an empty body — no condition.
+        Some(body) if is_true_expr(body) => {
+            Ok(quote! { rust_ef::query::Predicate::<#entity>::always() })
+        }
+        Some(body) => {
+            let ctx = LinqCtx::single(entity, param);
+            let expr = compile_bool_expr(&ctx, body)?;
+            Ok(quote! { rust_ef::query::Predicate::<#entity>::from_expr(#expr) })
+        }
+        None => Ok(quote! { rust_ef::query::Predicate::<#entity>::always() }),
+    }
 }
 
 /// Returns true if the expression is the literal `true`.
@@ -421,17 +410,6 @@ fn extract_field_name_only(expr: &Expr) -> syn::Result<String> {
 
 fn expand_value(input: &ValueInput) -> syn::Result<TokenStream2> {
     match input {
-        ValueInput::Filter {
-            entity,
-            param,
-            body,
-        } => {
-            let ctx = LinqCtx::single(entity, Some(param));
-            let expr = compile_bool_expr(&ctx, body)?;
-            Ok(quote! {
-                rust_ef::query::Predicate::<#entity>::from_expr(#expr)
-            })
-        }
         ValueInput::Index { entity, fields } => expand_field_array(entity, fields),
         ValueInput::Key { entity, fields } => expand_field_array(entity, fields),
     }
