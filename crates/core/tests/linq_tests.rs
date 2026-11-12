@@ -225,6 +225,109 @@ mod linq_tests {
     }
 
     #[tokio::test]
+    async fn test_linq_contains_value_means_like() {
+        let mut ctx = make_ctx();
+        ctx.set::<LinqBlog>();
+        ctx.ensure_created().await.unwrap();
+
+        ctx.add::<LinqBlog>(LinqBlog {
+            blog_id: 0,
+            url: "https://dotnet.example".into(),
+            rating: 8,
+            active: true,
+        });
+        ctx.add::<LinqBlog>(LinqBlog {
+            blog_id: 0,
+            url: "https://spam.example".into(),
+            rating: 8,
+            active: true,
+        });
+        ctx.save_changes().await.unwrap();
+
+        // A variable argument is a *value* (LIKE), not a column (IN).
+        let needle = "dotnet";
+        let rows = ctx
+            .set::<LinqBlog>()
+            .filter(linq!(|b: LinqBlog| b.url.contains(needle)))
+            .to_list()
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].url, "https://dotnet.example");
+    }
+
+    #[tokio::test]
+    async fn test_linq_and_or_group_on_the_right() {
+        let mut ctx = make_ctx();
+        ctx.set::<LinqBlog>();
+        ctx.ensure_created().await.unwrap();
+
+        ctx.add::<LinqBlog>(LinqBlog {
+            blog_id: 0,
+            url: "https://dotnet.example".into(),
+            rating: 8,
+            active: true,
+        });
+        ctx.add::<LinqBlog>(LinqBlog {
+            blog_id: 0,
+            url: "https://spam.example".into(),
+            rating: 8,
+            active: true,
+        });
+        ctx.add::<LinqBlog>(LinqBlog {
+            blog_id: 0,
+            url: "https://low.example".into(),
+            rating: 2,
+            active: false,
+        });
+        ctx.save_changes().await.unwrap();
+
+        // `rating > 5 && (dotnet || low)` must not leak `low` past the rating
+        // bound: `(rating > 5) AND (dotnet OR low)` matches one row, while the
+        // left-to-right `((rating > 5) AND dotnet) OR low` would match two.
+        let rows = linq!(ctx.set::<LinqBlog>(), |b: LinqBlog| b.rating > 5
+            && (b.url.contains("dotnet") || b.url.contains("low")))
+        .to_list()
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].url, "https://dotnet.example");
+    }
+
+    #[tokio::test]
+    async fn test_linq_form_c_in_subquery_uses_argument_column() {
+        let mut ctx = make_ctx();
+        ctx.set::<LinqBlog>();
+        ctx.ensure_created().await.unwrap();
+
+        ctx.add::<LinqBlog>(LinqBlog {
+            blog_id: 0,
+            url: "high".into(),
+            rating: 8,
+            active: true,
+        });
+        ctx.add::<LinqBlog>(LinqBlog {
+            blog_id: 0,
+            url: "low".into(),
+            rating: 2,
+            active: true,
+        });
+        ctx.save_changes().await.unwrap();
+
+        // Form C: `ids.contains(b.rating)` → `rating IN (?, ?)`.
+        let ids = [8i32, 2];
+        let expr = linq!(filter |b: LinqBlog| ids.contains(b.rating));
+        let rows = ctx
+            .set::<LinqBlog>()
+            .query()
+            .where_(expr)
+            .to_list()
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
     async fn test_linq_legacy_expr_form() {
         let mut ctx = make_ctx();
         ctx.set::<LinqBlog>();

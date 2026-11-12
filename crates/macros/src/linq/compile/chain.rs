@@ -7,7 +7,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{BinOp, Expr, ExprMethodCall, ExprUnary, UnOp};
 
-use super::super::context::{extract_field, extract_value, LinqCtx};
+use super::super::context::{extract_field, extract_value, is_field_expr, LinqCtx};
+use super::bool::compile_bool_expr;
 use super::subquery::{
     compile_in_subquery_method, compile_not_subquery, compile_subquery_method, SubqueryKind,
 };
@@ -23,6 +24,15 @@ pub(crate) fn compile_expr(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<TokenS
         }) => compile_not(ctx, inner),
         Expr::Binary(b) if matches!(b.op, BinOp::And(_)) => {
             let left = compile_expr(ctx, &b.left)?;
+            // An `OR` group on the right of `AND` cannot be appended with the
+            // "OR with everything accumulated so far" chain sugar (`.or_where`)
+            // — that would bind it to the whole left-hand side. Compile it to a
+            // self-contained predicate instead and AND it in, so `a && (b || c)`
+            // stays `a AND (b OR c)`.
+            if is_or_group(&b.right) {
+                let right = compile_bool_expr(ctx, &b.right)?;
+                return Ok(quote! { #left .where_(#right) });
+            }
             let right = compile_expr(ctx, &b.right)?;
             Ok(quote! { #left #right })
         }
@@ -34,6 +44,17 @@ pub(crate) fn compile_expr(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<TokenS
         Expr::MethodCall(call) => compile_method(ctx, call),
         Expr::Field(_) | Expr::Path(_) => compile_bool_member(ctx, expr),
         _ => compile_comparison(ctx, expr),
+    }
+}
+
+/// Returns true when the expression is an `OR` group, looking through
+/// parentheses. Used to keep `a && (b || c)` grouped correctly.
+fn is_or_group(expr: &Expr) -> bool {
+    match expr {
+        Expr::Group(g) => is_or_group(&g.expr),
+        Expr::Paren(p) => is_or_group(&p.expr),
+        Expr::Binary(b) => matches!(b.op, BinOp::Or(_)),
+        _ => false,
     }
 }
 
@@ -161,7 +182,8 @@ pub(crate) fn compile_contains(
         .first()
         .ok_or_else(|| syn::Error::new_spanned(call, "`.contains()` requires one argument"))?;
 
-    if let Ok(column) = extract_field(ctx, arg) {
+    if is_field_expr(arg) {
+        let column = extract_field(ctx, arg)?;
         let values = extract_value(&call.receiver)?;
         let values_list = quote! {
             {

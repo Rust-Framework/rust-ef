@@ -8,7 +8,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{BinOp, Expr, ExprMethodCall, ExprUnary, UnOp};
 
-use super::super::context::{extract_field, extract_value, LinqCtx};
+use super::super::context::{extract_field, extract_value, is_field_expr, LinqCtx};
 use super::subquery::{compile_in_subquery_bool, compile_subquery_bool, SubqueryKind};
 
 /// Compiles a boolean expression to a `BoolExpr` value (Form C `filter`).
@@ -135,8 +135,12 @@ pub(crate) fn compile_bool_method(
             let arg = call.args.first().ok_or_else(|| {
                 syn::Error::new_spanned(call, "`.contains()` requires one argument")
             })?;
-            // If the argument is a field, it's IN (LINQ style); otherwise LIKE.
-            if extract_field(ctx, arg).is_ok() {
+            // If the argument is a field reference, it's IN (LINQ style);
+            // otherwise it's a value, and `.contains()` means LIKE.
+            if is_field_expr(arg) {
+                // `ids.contains(b.id)`: the column is the argument, the values
+                // are the receiver.
+                let column = extract_field(ctx, arg)?;
                 let values = extract_value(&call.receiver)?;
                 Ok(quote! {
                     rust_ef::query::BoolExpr::Filter(
