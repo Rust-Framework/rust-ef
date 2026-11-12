@@ -13,7 +13,7 @@ use quote::quote;
 use syn::{parse_macro_input, Expr, ExprField, ExprLit, ExprPath, Ident, Lit, Member, Type};
 
 use super::ast::*;
-use super::compile::{compile_bool_expr, compile_expr, compile_having_expr, compile_order};
+use super::compile::{compile_bool_expr, compile_having_expr, compile_order};
 use super::context::{extract_field, extract_field_nav, extract_value, LinqCtx};
 
 // ---------------------------------------------------------------------------
@@ -40,14 +40,17 @@ fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
     let entity = &input.entity;
     let where_param = input.where_param.as_ref();
 
-    // Compile the where body into a method-chain fragment.
+    // Compile the where body into a self-contained predicate and append it with
+    // `where_`. Every form (A/B/C) now shares one boolean compiler, so `&&` /
+    // `||` grouping and value binding cannot drift between them.
     let where_chain = if let Some(body) = &input.where_body {
         // `true` body means no actual filter — emit nothing.
         if is_true_expr(body) {
             quote! {}
         } else {
             let ctx = LinqCtx::single(entity, where_param);
-            compile_expr(&ctx, body)?
+            let expr = compile_bool_expr(&ctx, body)?;
+            quote! { .where_(#expr) }
         }
     } else {
         quote! {}

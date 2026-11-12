@@ -9,10 +9,8 @@ use crate::entity::{
 use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 
-use super::super::ast::{OrderBy, OrderDirection};
-use super::super::compile::{
-    build_where_clauses, compile_bool_expr, has_subqueries, resolve_subqueries,
-};
+use super::super::ast::{BoolExpr, FilterCondition, OrderBy, OrderDirection};
+use super::super::compile::{compile_bool_expr, has_subqueries, resolve_subqueries};
 use super::super::execute_update::ExecuteUpdateBuilder;
 use super::super::state::QueryState;
 use super::core::QueryBuilder;
@@ -46,9 +44,13 @@ impl<T: IEntityType> QueryBuilder<T> {
                 ))
             })?;
         let col_const = pk_col.to_string();
-        self.filter_column(&col_const, "=", id)
-            .first_or_default()
-            .await
+        self.where_(BoolExpr::Filter(FilterCondition::with_values(
+            col_const,
+            "=",
+            vec![id.into()],
+        )))
+        .first_or_default()
+        .await
     }
 
     /// Finds an entity by composite primary key. Keys are column-name
@@ -58,7 +60,11 @@ impl<T: IEntityType> QueryBuilder<T> {
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         for (col, val) in keys {
-            self = self.filter_column(col, "=", val.clone());
+            self = self.where_(BoolExpr::Filter(FilterCondition::with_values(
+                col.to_string(),
+                "=",
+                vec![val.clone()],
+            )));
         }
         self.first_or_default().await
     }
@@ -87,7 +93,13 @@ impl<T: IEntityType> QueryBuilder<T> {
                 ))
             })?;
         let col_const = pk_col.to_string();
-        self.filter_column(&col_const, "=", id).any().await
+        self.where_(BoolExpr::Filter(FilterCondition::with_values(
+            col_const,
+            "=",
+            vec![id.into()],
+        )))
+        .any()
+        .await
     }
 
     /// Checks if an entity with the given composite key exists.
@@ -95,7 +107,11 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Uses `SELECT 1 ... LIMIT 1` — cheaper than `find_by_key(keys).is_some()`.
     pub async fn exists_by_key(mut self, keys: &[(&str, DbValue)]) -> EFResult<bool> {
         for (col, val) in keys {
-            self = self.filter_column(col, "=", val.clone());
+            self = self.where_(BoolExpr::Filter(FilterCondition::with_values(
+                col.to_string(),
+                "=",
+                vec![val.clone()],
+            )));
         }
         self.any().await
     }
@@ -424,11 +440,12 @@ impl<T: IEntityType> QueryBuilder<T> {
                 resolve_subqueries(expr, &meta);
             }
         }
-        let where_clause = if let Some(ref expr) = resolved_expr {
-            let mut param_idx = 1usize;
-            compile_bool_expr(expr, gen, &mut param_idx)
-        } else {
-            build_where_clauses(&self.state.filters, gen)
+        let where_clause = match &resolved_expr {
+            Some(expr) => {
+                let mut param_idx = 1usize;
+                compile_bool_expr(expr, gen, &mut param_idx)
+            }
+            None => String::new(),
         };
         let sql = if where_clause.is_empty() {
             format!("DELETE FROM {}", self.state.from)

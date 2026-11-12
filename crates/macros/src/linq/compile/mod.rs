@@ -16,5 +16,5 @@ mod having;
 mod subquery;
 
 pub(crate) use bool::compile_bool_expr;
-pub(crate) use chain::{compile_expr, compile_order};
+pub(crate) use chain::compile_order;
 pub(crate) use having::compile_having_expr;

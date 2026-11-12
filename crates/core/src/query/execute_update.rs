@@ -10,9 +10,7 @@ use crate::entity::IEntityType;
 use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 
-use super::compile::{
-    build_where_clause_with_offset, compile_bool_expr, PortablePlaceholderGenerator,
-};
+use super::compile::{compile_bool_expr, PortablePlaceholderGenerator};
 use super::state::QueryState;
 
 /// Builder for bulk update operations.
@@ -52,11 +50,12 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
                 format!("{} = {}", col, ph)
             })
             .collect();
-        let where_clause = if let Some(ref expr) = self.state.where_expr {
-            let mut param_idx = param_idx;
-            compile_bool_expr(expr, gen, &mut param_idx)
-        } else {
-            build_where_clause_with_offset(&self.state.filters, gen, param_idx)
+        let where_clause = match &self.state.where_expr {
+            Some(expr) => {
+                let mut where_idx = param_idx;
+                compile_bool_expr(expr, gen, &mut where_idx)
+            }
+            None => String::new(),
         };
         if where_clause.is_empty() {
             format!("UPDATE {} SET {}", self.state.from, sets.join(", "))
