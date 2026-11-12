@@ -1,59 +1,58 @@
 #[cfg(test)]
 mod bool_expr_tests {
+    use rust_ef::entity::IEntityType;
     use rust_ef::provider::DbValue;
-    use rust_ef::query::{BoolExpr, FilterCondition, QueryState};
+    use rust_ef::query::{BoolExpr, FilterCondition, QueryBuilder, QueryState};
+
+    fn cond(column: &str, op: &str, value: DbValue) -> BoolExpr {
+        BoolExpr::Filter(FilterCondition::with_values(column, op, vec![value]))
+    }
 
     #[test]
     fn test_and_or_combination_sql() {
         let mut state = QueryState::new("items");
-        state.parameters.push(DbValue::I32(1));
-        state.parameters.push(DbValue::I32(2));
-        state.parameters.push(DbValue::I32(3));
         state.where_expr = Some(
-            BoolExpr::Filter(FilterCondition::new("a", "=", 1))
+            cond("a", "=", DbValue::I32(1))
                 .and(BoolExpr::Or(
-                    Box::new(BoolExpr::Filter(FilterCondition::new("a", "=", 1))),
-                    Box::new(BoolExpr::Filter(FilterCondition::new("a", "=", 1))),
+                    Box::new(cond("a", "=", DbValue::I32(2))),
+                    Box::new(cond("b", "<", DbValue::I32(3))),
                 ))
-                .and(BoolExpr::Filter(FilterCondition::new("b", ">", 1))),
+                .and(cond("c", ">", DbValue::I32(4))),
         );
         let sql = state.to_sql();
-        assert!(sql.contains("WHERE"));
-        assert!(sql.contains("AND"));
-        assert!(sql.contains("OR"));
-        assert!(sql.contains("b"));
+        assert_eq!(
+            sql,
+            "SELECT * FROM items WHERE ((a = ?) AND ((a = ?) OR (b < ?))) AND (c > ?)"
+        );
     }
 
     #[test]
     fn test_not_filter_sql() {
         let mut state = QueryState::new("items");
-        state.parameters.push(DbValue::I32(5));
-        state.where_expr = Some(BoolExpr::Not(Box::new(BoolExpr::Filter(
-            FilterCondition::new("status", "=", 1),
+        state.where_expr = Some(BoolExpr::Not(Box::new(cond(
+            "status",
+            "=",
+            DbValue::I32(5),
         ))));
         let sql = state.to_sql();
-        assert!(sql.contains("NOT"));
-        assert!(sql.contains("status"));
+        assert_eq!(sql, "SELECT * FROM items WHERE NOT (status = ?)");
     }
 
     #[test]
     fn test_filter_in_placeholders() {
-        use rust_ef::entity::IEntityType;
         struct Item;
         impl IEntityType for Item {
             fn entity_meta() -> rust_ef::metadata::EntityTypeMeta {
                 unimplemented!()
             }
         }
-        let sql = rust_ef::query::QueryBuilder::<Item>::new("items")
-            .filter_in(
+
+        let sql = QueryBuilder::<Item>::new("items")
+            .filter(BoolExpr::Filter(FilterCondition::with_values(
                 "id",
-                vec![
-                    rust_ef::provider::DbValue::I32(1),
-                    rust_ef::provider::DbValue::I32(2),
-                    rust_ef::provider::DbValue::I32(3),
-                ],
-            )
+                "IN",
+                vec![DbValue::I32(1), DbValue::I32(2), DbValue::I32(3)],
+            )))
             .to_sql();
         assert!(sql.contains("IN"));
         assert!(sql.contains("?, ?, ?"));
@@ -62,15 +61,12 @@ mod bool_expr_tests {
     #[test]
     fn test_complex_or_and_pattern() {
         let mut state = QueryState::new("posts");
-        state.parameters.push(DbValue::I32(3));
-        state.parameters.push(DbValue::I32(1));
-        state.where_expr = Some(
-            BoolExpr::Filter(FilterCondition::new("rating", ">", 1))
-                .or(BoolExpr::Filter(FilterCondition::new("featured", "=", 1))),
-        );
+        state.where_expr =
+            Some(cond("rating", ">", DbValue::I32(3)).or(cond("featured", "=", DbValue::I32(1))));
         let sql = state.to_sql();
-        assert!(sql.contains("OR"));
-        assert!(sql.contains("rating"));
-        assert!(sql.contains("featured"));
+        assert_eq!(
+            sql,
+            "SELECT * FROM posts WHERE (rating > ?) OR (featured = ?)"
+        );
     }
 }

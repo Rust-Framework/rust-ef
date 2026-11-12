@@ -104,7 +104,7 @@ fn test_per_instance_model_mutation_isolation() {
 
     // ctx1 adds a query filter — this writes to ctx1's per-instance ModelBuilder.
     ctx1.model()
-        .has_query_filter::<CacheBlog>(linq!(filter |b: CacheBlog| b.rating > 5));
+        .has_query_filter::<CacheBlog>(linq!(|b: CacheBlog| b.rating > 5));
 
     let blog_type_id = TypeId::of::<CacheBlog>();
 

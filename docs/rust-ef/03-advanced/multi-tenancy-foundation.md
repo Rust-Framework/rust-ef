@@ -58,7 +58,7 @@ let mut ctx = DbContext::from_options(&options)?;
 
 // 注册租户隔离过滤器（tenant_id = 1）
 ctx.model().has_query_filter::<Blog>(
-    linq!(filter |b: Blog| b.tenant_id == 1)
+    linq!(|b: Blog| b.tenant_id == 1)
 );
 
 ctx.set::<Blog>();
@@ -159,8 +159,8 @@ async fn run() -> EFResult<()> {
 
     // 注册租户过滤器（必须在 set::<T>() 之前）
     ctx.model()
-        .has_query_filter::<Blog>(linq!(filter |b: Blog| b.tenant_id == 1))
-        .has_query_filter::<Post>(linq!(filter |p: Post| p.tenant_id == 1));
+        .has_query_filter::<Blog>(linq!(|b: Blog| b.tenant_id == 1))
+        .has_query_filter::<Post>(linq!(|p: Post| p.tenant_id == 1));
 
     ctx.set::<Blog>();
     ctx.set::<Post>();

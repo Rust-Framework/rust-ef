@@ -518,7 +518,7 @@ fn db_enum_maps_to_string_values() {
     );
 
     // `linq!` parameter conversion uses `DbValue::from(enum)`.
-    let _ = linq!(filter |o: OrderEnum| o.status == OrderStatus::Paid);
+    let _ = linq!(|o: OrderEnum| o.status == OrderStatus::Paid);
 }
 
 #[tokio::test]

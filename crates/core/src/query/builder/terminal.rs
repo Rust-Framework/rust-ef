@@ -9,10 +9,8 @@ use crate::entity::{
 use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 
-use super::super::ast::{OrderBy, OrderDirection};
-use super::super::compile::{
-    build_where_clauses, compile_bool_expr, has_subqueries, resolve_subqueries,
-};
+use super::super::ast::{BoolExpr, FilterCondition, OrderBy, OrderDirection};
+use super::super::compile::{compile_bool_expr, resolve_state_subqueries};
 use super::super::execute_update::ExecuteUpdateBuilder;
 use super::super::state::QueryState;
 use super::core::QueryBuilder;
@@ -46,9 +44,13 @@ impl<T: IEntityType> QueryBuilder<T> {
                 ))
             })?;
         let col_const = pk_col.to_string();
-        self.filter_column(&col_const, "=", id)
-            .first_or_default()
-            .await
+        self.filter(BoolExpr::Filter(FilterCondition::with_values(
+            col_const,
+            "=",
+            vec![id.into()],
+        )))
+        .first_or_default()
+        .await
     }
 
     /// Finds an entity by composite primary key. Keys are column-name
@@ -58,7 +60,11 @@ impl<T: IEntityType> QueryBuilder<T> {
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
         for (col, val) in keys {
-            self = self.filter_column(col, "=", val.clone());
+            self = self.filter(BoolExpr::Filter(FilterCondition::with_values(
+                col.to_string(),
+                "=",
+                vec![val.clone()],
+            )));
         }
         self.first_or_default().await
     }
@@ -87,7 +93,13 @@ impl<T: IEntityType> QueryBuilder<T> {
                 ))
             })?;
         let col_const = pk_col.to_string();
-        self.filter_column(&col_const, "=", id).any().await
+        self.filter(BoolExpr::Filter(FilterCondition::with_values(
+            col_const,
+            "=",
+            vec![id.into()],
+        )))
+        .any()
+        .await
     }
 
     /// Checks if an entity with the given composite key exists.
@@ -95,7 +107,11 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Uses `SELECT 1 ... LIMIT 1` — cheaper than `find_by_key(keys).is_some()`.
     pub async fn exists_by_key(mut self, keys: &[(&str, DbValue)]) -> EFResult<bool> {
         for (col, val) in keys {
-            self = self.filter_column(col, "=", val.clone());
+            self = self.filter(BoolExpr::Filter(FilterCondition::with_values(
+                col.to_string(),
+                "=",
+                vec![val.clone()],
+            )));
         }
         self.any().await
     }
@@ -106,13 +122,7 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Builds the SQL string for this query.
     pub fn to_sql(&self) -> String {
-        let mut state = self.state.clone();
-        if let Some(ref mut expr) = state.where_expr {
-            if has_subqueries(expr) {
-                let meta = T::entity_meta();
-                resolve_subqueries(expr, &meta);
-            }
-        }
+        let state = self.resolved_state();
         if let Some(provider) = &self.provider {
             let gen = provider.sql_generator();
             state.to_sql_with(gen)
@@ -125,19 +135,21 @@ impl<T: IEntityType> QueryBuilder<T> {
         (self.to_sql(), self.state.all_params())
     }
 
+    /// Snapshot of the query state with correlated subqueries resolved, ready
+    /// for SQL compilation.
+    pub(super) fn resolved_state(&self) -> QueryState {
+        let mut state = self.state.clone();
+        resolve_state_subqueries::<T>(&mut state);
+        state
+    }
+
     pub(super) fn compile_state_sql(
         state: &QueryState,
         provider: &Arc<dyn IDatabaseProvider>,
     ) -> String {
-        let gen = provider.sql_generator();
         let mut resolved = state.clone();
-        if let Some(ref mut expr) = resolved.where_expr {
-            if has_subqueries(expr) {
-                let meta = T::entity_meta();
-                resolve_subqueries(expr, &meta);
-            }
-        }
-        resolved.to_sql_with(gen)
+        resolve_state_subqueries::<T>(&mut resolved);
+        resolved.to_sql_with(provider.sql_generator())
     }
 
     // -------------------------------------------------------------------
@@ -402,7 +414,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Prepares a bulk update operation.
     pub fn execute_update(self) -> ExecuteUpdateBuilder<T> {
         ExecuteUpdateBuilder {
-            state: self.state.clone(),
+            state: self.resolved_state(),
             updates: Vec::new(),
             provider: self.provider.clone(),
             _phantom: PhantomData,
@@ -417,18 +429,13 @@ impl<T: IEntityType> QueryBuilder<T> {
             )
         })?;
         let gen = provider.sql_generator();
-        let mut resolved_expr = self.state.where_expr.clone();
-        if let Some(ref mut expr) = resolved_expr {
-            if has_subqueries(expr) {
-                let meta = T::entity_meta();
-                resolve_subqueries(expr, &meta);
+        let resolved = self.resolved_state();
+        let where_clause = match &resolved.where_expr {
+            Some(expr) => {
+                let mut param_idx = 1usize;
+                compile_bool_expr(expr, gen, &mut param_idx)
             }
-        }
-        let where_clause = if let Some(ref expr) = resolved_expr {
-            let mut param_idx = 1usize;
-            compile_bool_expr(expr, gen, &mut param_idx)
-        } else {
-            build_where_clauses(&self.state.filters, gen)
+            None => String::new(),
         };
         let sql = if where_clause.is_empty() {
             format!("DELETE FROM {}", self.state.from)

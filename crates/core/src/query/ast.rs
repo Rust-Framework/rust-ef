@@ -24,14 +24,21 @@ pub struct FilterCondition {
     operator: String,
     /// Number of bound parameters consumed by this condition.
     param_count: usize,
-    /// Inline parameter values (for self-contained `BoolExpr` used outside
-    /// `QueryBuilder` state, e.g. global query filters produced by
-    /// `linq!(filter |b: T| ...)`). Empty for in-builder conditions where
-    /// values are tracked in `QueryState::parameters`.
+    /// Inline parameter values — the values travel with the tree, so a
+    /// `BoolExpr` can be stored, combined and applied without touching
+    /// `QueryState`. Empty for value-less operators (`IS NULL`).
     pub(crate) values: Vec<DbValue>,
 }
 
 impl FilterCondition {
+    /// Creates a condition with a declared parameter count but no values.
+    ///
+    /// `#[doc(hidden)]` — used by `linq!` expansion for value-less operators
+    /// (`IS NULL`). Conditions that bind values must be built with
+    /// [`FilterCondition::with_values`], otherwise the generated `?` has
+    /// nothing to bind to (`QueryBuilder::apply_query_filter` rejects that
+    /// mismatch).
+    #[doc(hidden)]
     pub fn new(column: impl Into<String>, operator: impl Into<String>, param_count: usize) -> Self {
         Self {
             column: column.into(),
@@ -41,9 +48,9 @@ impl FilterCondition {
         }
     }
 
-    /// Creates a condition carrying its own parameter values. Used by
-    /// `linq!(filter |b: T| ...)` (Form C) to produce self-contained
-    /// `BoolExpr` values for global query filters.
+    /// Creates a condition carrying its own parameter values. `linq!` uses this
+    /// to produce self-contained `BoolExpr` values (predicates, global query
+    /// filters) whose values travel with the tree.
     pub fn with_values(
         column: impl Into<String>,
         operator: impl Into<String>,
@@ -59,7 +66,7 @@ impl FilterCondition {
     }
 
     /// Returns the inline values carried by this condition (empty for
-    /// in-builder conditions).
+    /// value-less operators).
     pub fn values(&self) -> &[DbValue] {
         &self.values
     }
@@ -69,6 +76,9 @@ impl FilterCondition {
         match self.operator.as_str() {
             "IS NULL" => format!("{} IS NULL", self.column),
             "IS NOT NULL" => format!("{} IS NOT NULL", self.column),
+            // `col IN ()` is not valid SQL; an empty candidate set matches no
+            // row, which is what `1 = 0` says.
+            "IN" if placeholders.is_empty() => "1 = 0".to_string(),
             "IN" => format!("{} IN ({})", self.column, placeholders.join(", ")),
             "BETWEEN" if placeholders.len() >= 2 => format!(
                 "{} BETWEEN {} AND {}",

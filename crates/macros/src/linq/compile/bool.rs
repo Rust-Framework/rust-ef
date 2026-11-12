@@ -1,4 +1,4 @@
-//! Form C filter → `BoolExpr` value compilation.
+//! Condition expression → `BoolExpr` value compilation.
 //!
 //! Mirrors `compile_expr` but emits `BoolExpr::Filter(...)` / `BoolExpr::And(...)`
 //! / `BoolExpr::Or(...)` / `BoolExpr::Not(...)` value expressions instead of
@@ -8,10 +8,10 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{BinOp, Expr, ExprMethodCall, ExprUnary, UnOp};
 
-use super::super::context::{extract_field, extract_value, LinqCtx};
+use super::super::context::{extract_field, extract_value, is_field_expr, LinqCtx};
 use super::subquery::{compile_in_subquery_bool, compile_subquery_bool, SubqueryKind};
 
-/// Compiles a boolean expression to a `BoolExpr` value (Form C `filter`).
+/// Compiles a boolean expression to a self-contained `BoolExpr` value.
 pub(crate) fn compile_bool_expr(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<TokenStream2> {
     match expr {
         Expr::Group(g) => compile_bool_expr(ctx, &g.expr),
@@ -101,7 +101,7 @@ pub(crate) fn compile_bool_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Re
     })
 }
 
-/// Compiles method-call boolean expressions for Form C (is_null, is_not_null, contains, etc.).
+/// Compiles method-call conditions (is_null, is_not_null, contains, ...).
 pub(crate) fn compile_bool_method(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,
@@ -135,8 +135,12 @@ pub(crate) fn compile_bool_method(
             let arg = call.args.first().ok_or_else(|| {
                 syn::Error::new_spanned(call, "`.contains()` requires one argument")
             })?;
-            // If the argument is a field, it's IN (LINQ style); otherwise LIKE.
-            if extract_field(ctx, arg).is_ok() {
+            // If the argument is a field reference, it's IN (LINQ style);
+            // otherwise it's a value, and `.contains()` means LIKE.
+            if is_field_expr(arg) {
+                // `ids.contains(b.id)`: the column is the argument, the values
+                // are the receiver.
+                let column = extract_field(ctx, arg)?;
                 let values = extract_value(&call.receiver)?;
                 Ok(quote! {
                     rust_ef::query::BoolExpr::Filter(

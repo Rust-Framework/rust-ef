@@ -16,14 +16,14 @@
 | `HasNoKey()` | `entity.has_no_key()` / `#[keyless]` | ✅ | 不生成 PRIMARY KEY；`find/remove` 不可用（无键） |
 | `HasIndex(...).IsUnique()` | `entity.has_index(&[...]).is_unique()` | ✅ | |
 | `.HasDatabaseName(...)` | `.has_name("...")` | ✅ | |
-| `.HasFilter(...)` | `.has_filter(linq!(filter \|x: T\| ...))` | ✅ | PG/SQLite 原生；MySQL 对唯一索引用函数索引模拟 |
+| `.HasFilter(...)` | `.has_filter(linq!(\|x: T\| ...))` | ✅ | PG/SQLite 原生；MySQL 对唯一索引用函数索引模拟 |
 | `.IncludeProperties(...)` | `.include(&[...])` | ✅ | PostgreSQL `INCLUDE`；MySQL/SQLite 忽略并输出 warning |
 | `HasOne/HasMany/WithOne/WithMany` | `BelongsTo<T>` / `HasOne<T>` / `HasMany<T>` / `HasMany<T, Join>` | ✅ | 关系由导航字段声明；`through` 用于 M:N |
 | `HasForeignKey(...)` | `#[foreign_key(Target)]` / `entity.has_foreign_key(...)` | ✅ | 标量属性与复合外键都进入 DDL |
 | `HasPrincipalKey(...)` | `has_foreign_key(..., referenced_columns)` | ✅ | 显式给出被引用列（可指向 alternate key） |
 | `OnDelete(...)` | `#[on_delete(Cascade)]` / `.on_delete(DeleteBehavior)` | ✅ | |
 | `HasCheckConstraint(...)` | `entity.has_check(name, sql)` | ✅ | PG/MySQL/SQLite 建表内联 |
-| `HasQueryFilter(...)` | `entity.has_query_filter(linq!(filter \|x: T\| ...))` | ✅ | |
+| `HasQueryFilter(...)` | `entity.has_query_filter(linq!(\|x: T\| ...))` | ✅ | |
 | `HasData(...)` | `entity.has_data(&[...])` / `#[derive(Default)]` | ✅ | `ensure_created` 时插入种子 |
 | `HasComment(...)` | `entity.has_comment("...")` / `#[table("t", comment = "...")]` | ✅ | MySQL 内联/ALTER；PG `COMMENT ON TABLE`；SQLite 忽略 |
 | `Ignore(...)` | `entity.ignore("field")` / `#[not_mapped]` | ✅ | |

@@ -144,7 +144,7 @@ async fn test_typed_projection_with_filter() {
     let rows: Vec<(String, i32)> = ctx
         .set::<ProjItem>()
         .query()
-        .filter_column("value", ">", 150)
+        .filter(linq!(|p: ProjItem| p.value > 150))
         .select_internal(&[ProjItem::COLUMN_NAME, ProjItem::COLUMN_VALUE])
         .to_list_typed_2::<String, i32>()
         .await

@@ -76,7 +76,7 @@ async fn seed(ctx: &mut DbContext) {
 }
 
 // ---------------------------------------------------------------------------
-// Form A/B (method chain) tests
+// Condition (predicate) tests
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -142,17 +142,18 @@ async fn test_in_subquery_combined_with_other_filter() {
 }
 
 // ---------------------------------------------------------------------------
-// Form C (global query filter) tests
+// Global query filter tests
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_in_subquery_form_c_filter() {
+async fn test_in_subquery_predicate_filter() {
     let mut ctx = build_ctx();
     seed(&mut ctx).await;
 
-    // Apply a global filter using Form C syntax.
-    ctx.set::<SubBlog>()
-        .set_query_filter(linq!(filter |b: SubBlog| b.blog_id.in_subquery(|p: SubPost| p.blog_id)));
+    // Apply a global filter built from a predicate.
+    ctx.set::<SubBlog>().set_query_filter(linq!(|b: SubBlog| b
+        .blog_id
+        .in_subquery(|p: SubPost| p.blog_id)));
 
     let blogs = ctx.set::<SubBlog>().query().to_list().await.unwrap();
 

@@ -121,22 +121,8 @@ fn compile_subquery_parts(
     Ok((nav_field_const, nav_related_const, predicate_bool_expr))
 }
 
-/// Compiles `b.posts.any(|p: Post| p.published)` in the **method chain**
-/// context (Form A/B where body) → `.where_exists_internal(...)`.
-pub(super) fn compile_subquery_method(
-    ctx: &LinqCtx<'_>,
-    call: &ExprMethodCall,
-    kind: SubqueryKind,
-) -> syn::Result<TokenStream2> {
-    let (nav_field, nav_related, predicate) = compile_subquery_parts(ctx, call, kind)?;
-    let negated = kind.negated();
-    Ok(quote! {
-        .where_exists_internal(#nav_field, #nav_related, Some(#predicate), #negated)
-    })
-}
-
 /// Compiles `b.posts.any(|p: Post| p.published)` in the **bool expression**
-/// context (Form C filter, `&&`/`||` combinators) → `BoolExpr::Exists(...)`.
+/// context (`&&` / `||` / `!` combinators) → `BoolExpr::Exists(...)`.
 pub(crate) fn compile_subquery_bool(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,
@@ -155,31 +141,6 @@ pub(crate) fn compile_subquery_bool(
             __spec.predicate = Some(Box::new(#predicate));
             __spec
         }))
-    })
-}
-
-/// Compiles `!b.posts.any(...)` / `!none(...)` / `!all(...)` in the method
-/// chain context by inverting the subquery quantifier.
-///
-/// - `!any` → `none` (NOT EXISTS, predicate not negated)
-/// - `!none` → `any` (EXISTS, predicate not negated)
-/// - `!all` → EXISTS with negated predicate (flip outer negation of `All`)
-pub(super) fn compile_not_subquery(
-    ctx: &LinqCtx<'_>,
-    call: &ExprMethodCall,
-) -> syn::Result<TokenStream2> {
-    let method_str = call.method.to_string();
-    let (kind, flip_outer) = match method_str.as_str() {
-        "any" => (SubqueryKind::None, false),
-        "none" => (SubqueryKind::Any, false),
-        // `All` = NOT EXISTS(NOT pred); `!all` = EXISTS(NOT pred) → flip outer.
-        "all" => (SubqueryKind::All, true),
-        _ => unreachable!("compile_not_subquery called on non-subquery method"),
-    };
-    let (nav_field, nav_related, predicate) = compile_subquery_parts(ctx, call, kind)?;
-    let negated = kind.negated() ^ flip_outer;
-    Ok(quote! {
-        .where_exists_internal(#nav_field, #nav_related, Some(#predicate), #negated)
     })
 }
 
@@ -232,21 +193,8 @@ fn compile_in_subquery_parts(
     ))
 }
 
-/// Compiles `b.field.in_subquery(|p: Post| p.blog_id)` in the **method chain**
-/// context (Form A/B where body) → `.where_in_subquery_internal(...)`.
-pub(crate) fn compile_in_subquery_method(
-    ctx: &LinqCtx<'_>,
-    call: &ExprMethodCall,
-    negated: bool,
-) -> syn::Result<TokenStream2> {
-    let (outer_col, source_tbl, proj_col) = compile_in_subquery_parts(ctx, call)?;
-    Ok(quote! {
-        .where_in_subquery_internal(#outer_col, #source_tbl, #proj_col, ::core::option::Option::None, #negated)
-    })
-}
-
 /// Compiles `b.field.in_subquery(|p: Post| p.blog_id)` in the **bool
-/// expression** context (Form C filter) → `BoolExpr::InSubquery(...)`.
+/// expression** context → `BoolExpr::InSubquery(...)`.
 pub(crate) fn compile_in_subquery_bool(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,

@@ -26,12 +26,16 @@ struct RwItem {
 fn db_path(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
+    let path = std::env::temp_dir().join(format!(
         "rust_ef_rw_{}_{}_{}.db",
         std::process::id(),
         tag,
         n
-    ))
+    ));
+    // Windows cannot delete the DB (or its `-wal`) while the pool still holds it,
+    // so a recycled pid can open a previous run's data. Start from a clean file.
+    cleanup(&path);
+    path
 }
 
 fn cleanup(path: &Path) {

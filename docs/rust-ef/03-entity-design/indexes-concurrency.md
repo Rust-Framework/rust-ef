@@ -45,7 +45,7 @@ impl IEntityTypeConfiguration<Order> for OrderConfig {
         entity
             .has_index(&[Invite::COLUMN_TENANT_ID, Invite::COLUMN_CODE])
             .is_unique()
-            .has_filter(linq!(filter |i: Invite| i.status == "PENDING"));
+            .has_filter(linq!(|i: Invite| i.status == "PENDING"));
 
         // 表达式/函数索引：UNIQUE (coalesce(tenant_id, 0))
         entity
@@ -68,7 +68,7 @@ impl IEntityTypeConfiguration<Order> for OrderConfig {
 | `.include(&[cols])` | PostgreSQL：`... INCLUDE (cols)` | MySQL/SQLite 不支持 INCLUDE，输出 warning 并只建键列索引 |
 | `entity.has_alternate_key(&[cols])` | `CREATE UNIQUE INDEX ak_<table>_<cols>` | 等价 EF Core `HasAlternateKey`，可作为外键引用目标 |
 
-> 部分索引的谓词来自 `linq!(filter |x: T| ...)`，值在 DDL 中会渲染成字面量；只支持简单比较与 `AND`/`OR`/`NOT`（子查询在部分索引谓词中没有实用价值）。
+> 部分索引的谓词来自 `linq!(|x: T| ...)`，值在 DDL 中会渲染成字面量；只支持简单比较与 `AND`/`OR`/`NOT`（子查询在部分索引谓词中没有实用价值）。
 
 ## 表级存储选项（MySQL）
 

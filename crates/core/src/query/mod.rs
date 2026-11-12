@@ -1,8 +1,8 @@
 //! Query builder & LINQ-style chainable query API.
 //!
-//! Accumulates filter conditions, orderings, pagination, includes, and
-//! projection metadata through a fluent interface. Terminal methods
-//! (`to_list`, `first`, `count`, etc.) produce real SQL that can be
+//! Accumulates a condition tree ([`Predicate`]), orderings, pagination,
+//! includes, and projection metadata through a fluent interface. Terminal
+//! methods (`to_list`, `first`, `count`, etc.) produce real SQL that can be
 //! executed against a database provider.
 
 mod ast;
@@ -12,6 +12,7 @@ mod cte;
 mod execute_update;
 mod having_expr;
 mod helpers;
+mod predicate;
 mod select;
 mod source;
 mod state;
@@ -23,6 +24,7 @@ pub use cte::*;
 pub use execute_update::ExecuteUpdateBuilder;
 pub use having_expr::*;
 pub use helpers::*;
+pub use predicate::Predicate;
 pub use select::SelectQueryBuilder;
 pub use source::*;
 pub use state::QueryState;

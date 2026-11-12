@@ -10,7 +10,7 @@ use crate::entity_snapshot::EntitySnapshot;
 use crate::metadata::{
     CheckMeta, EntityTypeMeta, ForeignKeyMeta, IndexColumn, IndexMeta, TableOptions,
 };
-use crate::query::{BoolExpr, CompiledFilter};
+use crate::query::{BoolExpr, CompiledFilter, Predicate};
 use crate::relations::DeleteBehavior;
 use std::any::TypeId;
 use std::borrow::Cow;
@@ -394,8 +394,13 @@ impl ModelBuilder {
 
     /// Registers a global query filter for entity type `T`.
     ///
-    /// Accepts a `BoolExpr` produced by `linq!(filter |b: T| ...)`.
-    pub fn has_query_filter<T: IEntityType>(&mut self, filter: BoolExpr) -> &mut Self {
+    /// Accepts what `linq!(|b: T| ...)` returns (`Predicate<T>`, which also
+    /// infers `T`) as well as a bare `BoolExpr`.
+    pub fn has_query_filter<T: IEntityType>(
+        &mut self,
+        filter: impl Into<Predicate<T>>,
+    ) -> &mut Self {
+        let filter = filter.into().into_expr();
         let type_id = TypeId::of::<T>();
         let config = self.configs.entry(type_id).or_default();
         config.query_filter = Some(filter);
@@ -587,7 +592,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
 
     /// Configures the primary key from column constants.
     ///
-    /// `#[doc(hidden)]` — called by `linq!(key |b: T| b.id)` expansion (Form C).
+    /// `#[doc(hidden)]` — called by `linq!(key |b: T| b.id)` expansion.
     #[doc(hidden)]
     pub fn has_key(&mut self, columns: &'static [&'static str]) -> &mut Self {
         let config = self.model.configs.entry(self.type_id).or_default();
@@ -608,7 +613,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     ///       .is_unique();
     /// entity.has_index(&[Invite::COLUMN_TENANT_ID, Invite::COLUMN_CODE])
     ///       .is_unique()
-    ///       .has_filter(linq!(filter |i: Invite| i.status == "PENDING"));
+    ///       .has_filter(linq!(|i: Invite| i.status == "PENDING"));
     /// ```
     pub fn has_index(&mut self, columns: &'static [&'static str]) -> IndexBuilder<'_, T> {
         let parts = columns
@@ -783,8 +788,8 @@ impl<T> IndexBuilder<'_, T> {
     /// partial indexes: a filtered **unique** index is emulated with a
     /// functional `CASE WHEN` unique index, and a filtered non-unique index is
     /// skipped with a warning comment.
-    pub fn has_filter(&mut self, filter: BoolExpr) -> &mut Self {
-        self.entry().filter = Some(filter);
+    pub fn has_filter(&mut self, filter: impl Into<BoolExpr>) -> &mut Self {
+        self.entry().filter = Some(filter.into());
         self
     }
 

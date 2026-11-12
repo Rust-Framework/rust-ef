@@ -1,7 +1,8 @@
 //! `QueryState` — accumulator for a single query's intent.
 //!
-//! Holds filter conditions, JOINs, GROUP BY, HAVING, ORDER BY, pagination,
-//! includes, projections, window functions, CTEs, and set operations.
+//! Holds the WHERE expression tree, JOINs, GROUP BY, HAVING, ORDER BY,
+//! pagination, includes, projections, window functions, CTEs, and set
+//! operations.
 //! `to_sql_with` compiles the state into a SQL string using the provider's
 //! placeholder syntax; `all_params` returns the bound parameter vector in
 //! the order expected by the generated SQL (CTE params first, then WHERE/
@@ -9,8 +10,8 @@
 
 use crate::provider::DbValue;
 
-use super::ast::{BoolExpr, FilterCondition, IncludePath, JoinSpec, OrderBy};
-use super::compile::{build_where_clauses, compile_bool_expr, PortablePlaceholderGenerator};
+use super::ast::{BoolExpr, IncludePath, JoinSpec, OrderBy};
+use super::compile::{compile_bool_expr, PortablePlaceholderGenerator};
 use super::cte::{CteSpec, SetOpSpec, SetOperator};
 use super::having_expr::HavingExpr;
 use super::window::WindowSpec;
@@ -20,8 +21,6 @@ use super::window::WindowSpec;
 pub struct QueryState {
     /// FROM table / subquery segment.
     pub from: String,
-    /// WHERE clause conditions.
-    pub filters: Vec<FilterCondition>,
     /// JOIN specifications.
     pub joins: Vec<JoinSpec>,
     /// GROUP BY columns.
@@ -50,7 +49,7 @@ pub struct QueryState {
     pub aggregate_column: Option<String>,
     /// Collected parameter values in order of appearance.
     pub parameters: Vec<DbValue>,
-    /// Boolean WHERE expression (preferred over `filters`).
+    /// Boolean WHERE expression (the only filter representation).
     pub where_expr: Option<BoolExpr>,
     /// Whether to emit `SELECT DISTINCT`.
     pub distinct: bool,
@@ -70,7 +69,6 @@ impl QueryState {
     pub fn new(from: impl Into<String>) -> Self {
         Self {
             from: from.into(),
-            filters: Vec::new(),
             joins: Vec::new(),
             group_bys: Vec::new(),
             havings: Vec::new(),
@@ -97,11 +95,6 @@ impl QueryState {
             None => expr,
             Some(existing) => BoolExpr::And(Box::new(existing), Box::new(expr)),
         });
-    }
-
-    pub(crate) fn append_filter(&mut self, condition: FilterCondition) {
-        self.filters.push(condition.clone());
-        self.append_bool_expr(BoolExpr::Filter(condition));
     }
 
     /// Compile the state into a SQL string using the provider's placeholder style.
@@ -169,13 +162,6 @@ impl QueryState {
         if let Some(ref expr) = self.where_expr {
             sql.push_str(" WHERE ");
             sql.push_str(&compile_bool_expr(expr, gen, &mut param_idx));
-        } else if !self.filters.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&build_where_clauses(&self.filters, gen));
-            // Advance `param_idx` past the legacy `filters` path so that
-            // HAVING placeholders (PostgreSQL `$N`) continue from the
-            // correct index. `build_where_clauses` always starts at index 1.
-            param_idx += self.filters.iter().map(|f| f.param_count()).sum::<usize>();
         }
 
         // GROUP BY

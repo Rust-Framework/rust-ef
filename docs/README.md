@@ -41,8 +41,8 @@ docs/
 - [v1.5 语义化版本迁移指南](v1.5-semver-migration-guide.md)
 - [v1.8 迁移指南](v1.8-migration-guide.md)
 - [v2.1 迁移指南（rust-dix 0.10 / 类型化 key / AnyKey / 异步）](v2.1-migration-guide.md)
-- [v2.2 迁移指南（复合/部分/表达式索引、复合外键、CHECK、默认值、表选项）](v2.2-migration-guide.md)
-- [v2.3 迁移指南（EFCore 实体配置对齐：类型/精度/注释/计算列/视图/schema/DbEnum）](v2.3-migration-guide.md)
+- [v2.2 迁移指南（数据库级约束 + EFCore 实体配置对齐 + 可组合谓词）](v2.2-migration-guide.md)
+
 - [rust-dix 0.10 能力评估与采纳矩阵](rust-dix-0.10-adoption.md)
 
 ## 维护

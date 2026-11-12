@@ -142,9 +142,12 @@ fn test_pg_full_query_where_having_pagination() {
     // Full query: WHERE category = $1 GROUP BY ... HAVING COUNT(id) > $2
     //             OFFSET 10 LIMIT 5
     let mut state = QueryState::new("blogs");
-    state.parameters.push(DbValue::String("tech".to_string()));
     state.parameters.push(DbValue::I32(1));
-    state.where_expr = Some(BoolExpr::Filter(FilterCondition::new("category", "=", 1)));
+    state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
+        "category",
+        "=",
+        vec![DbValue::String("tech".to_string())],
+    )));
     state.group_bys = vec!["category".to_string()];
     state.havings.push(HavingExpr::Compare {
         agg: AggKind::Count,
@@ -173,9 +176,12 @@ fn test_mysql_full_query_where_having_pagination() {
     // MySQL: WHERE category = ? GROUP BY ... HAVING COUNT(id) > ?
     //        LIMIT 5 OFFSET 10
     let mut state = QueryState::new("blogs");
-    state.parameters.push(DbValue::String("tech".to_string()));
     state.parameters.push(DbValue::I32(1));
-    state.where_expr = Some(BoolExpr::Filter(FilterCondition::new("category", "=", 1)));
+    state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
+        "category",
+        "=",
+        vec![DbValue::String("tech".to_string())],
+    )));
     state.group_bys = vec!["category".to_string()];
     state.havings.push(HavingExpr::Compare {
         agg: AggKind::Count,

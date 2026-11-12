@@ -2,21 +2,23 @@
 
 全局查询过滤器用于为所有查询自动附加 WHERE 条件，典型场景包括**软删除**和**多租户隔离**。
 
-通过 `linq!` 宏的**形式 C**（`filter` 关键字）产出 `BoolExpr` 值，传入 `ModelBuilder.has_query_filter::<T>`；不要使用字符串 SQL 形式。
+通过 `linq!(|b: T| <条件>)` 产出可组合的 `Predicate<T>`，传入 `ModelBuilder.has_query_filter::<T>`（它同时接受裸 `BoolExpr`，并从谓词推断 `T`）。字符串 API（`has_query_filter("...")`）已移除。
 
 ## 注册过滤器
 
 ```rust
 let mut ctx = DbContext::from_options(&options)?;
 
-// 形式 C：linq!(filter |b: T| <bool_expr>) 产出 BoolExpr
+// linq!(|b: T| <条件>) 产出 Predicate<T>
 ctx.model().has_query_filter::<Blog>(
-    linq!(filter |b: Blog| b.deleted_at.is_null())
+    linq!(|b: Blog| b.deleted_at.is_null())
 );
 
 ctx.set::<Blog>();
 ctx.ensure_created().await?;
 ```
+
+需要与其他条件组合时，`Predicate` 可继续 `and` / `or`；需要裸 `BoolExpr`（如跨 API 传递）时用 `.into_expr()`。
 
 也可以用 `BoolExpr::Filter(FilterCondition::with_values(...))` 直接构造，无需宏：
 
@@ -50,11 +52,11 @@ let filtered = linq!(ctx.set::<Blog>(), |b: Blog| b.rating > 3)
 ```rust
 // 软删除 + 多租户
 ctx.model().has_query_filter::<Blog>(
-    linq!(filter |b: Blog| b.deleted_at.is_null() && b.tenant_id == tenant_id)
+    linq!(|b: Blog| b.deleted_at.is_null() && b.tenant_id == tenant_id)
 );
 ```
 
-形式 C 产出的 `BoolExpr` 是自包含的（参数值内联在 `FilterCondition::with_values` 中），无需依赖外部 `QueryBuilder` 状态。
+`linq!` 产出的谓词是自包含的（参数值内联在 `FilterCondition::with_values` 中），无需依赖外部 `QueryBuilder` 状态。
 
 ## 绕过过滤器：管理员查询
 
@@ -114,7 +116,7 @@ UPDATE 的 WHERE 子句自动 AND 过滤条件，确保不会把已删除的行�
 | 实践 | 说明 |
 |------|------|
 | 过滤器在 `set::<T>()` 前注册 | `DbSet` 创建时注入过滤器，之后修改 `ModelBuilder` 对已创建的 DbSet 无效 |
-| 用 `linq!(filter ...)` 或 `BoolExpr::Filter` | 类型安全，参数化自动处理，无 SQL 注入风险 |
+| 用 `linq!(...)` 或 `BoolExpr::Filter` | 类型安全，参数化自动处理，无 SQL 注入风险 |
 | 不要过度依赖过滤器做权限隔离 | 安全敏感逻辑应在 Handler/Service 层显式校验 |
 | `save_changes()` 后跟踪器清空 | 后续修改需重新 `load_all()` 或 `attach()` |
 | UPDATE/DELETE 同样受过滤器约束 | 越权写返回 `ConcurrencyConflict`，是安全特性 |

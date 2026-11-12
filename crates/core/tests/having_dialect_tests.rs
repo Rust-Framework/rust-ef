@@ -82,9 +82,12 @@ fn test_pg_having_index_continues_from_where() {
     // WHERE category = $1 GROUP BY ... HAVING COUNT(blog_id) > $2
     // The HAVING placeholder must be $2 (continuing from WHERE's $1), not $1.
     let mut state = QueryState::new("blogs");
-    state.parameters.push(DbValue::String("tech".to_string()));
     state.parameters.push(DbValue::I32(1));
-    state.where_expr = Some(BoolExpr::Filter(FilterCondition::new("category", "=", 1)));
+    state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
+        "category",
+        "=",
+        vec![DbValue::String("tech".to_string())],
+    )));
     state.group_bys = vec!["category".to_string()];
     state.havings.push(HavingExpr::Compare {
         agg: AggKind::Count,
@@ -138,8 +141,11 @@ fn test_pg_having_index_continues_through_and_combination() {
 fn test_pg_having_index_continues_through_or_with_where() {
     // WHERE category = $1 HAVING (COUNT(blog_id) > $2 OR SUM(views) > $3)
     let mut state = QueryState::new("blogs");
-    state.parameters.push(DbValue::String("tech".to_string()));
-    state.where_expr = Some(BoolExpr::Filter(FilterCondition::new("category", "=", 1)));
+    state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
+        "category",
+        "=",
+        vec![DbValue::String("tech".to_string())],
+    )));
     state.group_bys = vec!["category".to_string()];
     let having = HavingExpr::Or(
         Box::new(HavingExpr::Compare {

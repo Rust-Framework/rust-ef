@@ -1,9 +1,10 @@
 //! AST types for the `linq!` macro.
 //!
-//! `LinqInput` is the top-level dispatch between query form (A/B) and value
-//! form (C). `LinqClause` enumerates all `;`-separated clauses supported in
-//! Form B. `HavingExprAst` mirrors `rust_ef::query::HavingExpr` but carries
-//! `syn::Expr` nodes resolved at expansion time.
+//! `LinqInput` is the top-level dispatch between the predicate/query form and
+//! the `index`/`key` configuration form. `LinqClause` enumerates all
+//! `;`-separated clauses supported in query form. `HavingExprAst` mirrors
+//! `rust_ef::query::HavingExpr` but carries `syn::Expr` nodes resolved at
+//! expansion time.
 
 use syn::{Expr, Ident, Type};
 
@@ -11,25 +12,25 @@ use syn::{Expr, Ident, Type};
 // Input types
 // ---------------------------------------------------------------------------
 
-/// Top-level dispatch: query form (A/B) vs. value form (C).
+/// Top-level dispatch: predicate/query vs. `index`/`key` configuration.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum LinqInput {
     Query(QueryInput),
     Value(ValueInput),
 }
 
-/// Form A (filter closure) and Form B (multi-clause query) share this shape.
+/// Predicate form (no source) and query form (with source) share this shape.
 pub(crate) struct QueryInput {
-    /// The source `QueryBuilder<T>` expression (e.g. `ctx.set::<Blog>()`).
-    /// `None` for Form A reusable closures.
+    /// The source `QueryBuilder<T>` / `DbSet<T>` expression (e.g.
+    /// `ctx.set::<Blog>()`). `None` for the predicate form.
     pub source: Option<Expr>,
     pub entity: Type,
     pub where_param: Option<Ident>,
-    /// `None` for pure-clause queries (Form B without a where closure).
+    /// `None` for pure-clause queries (query form without a condition).
     pub where_body: Option<Expr>,
-    /// Form A `=> field` order syntax (kept for backward compatibility).
+    /// `=> field` order sugar (query form only — ordering needs a query).
     pub order: Option<LinqOrder>,
-    /// Form B `;`-separated clauses.
+    /// `;`-separated clauses.
     pub clauses: Vec<LinqClause>,
 }
 
@@ -38,21 +39,15 @@ pub(crate) struct LinqOrder {
     pub descending: bool,
 }
 
-/// Form C value-producing inputs.
+/// `index` / `key` configuration inputs.
 pub(crate) enum ValueInput {
-    /// `linq!(filter |b: T| <bool_expr>)` → `BoolExpr`
-    Filter {
-        entity: Type,
-        param: Ident,
-        body: Expr,
-    },
     /// `linq!(index |b: T| (f1, f2, ...))` → `&'static [&'static str]`
     Index { entity: Type, fields: Vec<Expr> },
     /// `linq!(key |b: T| (f1, f2, ...))` → `&'static [&'static str]`
     Key { entity: Type, fields: Vec<Expr> },
 }
 
-/// A single `;`-separated clause in Form B.
+/// A single `;`-separated clause in the query form.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum LinqClause {
     /// `include b.posts then b.comments then b.author`

@@ -9,13 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.3.0] — 2026-11-12 — EFCore 实体配置对齐：列类型/精度/注释/计算列、备用键、视图、schema 与 DbEnum
+## [2.2.0] — 2026-11-12 — 数据库级约束、EFCore 实体配置对齐与可组合条件
 
 > **English** · **简体中文**
 
 ### English
 
-#### Added — EntityTypeBuilder / PropertyBuilder parity
+#### 1. Database-level constraints & migration automation
+
+##### Added — model-level DDL constraints
+
+- **Declarative indexes**: `EntityTypeBuilder::has_index(&[cols])` now emits one
+  composite index instead of degrading to single-column indexes. The returned
+  `IndexBuilder` supports `.is_unique()`, `.has_name(name)`, and
+  `.has_filter(linq!(|x: T| ...))` (partial index).
+- **Partial indexes**: PostgreSQL/SQLite emit `... WHERE <predicate>`. MySQL has
+  no partial indexes, so a filtered **unique** index is emulated with a
+  functional `CASE WHEN <predicate> THEN <col> END` unique index; a filtered
+  non-unique index is skipped with a warning comment instead of producing
+  invalid SQL.
+- **Expression indexes**: `has_index_expression(&["coalesce(channel_id, '')"])`
+  (`.is_unique()` supported).
+- **Composite foreign keys**: `has_foreign_key(&[cols], Ref::TABLE, &[ref_cols])`
+  with `.on_delete(...)` / `.has_name(...)`.
+- **Scalar `#[foreign_key(Target)]` now participates in DDL**: it generates a
+  single-column FK to `Target`'s primary key (previously only the `FK_<Target>`
+  constant was generated).
+- **CHECK constraints**: `entity.has_check(name, sql)` and
+  `property_named(col).has_check(sql)` (auto-named `CK_<table>_<column>`), emitted
+  inline in `CREATE TABLE` for PostgreSQL/MySQL/SQLite.
+- **Column defaults**: `property_named(col).has_default(sql)` emits `DEFAULT`
+  in `CREATE TABLE`, `ADD COLUMN`, and `ALTER COLUMN` (PG `SET/DROP DEFAULT`,
+  MySQL `MODIFY COLUMN`).
+- **MySQL table options**: `entity.engine("InnoDB").charset("utf8mb4").collate("utf8mb4_bin")`.
+  MySQL DDL always emits `ENGINE`/`DEFAULT CHARSET` (defaults `InnoDB`/`utf8mb4`).
+- **`Option<T>` inner type mapping**: `Option<String>` + `max_length` now maps to
+  `VARCHAR(n)` (indexable on MySQL) instead of `TEXT`; `Option<Uuid>` /
+  `Option<Decimal>` map to their inner types.
+- **Migration diffing** covers declared indexes, composite FKs, CHECK
+  constraints, column defaults, and MySQL table options; Down migrations restore
+  dropped index/CHECK/FK definitions.
+- **SQLite migration scripts** emit foreign keys inline in `CREATE TABLE`
+  (SQLite cannot `ALTER TABLE ADD CONSTRAINT`).
+
+##### Fixed
+
+- **rust-ef-mysql**: `cell_to_db_value` probed `uuid::Uuid` before `String`;
+  sqlx-mysql's UUID decoder accepts *any* 16-byte slice, so 16-character
+  `VARCHAR` values were silently decoded as UUIDs (36-char text). `String` is
+  now probed first; UUID columns (`CHAR(36)`) parse back via
+  `TryFrom<DbValue> for Uuid`.
+- PostgreSQL `ALTER COLUMN` now syncs column defaults (`SET DEFAULT` /
+  `DROP DEFAULT`) instead of leaving them stale.
+- Migration snapshots now round-trip `max_length`, column defaults, indexes,
+  FKs, CHECKs, and table options (serde_json-based snapshot IO).
+
+##### Notes / compatibility
+
+- `EntityTypeMeta` gained `indexes`, `foreign_keys`, `checks`, and
+  `table_options`; manual struct literals must add
+  `..EntityTypeMeta::default()`.
+- `SnapshotColumn` gained `default_value`; `SnapshotEntityType` gained
+  `indexes` / `foreign_keys` / `checks` / `table_options`.
+- `EntityTypeBuilder::has_index` now returns `IndexBuilder<'_ , T>` instead of
+  `&mut Self` (call sites that used it as a statement are unaffected).
+- `ensure_created` still creates tables + seeds only; it does **not** create
+  standalone indexes or foreign keys. Use `MigrationEngine::generate` + `apply`
+  for the full constraint set.
+
+
+#### 2. EFCore entity configuration parity
+
+##### Added — EntityTypeBuilder / PropertyBuilder parity
 
 - **`HasColumnType`**: `#[column_type("...")]` / `property_named(...).has_column_type("...")`
   emits the column type verbatim (e.g. `JSON`, `MEDIUMTEXT`, `ENUM(...)`).
@@ -48,7 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TryFrom<DbValue> for Enum`, `as_str()` and `from_db_str()`; supports
   `#[db_value("...")]` per variant.
 
-#### Migration / snapshot / automated upgrade
+##### Migration / snapshot / automated upgrade
 
 - **Snapshot export helper**: `build_registered_snapshot` / `save_registered_snapshot`
   build a snapshot from inventory-registered entities (the CLI cannot see the
@@ -73,7 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warns to drop/re-add) and per-part quoting for `schema.table`.
 - `ensure_deleted` no longer drops views.
 
-#### Notes / compatibility
+##### Notes / compatibility
 
 - `EntityTypeMeta` gained `is_view`, `is_keyless`, `comment`;
   `PropertyMeta` gained `column_type`, `precision`, `scale`, `is_fixed_length`,
@@ -86,9 +151,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EntityType` row parser falls back to `Default` for unknown values).
 - See the full parity matrix in `docs/rust-ef/03-entity-design/efcore-parity.md`.
 
+
+#### 3. Composable predicates & the single condition compiler
+
+##### Breaking
+
+- **`linq!` conditions no longer take a `filter` keyword.** `linq!(filter |b: T| ...)` is now `linq!(|b: T| ...)`: a bare condition closure is the predicate form. It returns `Predicate<T>` instead of `BoolExpr`; APIs that take an expression were widened to `impl Into<BoolExpr>` (`DbSet::set_query_filter`, `with_cte_typed` / `with_recursive_cte_typed`) and `ModelBuilder::has_query_filter` takes `impl Into<Predicate<T>>`, so `has_query_filter(linq!(|b: Blog| ...))` also infers `T` now. Code that annotated the result (`let e: BoolExpr = linq!(...)`) must use `.into_expr()`.
+- **`QueryBuilder::filter` / `DbSet::filter` take a predicate, not a closure.** The signature is `filter(impl Into<Predicate<T>>)`; hand-written `FnOnce(QueryBuilder<T>) -> QueryBuilder<T>` closures are no longer accepted. `where_` (introduced while this feature was in development, never released) was folded into `filter`.
+- **The source-less `=> order` sugar is gone.** `linq!(|b: T| cond => b.col)` now fails with a hint; use `linq!(ctx.set::<T>(), |b: T| cond => b.col)` or the `; order_by b.col` clause. The sugar still works when a source is present.
+- **The undocumented type-first forms are gone.** `linq!(Blog, |b| ...)` and `linq!(Blog, b.rating > 5)` are rejected; write `linq!(|b: Blog| ...)` (predicate) or carry an explicit source (`linq!(ctx.set::<Blog>(); ...)`). The error names the correct form.
+- **The old method-chain condition compiler is gone.** Every condition is compiled by one boolean compiler and applied through `QueryBuilder::filter` — one AST, one encoder. Removed (internal or `#[doc(hidden)]`): `QueryBuilder::{filter_column, filter_not, filter_in, filter_not_in, filter_is_null, filter_is_not_null, filter_between, filter_like, filter_not_like, or_where, where_exists_internal, where_in_subquery_internal, having_internal}`, `QueryState::filters`, `QueryState::append_filter`, and `compile::{build_where_clauses, build_where_clause_with_offset, filters_to_and_expr}`.
+- **SQL shape changes** (semantics unchanged): `!b.flag` emits `NOT (flag = ?)` instead of `flag = ?`; every condition is emitted as one parenthesized tree, so `OR` groups nested on the right of `&&` keep their parentheses (they used to bind to the whole left-hand side).
+- **`FilterCondition::new` is `#[doc(hidden)]`.** Conditions that bind values must be built with `FilterCondition::with_values` (or `linq!(|b: T| ...)`); `FilterCondition::new` remains for value-less operators such as `IS NULL`.
+
+##### Added
+
+- **`Predicate<T>` — composable WHERE predicates (EF Core `PredicateBuilder` style).** `and` / `or` / `not`, `always()` / `never()` identity seeds that never leak `1=1` / `1=0` into the SQL, plus `and_opt` / `or_opt` for optional filters and `is_always` / `is_never` for guards. `QueryBuilder::filter` appends a predicate with `AND` (a bare `BoolExpr` is accepted too) and registers its values in tree order, so `count()` and the page query share one condition set. `into_expr()` and the `BoolExpr ⇄ Predicate<T>` conversions bridge APIs that take an expression.
+- **Fail-fast on value-less conditions.** Applying a self-contained `BoolExpr` whose parameter count exceeds its carried values (only possible with a hand-built `FilterCondition::new`) panics with a message pointing at `linq!(|b: T| ...)` / `with_values`, instead of handing the driver a `?` with nothing to bind.
+- **`execute_update` resolves correlated subqueries** exactly like `to_sql` / `count` / `execute_delete` (it used to emit `FROM ""`), and returns a configuration error when no `set` column was added.
+
+##### Fixed
+
+- **`x.contains(y)` misclassified a variable argument as a column.** `linq!` treated *any* path argument as a column reference, so `b.url.contains(keyword)` compiled to `url IN (<value expression>)` and failed to compile — the common keyword-search pattern. `.contains()` is now `IN` only when the argument is a field reference (`ids.contains(b.id)`) and `LIKE` otherwise.
+- **The condition form's `IN` used the receiver as the column.** `linq!(|b: T| ids.contains(b.id))` now emits `b.id IN (...)`, not `ids IN (...)`.
+- **`a && (b || c)` lost the grouping.** The condition chain appended an `OR` group with "OR with everything accumulated so far", so an `OR` on the right of `&&` bound to the whole left-hand side (`((a AND b) OR c)`). Such groups are now compiled as a self-contained predicate and `AND`-ed in.
+- **An empty `IN` list emitted `col IN ()`**, which is invalid SQL. It now emits `1 = 0` — an empty candidate set matches no row — so optional ID filters can be passed through without a length check.
+
+
 ### 简体中文
 
-#### 新增 — EntityTypeBuilder / PropertyBuilder 对齐
+#### 1. 数据库级约束与迁移自动化
+
+##### 新增 — 模型层数据库约束
+
+- **声明式索引**：`EntityTypeBuilder::has_index(&[cols])` 现在生成一个复合索引
+  （不再退化为多个单列索引）；返回的 `IndexBuilder` 支持 `.is_unique()`、
+  `.has_name(name)`、`.has_filter(linq!(|x: T| ...))`（部分索引）。
+- **部分索引**：PostgreSQL/SQLite 生成 `... WHERE <predicate>`；MySQL 没有部分
+  索引，过滤的 **UNIQUE** 索引用函数索引
+  `(CASE WHEN <predicate> THEN <col> END)` 模拟，过滤的普通索引输出 warning
+  注释并跳过（而不是生成非法 SQL）。
+- **表达式索引**：`has_index_expression(&["coalesce(channel_id, '')"])`（支持
+  `.is_unique()`）。
+- **复合外键**：`has_foreign_key(&[cols], Ref::TABLE, &[ref_cols])`，可链式
+  `.on_delete(...)` / `.has_name(...)`。
+- **标量 `#[foreign_key(Target)]` 参与 DDL**：生成指向 `Target` 主键的单列
+  FK（此前只生成 `FK_<Target>` 常量）。
+- **CHECK 约束**：`entity.has_check(name, sql)` 与
+  `property_named(col).has_check(sql)`（自动命名 `CK_<table>_<column>`），在
+  `CREATE TABLE` 内联（PG/MySQL/SQLite）。
+- **列默认值**：`property_named(col).has_default(sql)` 在 `CREATE TABLE`、
+  `ADD COLUMN`、`ALTER COLUMN` 中生成 `DEFAULT`（PG `SET/DROP DEFAULT`，
+  MySQL `MODIFY COLUMN`）。
+- **MySQL 表选项**：`entity.engine("InnoDB").charset("utf8mb4").collate("utf8mb4_bin")`；
+  MySQL DDL 始终显式输出 `ENGINE`/`DEFAULT CHARSET`（默认 `InnoDB`/`utf8mb4`）。
+- **`Option<T>` 内层类型映射**：`Option<String>` + `max_length` 现在生成
+  `VARCHAR(n)`（MySQL 可建索引），不再退化为 `TEXT`；`Option<Uuid>` /
+  `Option<Decimal>` 同样按内层类型映射。
+- **迁移差分**覆盖声明式索引、复合外键、CHECK、列默认值与 MySQL 表选项；
+  Down 迁移会按旧定义重建被删除的索引/CHECK/FK。
+- **SQLite 迁移脚本**把外键内联到 `CREATE TABLE`（SQLite 不支持
+  `ALTER TABLE ADD CONSTRAINT`）。
+
+##### 修复
+
+- **rust-ef-mysql**：`cell_to_db_value` 先探测 `uuid::Uuid` 再探测 `String`；
+  sqlx-mysql 的 UUID 解码接受任意 16 字节切片，导致 16 字符 `VARCHAR`
+  被静默解码成 UUID（36 字符文本）。现在先探测 `String`；UUID 列（`CHAR(36)`）
+  通过 `TryFrom<DbValue> for Uuid` 无损还原。
+- PostgreSQL `ALTER COLUMN` 现在同步列默认值（`SET DEFAULT` / `DROP DEFAULT`），
+  不再保留旧默认值。
+- 迁移快照现在完整往返 `max_length`、列默认值、索引、外键、CHECK 与表选项
+  （基于 serde_json 的快照 IO）。
+
+##### 注意 / 兼容性
+
+- `EntityTypeMeta` 新增 `indexes`、`foreign_keys`、`checks`、`table_options`；
+  手写结构体字面量需补 `..EntityTypeMeta::default()`。
+- `SnapshotColumn` 新增 `default_value`；`SnapshotEntityType` 新增
+  `indexes` / `foreign_keys` / `checks` / `table_options`。
+- `EntityTypeBuilder::has_index` 返回 `IndexBuilder<'_, T>`（作为语句调用的
+  现有代码不受影响）。
+- `ensure_created` 仍只建表 + 种子，**不生成**独立索引与外键；完整约束请用
+  `MigrationEngine::generate` + `apply`。
+
+---
+
+#### 2. EFCore 实体配置对齐
+
+##### 新增 — EntityTypeBuilder / PropertyBuilder 对齐
 
 - **`HasColumnType`**：`#[column_type("...")]` / `.has_column_type("...")` 原样输出列类型
   （`JSON`、`MEDIUMTEXT`、`ENUM(...)` 等）。
@@ -117,7 +268,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `From<Enum> for DbValue`、`TryFrom<DbValue> for Enum`、`as_str()`、
   `from_db_str()`，支持 `#[db_value("...")]`。
 
-#### 迁移 / 快照 / 自动升级
+##### 迁移 / 快照 / 自动升级
 
 - **快照导出助手**：`build_registered_snapshot` / `save_registered_snapshot`
   从 inventory 注册的实体生成快照（CLI 看不到应用模型），打通
@@ -139,7 +290,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `schema.table` 分段引用。
 - `ensure_deleted` 不再删除视图。
 
-#### 注意 / 兼容性
+##### 注意 / 兼容性
 
 - `EntityTypeMeta` 新增 `is_view`、`is_keyless`、`comment`；`PropertyMeta` 新增
   `column_type`、`precision`、`scale`、`is_fixed_length`、`collation`、`comment`、
@@ -152,128 +303,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.2.0] — 2026-11-12 — 数据库级约束对齐：复合/部分/表达式索引、复合外键、CHECK、默认值与表选项
 
-> **English** · **简体中文**
+#### 3. 可组合谓词与单一条件编译器
 
-### English
+##### 破坏性变更
 
-#### Added — model-level DDL constraints
+- **`linq!` 条件形式不再需要 `filter` 关键字。** `linq!(filter |b: T| ...)` 改为 `linq!(|b: T| ...)`：裸条件闭包就是谓词形式。它返回 `Predicate<T>` 而不是 `BoolExpr`；接收表达式的 API 放宽为 `impl Into<BoolExpr>`（`DbSet::set_query_filter`、`with_cte_typed` / `with_recursive_cte_typed`），`ModelBuilder::has_query_filter` 改为接收 `impl Into<Predicate<T>>`，因此 `has_query_filter(linq!(|b: Blog| ...))` 还能自动推断 `T`。显式标注过类型的代码（`let e: BoolExpr = linq!(...)`）改为 `.into_expr()`。
+- **`QueryBuilder::filter` / `DbSet::filter` 接收谓词而不是闭包。** 签名为 `filter(impl Into<Predicate<T>>)`；手写的 `FnOnce(QueryBuilder<T>) -> QueryBuilder<T>` 闭包不再接受。开发期引入、未发布的 `where_` 已并入 `filter`。
+- **无 source 的 `=> order` 糖移除。** `linq!(|b: T| cond => b.col)` 会给出提示并报错；改用 `linq!(ctx.set::<T>(), |b: T| cond => b.col)` 或 `; order_by b.col` 子句。带 source 时该糖照旧可用。
+- **未文档化的「类型在前」形式移除。** `linq!(Blog, |b| ...)` 与 `linq!(Blog, b.rating > 5)` 现在报错；请写 `linq!(|b: Blog| ...)`（谓词）或带显式 source（`linq!(ctx.set::<Blog>(); ...)`）。错误信息会给出正确写法。
+- **旧的方法链条件编译器已移除。** 所有条件都由同一个布尔编译器编译、经 `QueryBuilder::filter` 应用——一份 AST、一个编码器。删除（内部或 `#[doc(hidden)]`）：`QueryBuilder::{filter_column, filter_not, filter_in, filter_not_in, filter_is_null, filter_is_not_null, filter_between, filter_like, filter_not_like, or_where, where_exists_internal, where_in_subquery_internal, having_internal}`、`QueryState::filters`、`QueryState::append_filter`，以及 `compile::{build_where_clauses, build_where_clause_with_offset, filters_to_and_expr}`。
+- **SQL 形态变化**（语义不变）：`!b.flag` 生成 `NOT (flag = ?)` 而非 `flag = ?`；所有条件按表达式树整体加括号，`&&` 右侧的 `OR` 组不再被提升到整条条件。
+- **`FilterCondition::new` 标记为 `#[doc(hidden)]`。** 带绑定值的条件请用 `FilterCondition::with_values`（或 `linq!(|b: T| ...)`）；`FilterCondition::new` 仅保留给 `IS NULL` 这类无值算子。
 
-- **Declarative indexes**: `EntityTypeBuilder::has_index(&[cols])` now emits one
-  composite index instead of degrading to single-column indexes. The returned
-  `IndexBuilder` supports `.is_unique()`, `.has_name(name)`, and
-  `.has_filter(linq!(filter |x: T| ...))` (partial index).
-- **Partial indexes**: PostgreSQL/SQLite emit `... WHERE <predicate>`. MySQL has
-  no partial indexes, so a filtered **unique** index is emulated with a
-  functional `CASE WHEN <predicate> THEN <col> END` unique index; a filtered
-  non-unique index is skipped with a warning comment instead of producing
-  invalid SQL.
-- **Expression indexes**: `has_index_expression(&["coalesce(channel_id, '')"])`
-  (`.is_unique()` supported).
-- **Composite foreign keys**: `has_foreign_key(&[cols], Ref::TABLE, &[ref_cols])`
-  with `.on_delete(...)` / `.has_name(...)`.
-- **Scalar `#[foreign_key(Target)]` now participates in DDL**: it generates a
-  single-column FK to `Target`'s primary key (previously only the `FK_<Target>`
-  constant was generated).
-- **CHECK constraints**: `entity.has_check(name, sql)` and
-  `property_named(col).has_check(sql)` (auto-named `CK_<table>_<column>`), emitted
-  inline in `CREATE TABLE` for PostgreSQL/MySQL/SQLite.
-- **Column defaults**: `property_named(col).has_default(sql)` emits `DEFAULT`
-  in `CREATE TABLE`, `ADD COLUMN`, and `ALTER COLUMN` (PG `SET/DROP DEFAULT`,
-  MySQL `MODIFY COLUMN`).
-- **MySQL table options**: `entity.engine("InnoDB").charset("utf8mb4").collate("utf8mb4_bin")`.
-  MySQL DDL always emits `ENGINE`/`DEFAULT CHARSET` (defaults `InnoDB`/`utf8mb4`).
-- **`Option<T>` inner type mapping**: `Option<String>` + `max_length` now maps to
-  `VARCHAR(n)` (indexable on MySQL) instead of `TEXT`; `Option<Uuid>` /
-  `Option<Decimal>` map to their inner types.
-- **Migration diffing** covers declared indexes, composite FKs, CHECK
-  constraints, column defaults, and MySQL table options; Down migrations restore
-  dropped index/CHECK/FK definitions.
-- **SQLite migration scripts** emit foreign keys inline in `CREATE TABLE`
-  (SQLite cannot `ALTER TABLE ADD CONSTRAINT`).
+##### 新增
 
-#### Fixed
+- **`Predicate<T>`：可组合的 WHERE 谓词（对齐 EF Core `PredicateBuilder`）。** 提供 `and` / `or` / `not`、`always()` / `never()` 恒等起点（不会把 `1=1` / `1=0` 写入 SQL），以及可选条件的 `and_opt` / `or_opt` 与状态判断 `is_always` / `is_never`。`QueryBuilder::filter` 以 `AND` 追加谓词（也接受裸 `BoolExpr`），按表达式树顺序登记绑定值，因此 `count()` 与列表查询共用同一套条件。`into_expr()` 与 `BoolExpr ⇄ Predicate<T>` 互转负责与接收表达式的 API 衔接。
+- **无值条件 fail-fast。** 自包含 `BoolExpr` 的参数个数大于其携带值个数时（只可能由手写 `FilterCondition::new` 造成），`apply_query_filter` 直接带明确信息 panic，而不是把一个没有值的 `?` 交给驱动。
+- **`execute_update` 解析相关子查询**，与 `to_sql` / `count` / `execute_delete` 一致（此前会生成 `FROM ""`）；未添加 `set` 列时返回配置错误。
 
-- **rust-ef-mysql**: `cell_to_db_value` probed `uuid::Uuid` before `String`;
-  sqlx-mysql's UUID decoder accepts *any* 16-byte slice, so 16-character
-  `VARCHAR` values were silently decoded as UUIDs (36-char text). `String` is
-  now probed first; UUID columns (`CHAR(36)`) parse back via
-  `TryFrom<DbValue> for Uuid`.
-- PostgreSQL `ALTER COLUMN` now syncs column defaults (`SET DEFAULT` /
-  `DROP DEFAULT`) instead of leaving them stale.
-- Migration snapshots now round-trip `max_length`, column defaults, indexes,
-  FKs, CHECKs, and table options (serde_json-based snapshot IO).
+##### 修复
 
-#### Notes / compatibility
-
-- `EntityTypeMeta` gained `indexes`, `foreign_keys`, `checks`, and
-  `table_options`; manual struct literals must add
-  `..EntityTypeMeta::default()`.
-- `SnapshotColumn` gained `default_value`; `SnapshotEntityType` gained
-  `indexes` / `foreign_keys` / `checks` / `table_options`.
-- `EntityTypeBuilder::has_index` now returns `IndexBuilder<'_ , T>` instead of
-  `&mut Self` (call sites that used it as a statement are unaffected).
-- `ensure_created` still creates tables + seeds only; it does **not** create
-  standalone indexes or foreign keys. Use `MigrationEngine::generate` + `apply`
-  for the full constraint set.
-
-### 简体中文
-
-#### 新增 — 模型层数据库约束
-
-- **声明式索引**：`EntityTypeBuilder::has_index(&[cols])` 现在生成一个复合索引
-  （不再退化为多个单列索引）；返回的 `IndexBuilder` 支持 `.is_unique()`、
-  `.has_name(name)`、`.has_filter(linq!(filter |x: T| ...))`（部分索引）。
-- **部分索引**：PostgreSQL/SQLite 生成 `... WHERE <predicate>`；MySQL 没有部分
-  索引，过滤的 **UNIQUE** 索引用函数索引
-  `(CASE WHEN <predicate> THEN <col> END)` 模拟，过滤的普通索引输出 warning
-  注释并跳过（而不是生成非法 SQL）。
-- **表达式索引**：`has_index_expression(&["coalesce(channel_id, '')"])`（支持
-  `.is_unique()`）。
-- **复合外键**：`has_foreign_key(&[cols], Ref::TABLE, &[ref_cols])`，可链式
-  `.on_delete(...)` / `.has_name(...)`。
-- **标量 `#[foreign_key(Target)]` 参与 DDL**：生成指向 `Target` 主键的单列
-  FK（此前只生成 `FK_<Target>` 常量）。
-- **CHECK 约束**：`entity.has_check(name, sql)` 与
-  `property_named(col).has_check(sql)`（自动命名 `CK_<table>_<column>`），在
-  `CREATE TABLE` 内联（PG/MySQL/SQLite）。
-- **列默认值**：`property_named(col).has_default(sql)` 在 `CREATE TABLE`、
-  `ADD COLUMN`、`ALTER COLUMN` 中生成 `DEFAULT`（PG `SET/DROP DEFAULT`，
-  MySQL `MODIFY COLUMN`）。
-- **MySQL 表选项**：`entity.engine("InnoDB").charset("utf8mb4").collate("utf8mb4_bin")`；
-  MySQL DDL 始终显式输出 `ENGINE`/`DEFAULT CHARSET`（默认 `InnoDB`/`utf8mb4`）。
-- **`Option<T>` 内层类型映射**：`Option<String>` + `max_length` 现在生成
-  `VARCHAR(n)`（MySQL 可建索引），不再退化为 `TEXT`；`Option<Uuid>` /
-  `Option<Decimal>` 同样按内层类型映射。
-- **迁移差分**覆盖声明式索引、复合外键、CHECK、列默认值与 MySQL 表选项；
-  Down 迁移会按旧定义重建被删除的索引/CHECK/FK。
-- **SQLite 迁移脚本**把外键内联到 `CREATE TABLE`（SQLite 不支持
-  `ALTER TABLE ADD CONSTRAINT`）。
-
-#### 修复
-
-- **rust-ef-mysql**：`cell_to_db_value` 先探测 `uuid::Uuid` 再探测 `String`；
-  sqlx-mysql 的 UUID 解码接受任意 16 字节切片，导致 16 字符 `VARCHAR`
-  被静默解码成 UUID（36 字符文本）。现在先探测 `String`；UUID 列（`CHAR(36)`）
-  通过 `TryFrom<DbValue> for Uuid` 无损还原。
-- PostgreSQL `ALTER COLUMN` 现在同步列默认值（`SET DEFAULT` / `DROP DEFAULT`），
-  不再保留旧默认值。
-- 迁移快照现在完整往返 `max_length`、列默认值、索引、外键、CHECK 与表选项
-  （基于 serde_json 的快照 IO）。
-
-#### 注意 / 兼容性
-
-- `EntityTypeMeta` 新增 `indexes`、`foreign_keys`、`checks`、`table_options`；
-  手写结构体字面量需补 `..EntityTypeMeta::default()`。
-- `SnapshotColumn` 新增 `default_value`；`SnapshotEntityType` 新增
-  `indexes` / `foreign_keys` / `checks` / `table_options`。
-- `EntityTypeBuilder::has_index` 返回 `IndexBuilder<'_, T>`（作为语句调用的
-  现有代码不受影响）。
-- `ensure_created` 仍只建表 + 种子，**不生成**独立索引与外键；完整约束请用
-  `MigrationEngine::generate` + `apply`。
-
----
+- **`x.contains(y)` 把变量参数误判成列名。** `linq!` 把任何路径参数都当成列引用，导致 `b.url.contains(keyword)` 编译成 `url IN (<值表达式>)` 而编译失败——这正是最常见的关键字搜索写法。现在只有参数是字段引用（`ids.contains(b.id)`）时才生成 `IN`，否则生成 `LIKE`。
+- **条件形式的 `IN` 用错了列。** `linq!(|b: T| ids.contains(b.id))` 现在生成 `b.id IN (...)`，而不是 `ids IN (...)`。
+- **`a && (b || c)` 丢失括号分组。** 条件链用「与已有条件整体 OR」来拼 `OR` 组，导致 `&&` 右侧的 `OR` 组绑到了整个左侧（`((a AND b) OR c)`）。这类分组现在编译成自包含谓词再 `AND` 进来。
+- **空的 `IN` 列表会生成 `col IN ()`**（非法 SQL）。现在生成 `1 = 0`——空候选集不匹配任何行——可选 ID 过滤条件可以直接传入，不必先判空。
 
 ## [2.1.0] — 2026-11-11 — rust-dix 0.10：MEDI scope、类型化 key、动态上下文与异步初始化
 

@@ -127,10 +127,10 @@ async fn test_untyped_closure_with_select() {
 }
 
 #[tokio::test]
-async fn test_reusable_filter_untyped_closure_with_typed_source() {
+async fn test_reusable_predicate_with_split_let_bindings() {
     // G4 with split let bindings (preferred style):
     //   let set = ctx.set::<T>();
-    //   let expr = linq!(|b: T| ...);  // typed reusable closure
+    //   let expr = linq!(|b: T| ...);  // typed reusable predicate
     //   set.filter(expr)...
     // Also works with source + untyped:
     let mut ctx = seed().await;

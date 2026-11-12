@@ -1,5 +1,5 @@
 //! `syn::Parse` implementation for `LinqClause` — each `;`-separated clause
-//! in a Form B multi-clause query.
+//! in a query (the `;`-separated clause list).
 
 use syn::{parse::Parse, BinOp, Expr, Ident, Token, Type};
 

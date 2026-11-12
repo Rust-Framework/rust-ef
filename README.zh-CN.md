@@ -16,8 +16,8 @@
 
 ```toml
 [dependencies]
-rust-ef = "2.3"
-rust-ef-sqlite = "2.3"
+rust-ef = "2.2"
+rust-ef-sqlite = "2.2"
 rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -251,7 +251,7 @@ ctx.save_changes().await?;
 ### 全局查询过滤器（软删除）/ Global Query Filter (Soft Delete)
 
 ```rust
-ctx.model().entity::<Blog>().has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
+ctx.model().entity::<Blog>().has_query_filter(linq!(|b: Blog| b.deleted_at.is_null()));
 ctx.set::<Blog>();
 // 之后的所有查询都会自动追加该过滤表达式
 ```
@@ -371,11 +371,14 @@ let id = blog.id; // 已被填充！
 ### 不要使用基于字符串的列名
 
 ```rust
-// ❌ 错误：没有编译期检查
-ctx.set::<Blog>().query().filter_column("slug", "=", "hello").to_list().await?;
+// ❌ 错误：手写列名，写错只会在查询执行时才报错
+let expr = BoolExpr::Filter(FilterCondition::with_values(
+    "slug", "=", vec![DbValue::String(slug)],
+));
+ctx.set::<Blog>().query().filter(expr).to_list().await?;
 
-// ✅ 正确：类型安全的 linq! 表达式
-linq!(ctx.set::<Blog>(), |b: Blog| b.slug == "hello").to_list().await?;
+// ✅ 正确：类型安全的 linq! 表达式（列名在编译期校验）
+linq!(ctx.set::<Blog>(), |b: Blog| b.slug == slug).to_list().await?;
 ```
 
 ### 不要在每个查询里重复 `is_deleted` —— 使用全局查询过滤器
@@ -386,7 +389,7 @@ linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q && !b.is_deleted)
 
 // ✅ 正确：启动时注册一次
 ctx.model().entity::<Blog>()
-    .has_query_filter(linq!(filter |b: Blog| !b.is_deleted));
+    .has_query_filter(linq!(|b: Blog| !b.is_deleted));
 // 所有查询现在都会自动排除已删除的记录
 
 // 需要看到全部记录的管理员查询：
@@ -516,7 +519,7 @@ FromDbContextOptions (DI bridge)
 | 分类 | 特性 |
 |----------|---------|
 | **实体 Entity** | `#[derive(EntityType)]` 支持 14 种属性、导航类型、自动发现 |
-| **查询 Query** | `linq!` 表达式树、`filter` / `filter_column`、join、group_by、聚合、IN/NOT IN 子查询 |
+| **查询 Query** | `linq!` 表达式树、可组合 `filter` 谓词、join、group_by、聚合、IN/NOT IN 子查询 |
 | **进阶查询 Advanced Query** | CTE（`linq!(with ...)` 语法糖）、窗口函数（10 种）、懒加载（可选） |
 | **持久化 Persistence** | `save_changes()`、参数化查询、事务、级联删除 |
 | **DI 依赖注入** | `add_dbcontext` / `add_dbcontext_keyed`（含类型化 `#[derive(DbContextKey)]`、`add_dbcontext_anykey`、异步变体）、`Arc<DbContext>`、多数据库 context key 隔离 |

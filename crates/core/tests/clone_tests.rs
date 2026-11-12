@@ -80,8 +80,8 @@ async fn test_clone_divergence_independent_state() {
     // Modifying a clone must not affect the original builder's state.
     let mut ctx = seed().await;
     let base = ctx.set::<CloneItem>().query();
-    let high = base.clone().filter_column("value", ">", 25);
-    let low = base.clone().filter_column("value", "<", 25);
+    let high = base.clone().filter(linq!(|c: CloneItem| c.value > 25));
+    let low = base.clone().filter(linq!(|c: CloneItem| c.value < 25));
     // Original base is unmodified — returns all 5 rows.
     let all = base.to_list().await.unwrap();
     assert_eq!(all.len(), 5);
@@ -130,7 +130,7 @@ async fn test_execute_update_builder_clone() {
     let builder = ctx
         .set::<CloneItem>()
         .query()
-        .filter_column("value", ">", 30)
+        .filter(linq!(|c: CloneItem| c.value > 30))
         .execute_update()
         .set_column_internal(CloneItem::COLUMN_VALUE, 999);
     let _copy = builder.clone();
@@ -140,7 +140,7 @@ async fn test_execute_update_builder_clone() {
     let remaining = ctx
         .set::<CloneItem>()
         .query()
-        .filter_column("value", "=", 999)
+        .filter(linq!(|c: CloneItem| c.value == 999))
         .to_list()
         .await
         .unwrap();

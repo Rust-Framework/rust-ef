@@ -107,7 +107,7 @@ impl IEntityTypeConfiguration<Invite> for InviteConfig {
             .has_index(&[Invite::COLUMN_TENANT_ID, Invite::COLUMN_CODE])
             .is_unique()
             .has_name("ux_invite_pending")
-            .has_filter(linq!(filter |i: Invite| i.status == "PENDING"));
+            .has_filter(linq!(|i: Invite| i.status == "PENDING"));
         entity.has_check(
             "CK_invite_status",
             "status IN ('PENDING','ACCEPTED','REVOKED')",
@@ -282,7 +282,7 @@ fn adding_and_removing_constraints_diffs_cleanly() {
                 .has_index(&[Invite::COLUMN_TENANT_ID, Invite::COLUMN_CODE])
                 .is_unique()
                 .has_name("ux_invite_pending")
-                .has_filter(linq!(filter |i: Invite| i.status == "PENDING"));
+                .has_filter(linq!(|i: Invite| i.status == "PENDING"));
         }
     }
     let mut builder = ModelBuilder::new();

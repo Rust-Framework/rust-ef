@@ -40,7 +40,7 @@ cargo publish -p rust-ef-macros --dry-run    # 含 verify 构建；依赖方需�
 cargo package -p rust-ef --no-verify --list  # 确认 README.md / Cargo.toml 在包内
 ```
 
-> 依赖方（`rust-ef` / providers）的完整 `cargo package` verify 需要其 2.1.0
+> 依赖方（`rust-ef` / providers）的完整 `cargo package` verify 需要其 2.2.0
 > 依赖已存在于 crates.io；这由发布工作流按顺序执行 `cargo publish` 时完成。
 > 另有独立消费工程演练覆盖严格 scope / owned 解析 / 建表 / 写入 / 查询 / `dispose()`。
 
@@ -50,13 +50,13 @@ cargo package -p rust-ef --no-verify --list  # 确认 README.md / Cargo.toml 在
 - [ ] 工作区 `Cargo.toml` 的 `version` 与所有内部依赖版本一致
 - [ ] `rust-version`（当前 1.95）与实际构建工具链匹配
 - [ ] `docs/rust-ef/INDEX.json` 与 README 中的版本号已更新
-- [ ] 迁移指南（如 `docs/v2.1-migration-guide.md`）已更新
+- [ ] 迁移指南（如 `docs/v2.2-migration-guide.md`）已更新
 
 ## 3. 打 tag 并发布
 
 ```bash
-git tag -a v2.1.0 -m "rust-ef 2.1.0"
-git push origin v2.1.0        # 触发 Publish workflow
+git tag -a v2.2.0 -m "rust-ef 2.2.0"
+git push origin v2.2.0        # 触发 Publish workflow
 ```
 
 工作流要求仓库 secret `CARGO_REGISTRY_TOKEN`（crates.io API token）。
@@ -74,7 +74,7 @@ git push origin v2.1.0        # 触发 Publish workflow
 # 所有 crate 均可见（crates.io API 需要自定义 User-Agent）
 UA="rust-ef-release-check (https://github.com/Rust-Framework/rust-ef)"
 for c in rust-ef-macros rust-ef rust-ef-sqlite rust-ef-postgres rust-ef-mysql; do
-  curl -fsS -A "$UA" "https://crates.io/api/v1/crates/$c/2.1.0" > /dev/null && echo "$c ok"
+  curl -fsS -A "$UA" "https://crates.io/api/v1/crates/$c/2.2.0" > /dev/null && echo "$c ok"
 done
 
 # 干净环境消费
@@ -90,7 +90,7 @@ cargo check --manifest-path /path/to/fresh-project/Cargo.toml
 
 - 已发布版本不可删除，只能 **yank**：
   ```bash
-  cargo yank --version 2.1.0 <crate>
+  cargo yank --version 2.2.0 <crate>
   ```
 - 依赖方按 **发布逆序** yank（先用 patch 版本修复）；`rust-ef` 2.0.x + `rust-dix 0.7`
   是 2.1 之前的稳定组合。

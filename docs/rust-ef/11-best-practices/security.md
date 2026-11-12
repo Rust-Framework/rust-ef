@@ -175,7 +175,7 @@ let user_info = linq!(ctx.set::<User>(); select (b.id, b.username))
 
 ```rust
 // 应用启动时注册全局过滤器
-builder.has_query_filter(linq!(filter |b: Blog| b.tenant_id == current_tenant_id()));
+builder.has_query_filter(linq!(|b: Blog| b.tenant_id == current_tenant_id()));
 ```
 
 > **注意**：`query_ignore_filters()` 会绕过全局过滤器。在多租户场景中，仅在确认安全的情况下使用（如管理员后台的全局查询）。

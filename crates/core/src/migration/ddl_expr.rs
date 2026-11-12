@@ -1,7 +1,7 @@
 //! Rendering of self-contained boolean expressions into DDL literals.
 //!
 //! Index predicates (`WHERE ...` for partial indexes) cannot use bound
-//! parameters, so the inline values carried by `linq!(filter |b: T| ...)` are
+//! parameters, so the inline values carried by `linq!(|b: T| ...)` are
 //! rendered as SQL literals for the target dialect.
 
 use super::dialect::MigrationDialect;
@@ -39,7 +39,7 @@ pub(super) fn render_filter(expr: &BoolExpr, dialect: MigrationDialect) -> Strin
 fn render_filter_condition(f: &FilterCondition, dialect: MigrationDialect) -> String {
     let mut placeholders: Vec<String> =
         f.values().iter().map(|v| sql_literal(v, dialect)).collect();
-    // Self-contained `linq!(filter ...)` conditions carry their values. A
+    // Self-contained `linq!(...)` conditions carry their values. A
     // hand-built `BoolExpr::filter(...)` may not — pad with NULL rather than
     // panicking inside `to_sql`.
     while placeholders.len() < f.param_count() {

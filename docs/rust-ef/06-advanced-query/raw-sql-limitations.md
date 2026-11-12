@@ -1,5 +1,30 @@
 # 原始 SQL 与已知限制
 
+## 条件无法用 `linq!` 表达时
+
+条件层只有两个出口，值始终走绑定参数：
+
+```rust
+use rust_ef::query::{BoolExpr, FilterCondition};
+
+// 1) 自包含条件：手写列名（编译期不校验列名，写错只会在查询执行时失败）
+let expr = BoolExpr::Filter(FilterCondition::with_values(
+    "rating", ">", vec![DbValue::F64(0.5)],
+));
+let blogs = ctx.set::<Blog>().query().filter(expr).to_list().await?;
+
+// 2) 一个查询里混用谓词与手写条件
+let blogs = ctx
+    .set::<Blog>()
+    .query()
+    .filter(linq!(|b: Blog| b.active))
+    .filter(expr)
+    .to_list()
+    .await?;
+```
+
+`BoolExpr::Raw` 是**框架内部**变体：`RawSql` 的字段与 `BoolExpr::raw()` 都是 `pub(crate)`，外部代码无法构造它，因此不存在"用 Raw 拼 SQL"的注入通道。
+
 ## 原始 SQL
 
 当 `linq!` 无法表达需求时，用 provider 连接执行**参数化**原始 SQL：

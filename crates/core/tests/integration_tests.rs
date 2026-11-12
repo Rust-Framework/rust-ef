@@ -4,7 +4,7 @@ mod tests {
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, SnapshotColumn};
     use rust_ef::provider::DbValue;
-    use rust_ef::query::{FilterCondition, OrderBy, OrderDirection, QueryState};
+    use rust_ef::query::{BoolExpr, FilterCondition, OrderBy, OrderDirection, QueryState};
 
     #[test]
     fn test_entity_state_enum() {
@@ -22,8 +22,11 @@ mod tests {
     #[test]
     fn test_query_state_to_sql_with_filter() {
         let mut state = QueryState::new("blogs");
-        state.filters.push(FilterCondition::new("rating", ">", 1));
-        state.parameters.push(DbValue::I32(3));
+        state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
+            "rating",
+            ">",
+            vec![DbValue::I32(3)],
+        )));
         let sql = state.to_sql();
         assert!(sql.contains("WHERE"));
         assert!(sql.contains("rating"));

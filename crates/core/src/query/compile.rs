@@ -3,7 +3,7 @@
 //! `compile_bool_expr` compiles a `BoolExpr` tree into a parameterized SQL
 //! WHERE fragment using the provider's `ISqlGenerator` for placeholder
 //! syntax. `collect_bool_expr_values` extracts inline parameter values from
-//! self-contained `FilterCondition`s produced by `linq!(filter |b: T| ...)`.
+//! self-contained `FilterCondition`s produced by `linq!(|b: T| ...)`.
 //!
 //! `PortablePlaceholderGenerator` is a fallback `ISqlGenerator` used for
 //! SQL-only queries without an attached provider (emits `?` placeholders and
@@ -13,7 +13,8 @@ use crate::error::EFResult;
 use crate::metadata::EntityTypeMeta;
 use crate::provider::{DbValue, DbValueConvertError};
 
-use super::ast::{BoolExpr, FilterCondition, InSubquerySpec, SubquerySpec};
+use super::ast::{BoolExpr, InSubquerySpec, SubquerySpec};
+use super::state::QueryState;
 
 // ---------------------------------------------------------------------------
 // Portable placeholder generator
@@ -183,9 +184,9 @@ fn compile_in_subquery(
 }
 
 /// Walks a `BoolExpr` tree and collects inline parameter values carried by
-/// self-contained `FilterCondition`s (those produced by `linq!(filter |b: T| ...)`
-/// Form C). Returns an empty vec for expressions whose values are already
-/// tracked in `QueryState::parameters` (in-builder conditions).
+/// self-contained `FilterCondition`s (produced by `linq!(|b: T| ...)`).
+/// Returns an empty vec for expressions whose values are already tracked in
+/// `QueryState::parameters`.
 pub(crate) fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
     match expr {
         BoolExpr::Filter(f) => f.values().to_vec(),
@@ -285,54 +286,25 @@ fn resolve_subquery_spec(spec: &mut SubquerySpec, outer_meta: &EntityTypeMeta) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Legacy `filters` vector compilation
-// ---------------------------------------------------------------------------
-
-/// Combines a slice of `FilterCondition`s into a single `BoolExpr` tree
-/// joined by `AND`. Used by `or_where` to fold legacy `state.filters` into
-/// the boolean expression tree.
-pub(crate) fn filters_to_and_expr(filters: &[FilterCondition]) -> BoolExpr {
-    filters
-        .iter()
-        .cloned()
-        .map(BoolExpr::Filter)
-        .reduce(|acc, f| BoolExpr::And(Box::new(acc), Box::new(f)))
-        .unwrap_or(BoolExpr::raw("1=1"))
-}
-
-/// Builds a WHERE clause from `FilterCondition`s starting at `param_idx = 1`.
-pub(crate) fn build_where_clauses(
-    filters: &[FilterCondition],
-    gen: &dyn crate::provider::ISqlGenerator,
-) -> String {
-    build_where_clause_with_offset(filters, gen, 1)
-}
-
-/// Builds a WHERE clause from `FilterCondition`s starting at `start_index`.
-/// Used by `ExecuteUpdateBuilder::to_sql` to continue placeholder numbering
-/// after the SET clause's parameters.
-pub(crate) fn build_where_clause_with_offset(
-    filters: &[FilterCondition],
-    gen: &dyn crate::provider::ISqlGenerator,
-    start_index: usize,
-) -> String {
-    if filters.is_empty() {
-        return String::new();
+/// Fills in the resolved table/column fields of correlated subqueries in
+/// `state.where_expr` (mutates in place).
+///
+/// Must run before compiling a WHERE clause that may contain `EXISTS` /
+/// `IN (SELECT ...)` nodes — every entry point that compiles SQL for execution
+/// (`to_sql`, `first`, `count`, `execute_update`, `execute_delete`) goes
+/// through it. It is a no-op when the predicate has no subqueries, so entities
+/// whose `entity_meta()` is `unimplemented!()` remain usable for SQL-shape tests.
+pub(crate) fn resolve_state_subqueries<T: crate::entity::IEntityType>(state: &mut QueryState) {
+    if let Some(expr) = &mut state.where_expr {
+        if has_subqueries(expr) {
+            resolve_subqueries(expr, &T::entity_meta());
+        }
     }
-    let mut param_idx = start_index;
-    let clauses: Vec<String> = filters
-        .iter()
-        .map(|f| {
-            let placeholders: Vec<String> = (0..f.param_count())
-                .map(|i| gen.parameter_placeholder(param_idx + i))
-                .collect();
-            param_idx += f.param_count();
-            f.to_sql(&placeholders)
-        })
-        .collect();
-    clauses.join(" AND ")
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -346,15 +318,5 @@ mod tests {
         let sql = compile_bool_expr(&expr, &gen, &mut idx);
         assert_eq!(sql, "is_deleted = 0");
         assert_eq!(idx, 1);
-    }
-
-    #[test]
-    fn filters_to_and_expr_empty_falls_back_to_1eq1() {
-        let filters: Vec<FilterCondition> = vec![];
-        let expr = filters_to_and_expr(&filters);
-        let gen = PortablePlaceholderGenerator;
-        let mut idx = 1;
-        let sql = compile_bool_expr(&expr, &gen, &mut idx);
-        assert_eq!(sql, "1=1");
     }
 }

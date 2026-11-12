@@ -16,8 +16,8 @@ An **EFCore-inspired ORM for Rust** — `DbContext` / `DbSet<T>` / `IEntityType`
 
 ```toml
 [dependencies]
-rust-ef = "2.3"
-rust-ef-sqlite = "2.3"
+rust-ef = "2.2"
+rust-ef-sqlite = "2.2"
 rust-dix = "0.10"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -251,7 +251,7 @@ ctx.save_changes().await?;
 ### Global Query Filter (Soft Delete)
 
 ```rust
-ctx.model().entity::<Blog>().has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
+ctx.model().entity::<Blog>().has_query_filter(linq!(|b: Blog| b.deleted_at.is_null()));
 ctx.set::<Blog>();
 // All subsequent queries automatically append the filter expression
 ```
@@ -372,11 +372,14 @@ let id = blog.id; // already populated!
 ### Don't use string-based column names
 
 ```rust
-// ❌ WRONG: no compile-time checking
-ctx.set::<Blog>().query().filter_column("slug", "=", "hello").to_list().await?;
+// ❌ WRONG: hand-written column name — a typo only fails when the query runs
+let expr = BoolExpr::Filter(FilterCondition::with_values(
+    "slug", "=", vec![DbValue::String(slug)],
+));
+ctx.set::<Blog>().query().filter(expr).to_list().await?;
 
-// ✅ CORRECT: type-safe linq! expressions
-linq!(ctx.set::<Blog>(), |b: Blog| b.slug == "hello").to_list().await?;
+// ✅ CORRECT: type-safe linq! expressions (column checked at compile time)
+linq!(ctx.set::<Blog>(), |b: Blog| b.slug == slug).to_list().await?;
 ```
 
 ### Don't repeat `is_deleted` in every query — use global query filters
@@ -387,7 +390,7 @@ linq!(ctx.set::<Blog>(), |b: Blog| b.slug == q && !b.is_deleted)
 
 // ✅ CORRECT: register once at startup
 ctx.model().entity::<Blog>()
-    .has_query_filter(linq!(filter |b: Blog| !b.is_deleted));
+    .has_query_filter(linq!(|b: Blog| !b.is_deleted));
 // All queries now automatically exclude deleted records
 
 // Admin queries that need to see all records:
@@ -517,7 +520,7 @@ FromDbContextOptions (DI bridge)
 | Category | Feature |
 |----------|---------|
 | **Entity** | `#[derive(EntityType)]` with 20+ attributes (`#[table(name, schema, comment, view)]`, `keyless`, `column_type`, `precision`, `collation`, `comment`, `computed`, ...), navigation types, auto-discovery, `#[derive(DbEnum)]` |
-| **Query** | `linq!` expression trees, `filter` / `filter_column`, join, group_by, aggregation, IN/NOT IN subqueries |
+| **Query** | `linq!` expression trees, composable `filter` predicates, join, group_by, aggregation, IN/NOT IN subqueries |
 | **Advanced Query** | CTE (`linq!(with ...)` syntax sugar), Window functions (10 kinds), Lazy Loading (opt-in) |
 | **Persistence** | `save_changes()`, parameterized queries, transactions, cascade delete |
 | **DI** | `add_dbcontext` / `add_dbcontext_keyed` (+ typed `#[derive(DbContextKey)]`, `add_dbcontext_anykey`, async variants), `Arc<DbContext>`, multi-DB context key isolation |

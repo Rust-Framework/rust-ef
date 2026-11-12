@@ -1,27 +1,27 @@
 # `linq!` 宏：统一 DSL 入口
 
-`linq!` 是 `rust-ef` 的**唯一查询 DSL 入口**。它在**编译期**将 Rust 闭包表达式树翻译为参数化的 `QueryBuilder` 链式调用，覆盖过滤、排序、聚合、JOIN、分组、批量更新等全部数据库操作。
+`linq!` 是 `rust-ef` 的**唯一查询 DSL 入口**。它在**编译期**把 Rust 闭包表达式翻译成参数化的条件树与 `QueryBuilder` 调用，覆盖过滤、排序、聚合、JOIN、分组、批量更新等全部数据库操作。
 
 ## 三种语法形式
 
 | 形式 | 用途 | 示例 |
 |------|------|------|
-| **A** 过滤闭包 | 可复用的 `BoolExpr` 或直接查询 | `linq!(\|b: Blog\| b.rating > 5)` |
-| **B** 多子句查询 | 一次性表达完整查询 | `linq!(ctx.set::<Blog>(); order_by b.rating desc)` |
-| **C** 值产生 | `ModelBuilder` 配置用，产出值 | `linq!(filter \|b: Blog\| b.deleted_at.is_null())` |
+| **谓词** | 可复用、可组合的 WHERE 条件 → `Predicate<T>` | `linq!(\|b: Blog\| b.rating > 5)` |
+| **查询** | 一次性表达完整查询 → `QueryBuilder<T>` | `linq!(ctx.set::<Blog>(); order_by b.rating desc)` |
+| **模型配置** | `index` / `key` 关键字 → `&'static [&'static str]` | `linq!(index \|b: Blog\| (b.author_id, b.created_at))` |
 
-dispatch 规则：首 token 为 `filter` / `index` / `key` 关键字 → 形式 C；否则按形式 A/B 解析。
+dispatch 规则：首 token 为 `index` / `key` 关键字 → 模型配置；首 token 为 `|` → 谓词；否则按「查询」（`source[, |b: T| <cond>][; 子句]`）解析。
 
 ---
 
-## 形式 A：过滤闭包
+## 谓词：`linq!(|b: T| <条件>)`
 
 ```rust
-// 可复用的表达式（推荐拆分 let）
+// 可复用的谓词（推荐先 let 出来）
 let expr = linq!(|b: Blog| b.rating > 5);
 let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 
-// 直接查询（source + 闭包）
+// 直接查询（source + 条件闭包）
 let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.rating > 5).to_list().await?;
 ```
 
@@ -39,6 +39,7 @@ let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.rating > 5).to_list().await?;
 | StartsWith | `b.url.starts_with("https")` | `url LIKE 'https%'` |
 | EndsWith | `b.url.ends_with(".com")` | `url LIKE '%.com'` |
 | IN | `ids.contains(b.id)` | `id IN (?, ?, ?)` |
+| LIKE（参数是变量/字面量） | `b.url.contains(keyword)` | `url LIKE ?` |
 | BETWEEN | `b.rating.between(1, 5)` | `rating BETWEEN ? AND ?` |
 | IS NULL | `b.content.is_null()` | `content IS NULL` |
 | IS NOT NULL | `b.content.is_not_null()` | `content IS NOT NULL` |
@@ -55,11 +56,13 @@ let expr = linq!(|b: Blog|
 let blogs = set.filter(expr).to_list().await?;
 ```
 
+条件需要按请求动态拼装（可选参数、OR 组、整体 AND）时，用 `Predicate<T>` 组合再 `filter` 应用，见 [过滤、排序与分页](filter-sort-page.md) 的「动态条件组合」一节。
+
 ---
 
-## 形式 B：多子句查询
+## 查询：`linq!(<source>[, |b: T| <条件>]; <子句>…)`
 
-`linq!(<source>[, <where_closure>] ; <clause>*)` —— 用 `;` 分隔的子句序列表达完整查询。
+用 `;` 分隔的子句序列表达完整查询；`source` 必须是 `QueryBuilder<T>` 或 `DbSet<T>` 表达式（含 turbofish）。
 
 ### 含过滤 + 多子句
 
@@ -143,13 +146,13 @@ let affected = linq!(ctx.set::<Blog>(), |b: Blog| b.rating < 0.1;
 
 ---
 
-## 形式 C：值产生（ModelBuilder 配置）
+## 模型配置：`index` / `key`
 
-用于无 `QueryBuilder` 实例的场景，产出值而非链式调用：
+用于 `ModelBuilder` / `EntityTypeBuilder` 配置，产出常量而非查询：
 
 ```rust
-// 全局查询过滤器 → 产出 BoolExpr
-builder.has_query_filter(linq!(filter |b: Blog| b.deleted_at.is_null()));
+// 全局查询过滤器 → 产出 Predicate<Blog>（has_query_filter 也接受裸 BoolExpr）
+builder.has_query_filter(linq!(|b: Blog| b.deleted_at.is_null()));
 
 // 索引定义 → 产出 &'static [&'static str]
 builder.has_index(linq!(index |b: Blog| (b.author_id, b.created_at)));
@@ -157,6 +160,18 @@ builder.has_index(linq!(index |b: Blog| (b.author_id, b.created_at)));
 // 主键定义 → 产出 &'static [&'static str]
 builder.has_key(linq!(key |b: Blog| b.blog_id));
 ```
+
+`linq!(|b: T| <条件>)` 产出的谓词自带绑定值，可直接 `and` / `or` / `and_opt` 组合，再用 `QueryBuilder::filter` 应用：
+
+```rust
+let mut predicate = Predicate::<Blog>::always()
+    .and(linq!(|b: Blog| b.deleted_at.is_null()))
+    .and_opt(keyword.map(|kw| linq!(|b: Blog| b.url.contains(kw))));
+
+let blogs = ctx.set::<Blog>().query().filter(predicate).to_list().await?;
+```
+
+需要裸 `BoolExpr`（例如跨 API 传递或自建条件）时用 `.into_expr()`。
 
 ---
 
@@ -193,7 +208,7 @@ let expr = linq!(|b: Blog| b.rating > 5);
 let expr = linq!(|b| b.rating > 5);
 ```
 
-形式 B 的 source 表达式必须含 turbofish `::<Type>`（裸变量不支持）：
+查询形式的 source 表达式必须含 turbofish `::<Type>`（裸变量不支持）：
 
 ```rust
 // ✅ 正确：turbofish 让宏识别实体类型
@@ -232,9 +247,9 @@ let blogs = linq!(ctx.set::<Blog>(); include b.posts).to_list().await?;
 | 实践 | 说明 |
 |------|------|
 | 复杂条件拆分为 `let` | 提升可读性，便于调试 |
-| 表达式可复用 | 同一份 `linq!` 可用于多个查询 |
+| 谓词可复用 | 同一份 `linq!(|b: T| …)` 可用于多个查询，也可 `and` / `or` 组合 |
 | 注意类型标注 | 省略会导致编译错误 |
-| 形式 B source 须含 turbofish | 裸变量不支持，宏需 `::<Type>` 识别实体 |
+| 查询形式的 source 须含 turbofish | 裸变量不支持，宏需 `::<Type>` 识别实体 |
 | 字符串 API 已全部移除 | `include_named`/`order_by("col")`/`sum("col")` 等均不存在，统一用 `linq!` |
 
 下一节：[过滤、排序与分页](filter-sort-page.md)

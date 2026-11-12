@@ -185,6 +185,16 @@ pub(crate) fn field_const(entity: &Type, field: &str, kind: FieldKind) -> TokenS
     quote! { #entity::#const_name }
 }
 
+/// Returns true when `expr` is a field *reference* (`b.id`) rather than a value
+/// expression (`q`, `"literal"`, `format!(...)`).
+///
+/// This picks the meaning of `x.contains(y)`: `y` names a column of the entity
+/// being queried (`ids.contains(b.id)` → `IN`), otherwise the expression is a
+/// value and `.contains()` means `LIKE` (`b.url.contains(q)`).
+pub(crate) fn is_field_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Field(_))
+}
+
 pub(crate) fn extract_value(expr: &Expr) -> syn::Result<TokenStream2> {
     match expr {
         Expr::Lit(ExprLit { lit, .. }) => match &lit {
