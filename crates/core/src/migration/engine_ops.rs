@@ -41,7 +41,7 @@ impl MigrationEngine {
 
     /// Executes a migration script with the best available atomicity.
     async fn execute_script(&self, provider: &dyn IDatabaseProvider, sql: &str) -> EFResult<()> {
-        let statements = split_sql_statements(sql);
+        let statements = split_sql_statements(sql, self.dialect);
         if statements.is_empty() {
             return Ok(());
         }

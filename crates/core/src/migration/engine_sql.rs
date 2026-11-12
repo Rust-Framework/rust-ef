@@ -1,5 +1,6 @@
 //! `MigrationEngine` SQL generation — Up/Down DDL from `SchemaChange` lists.
 
+use super::ddl_expr::quote_string;
 use super::dialect::MigrationDialect;
 use super::diff::index_name;
 use super::engine::MigrationEngine;
@@ -125,7 +126,7 @@ impl MigrationEngine {
     /// MySQL inline `COMMENT '...'` clause.
     fn comment_clause(&self, col: &SnapshotColumn) -> String {
         match &col.comment {
-            Some(c) if !c.is_empty() => format!(" COMMENT {}", quote_literal(c)),
+            Some(c) if !c.is_empty() => format!(" COMMENT {}", quote_string(c, self.dialect)),
             _ => String::new(),
         }
     }
@@ -141,7 +142,7 @@ impl MigrationEngine {
             "COMMENT ON COLUMN {}.{} IS {};\n",
             q(table),
             q(&col.column_name),
-            quote_literal(comment)
+            quote_string(comment, self.dialect)
         ))
     }
 
@@ -152,11 +153,19 @@ impl MigrationEngine {
                 "-- WARNING: SQLite does not support table comments\n".to_string()
             }
             MigrationDialect::Postgres => match comment {
-                Some(c) => format!("COMMENT ON TABLE {} IS {};\n", q(table), quote_literal(c)),
+                Some(c) => format!(
+                    "COMMENT ON TABLE {} IS {};\n",
+                    q(table),
+                    quote_string(c, self.dialect)
+                ),
                 None => format!("COMMENT ON TABLE {} IS NULL;\n", q(table)),
             },
             MigrationDialect::MySql => match comment {
-                Some(c) => format!("ALTER TABLE {} COMMENT = {};\n", q(table), quote_literal(c)),
+                Some(c) => format!(
+                    "ALTER TABLE {} COMMENT = {};\n",
+                    q(table),
+                    quote_string(c, self.dialect)
+                ),
                 None => format!("ALTER TABLE {} COMMENT = '';\n", q(table)),
             },
         }
@@ -169,12 +178,12 @@ impl MigrationEngine {
             MigrationDialect::Postgres => Some(format!(
                 "COMMENT ON TABLE {} IS {};\n",
                 q(table),
-                quote_literal(comment)
+                quote_string(comment, self.dialect)
             )),
             MigrationDialect::MySql => Some(format!(
                 "ALTER TABLE {} COMMENT = {};\n",
                 q(table),
-                quote_literal(comment)
+                quote_string(comment, self.dialect)
             )),
             MigrationDialect::Sqlite => None,
         }
@@ -961,10 +970,6 @@ impl MigrationEngine {
 }
 
 /// Renders a single-quoted SQL string literal.
-fn quote_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

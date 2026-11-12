@@ -63,6 +63,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DROP DEFAULT`) instead of leaving them stale.
 - Migration snapshots now round-trip `max_length`, column defaults, indexes,
   FKs, CHECKs, and table options (serde_json-based snapshot IO).
+- **Partial-index filter literals** (`has_filter(...)`) are rendered correctly on
+  every dialect: MySQL backslashes are escaped inside string literals,
+  PostgreSQL `bytea` values use `decode('<hex>', 'hex')` (its `X'..'` is a *bit*
+  string), floats always keep a decimal point, and non-finite floats,
+  value-less conditions and subquery nodes are rejected instead of emitting
+  invalid or silently-broadened predicates.
+- **Migration script splitting** understands quoted literals (doubled `''` and
+  MySQL `\` escapes), `--` line comments, `/* */` block comments and PostgreSQL
+  `$tag$ … $tag$` bodies, so a `;` inside any of them no longer truncates the
+  statement. DDL comments now share the same dialect-aware string quoting as
+  index predicates (one helper, no duplicated escaping).
 
 ##### Notes / compatibility
 
@@ -223,6 +234,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   不再保留旧默认值。
 - 迁移快照现在完整往返 `max_length`、列默认值、索引、外键、CHECK 与表选项
   （基于 serde_json 的快照 IO）。
+- **部分索引过滤条件字面量**（`has_filter(...)`）在各方言正确渲染：MySQL 字符串中的
+  反斜杠转义、PostgreSQL `bytea` 改用 `decode('<hex>', 'hex')`（其 `X'..'` 是位串）、
+  浮点字面量始终带小数点；非有限浮点、无值条件与子查询节点会被拒绝，而不是生成
+  非法 SQL 或静默放宽索引条件。
+- **迁移脚本切分**能正确识别引号字面量（`''` 双写与 MySQL `\` 转义）、`--` 行注释、
+  `/* */` 块注释与 PostgreSQL `$tag$ … $tag$` 函数体，其中的 `;` 不再截断语句；
+  DDL 注释与索引谓词共用同一套按方言转义的字符串字面量（单一实现，无重复转义逻辑）。
 
 ##### 注意 / 兼容性
 

@@ -6,14 +6,19 @@
 
 use super::dialect::MigrationDialect;
 use crate::provider::DbValue;
-use crate::query::{BoolExpr, FilterCondition, InSubquerySpec, SubquerySpec};
+use crate::query::{BoolExpr, FilterCondition};
 
 /// Renders a `BoolExpr` as a DDL boolean expression.
 ///
-/// The expression is intended for partial-index predicates and therefore only
-/// supports simple comparisons joined by `AND`/`OR`/`NOT`. Subqueries are
-/// rendered on a best-effort basis (they are rarely useful in a partial-index
-/// predicate and PostgreSQL forbids them there).
+/// The expression is intended for partial-index predicates; values are
+/// rendered as inline literals (DDL cannot bind parameters).
+///
+/// # Panics
+///
+/// Panics for subquery nodes: no supported dialect allows `EXISTS` / `IN
+/// (SELECT ...)` in an index predicate, and rendering them as a constant would
+/// silently broaden the index. Also panics when a condition carries fewer
+/// values than its parameter count (a hand-built `FilterCondition::new`).
 pub(super) fn render_filter(expr: &BoolExpr, dialect: MigrationDialect) -> String {
     match expr {
         BoolExpr::Filter(f) => render_filter_condition(f, dialect),
@@ -29,61 +34,30 @@ pub(super) fn render_filter(expr: &BoolExpr, dialect: MigrationDialect) -> Strin
             render_filter(b, dialect)
         ),
         BoolExpr::Not(inner) => format!("NOT ({})", render_filter(inner, dialect)),
-        BoolExpr::Exists(spec) => render_exists(spec, dialect, false),
-        BoolExpr::NotExists(spec) => render_exists(spec, dialect, true),
-        BoolExpr::InSubquery(spec) => render_in_subquery(spec, dialect, false),
-        BoolExpr::NotInSubquery(spec) => render_in_subquery(spec, dialect, true),
+        BoolExpr::Exists(_) | BoolExpr::NotExists(_) => {
+            panic!("subquery predicates are not supported in index filters")
+        }
+        BoolExpr::InSubquery(_) | BoolExpr::NotInSubquery(_) => {
+            panic!("subquery predicates are not supported in index filters")
+        }
     }
 }
 
 fn render_filter_condition(f: &FilterCondition, dialect: MigrationDialect) -> String {
-    let mut placeholders: Vec<String> =
-        f.values().iter().map(|v| sql_literal(v, dialect)).collect();
-    // Self-contained `linq!(...)` conditions carry their values. A
-    // hand-built `BoolExpr::filter(...)` may not — pad with NULL rather than
-    // panicking inside `to_sql`.
-    while placeholders.len() < f.param_count() {
-        placeholders.push("NULL".to_string());
-    }
+    // A self-contained condition must carry one value per bound parameter.
+    // `linq!(|b: T| ...)` always does; a hand-built `FilterCondition::new(col,
+    // op, n)` does not, and rendering `col = NULL` for it would silently create
+    // an index predicate that never matches. Fail fast instead, mirroring
+    // `QueryBuilder::apply_query_filter`.
+    assert_eq!(
+        f.values().len(),
+        f.param_count(),
+        "self-contained condition is missing bound values: build it with \
+         `linq!(|b: T| ...)` or `FilterCondition::with_values`, not \
+         `FilterCondition::new`"
+    );
+    let placeholders: Vec<String> = f.values().iter().map(|v| sql_literal(v, dialect)).collect();
     f.to_sql(&placeholders)
-}
-
-fn render_exists(spec: &SubquerySpec, dialect: MigrationDialect, negated: bool) -> String {
-    // Unresolved specs (empty table names) cannot be rendered faithfully.
-    if spec.related_table.is_empty() || spec.outer_table.is_empty() {
-        return "1=1".into();
-    }
-    let q = |s: &str| dialect.quote(s);
-    let header = if negated { "NOT EXISTS" } else { "EXISTS" };
-    let mut sql = format!(
-        "{header} (SELECT 1 FROM {} WHERE {}.{} = {}.{}",
-        q(&spec.related_table),
-        q(&spec.related_table),
-        q(&spec.fk_column),
-        q(&spec.outer_table),
-        q(&spec.outer_pk_column)
-    );
-    if let Some(pred) = &spec.predicate {
-        sql.push_str(&format!(" AND {}", render_filter(pred, dialect)));
-    }
-    sql.push(')');
-    sql
-}
-
-fn render_in_subquery(spec: &InSubquerySpec, dialect: MigrationDialect, negated: bool) -> String {
-    let q = |s: &str| dialect.quote(s);
-    let kw = if negated { "NOT IN" } else { "IN" };
-    let mut sql = format!(
-        "{} {kw} (SELECT {} FROM {}",
-        q(&spec.outer_column),
-        q(&spec.projection_column),
-        q(&spec.source_table)
-    );
-    if let Some(pred) = &spec.predicate {
-        sql.push_str(&format!(" WHERE {}", render_filter(pred, dialect)));
-    }
-    sql.push(')');
-    sql
 }
 
 /// Renders a parameter value as a SQL literal for `dialect`.
@@ -109,29 +83,147 @@ pub(super) fn sql_literal(value: &DbValue, dialect: MigrationDialect) -> String 
         DbValue::I16(v) => v.to_string(),
         DbValue::I32(v) => v.to_string(),
         DbValue::I64(v) => v.to_string(),
-        DbValue::F32(v) => v.to_string(),
-        DbValue::F64(v) => v.to_string(),
-        DbValue::String(v) => quote_string(v),
+        DbValue::F32(v) => render_float_text(v.to_string(), v.is_finite(), "f4"),
+        DbValue::F64(v) => render_float_text(v.to_string(), v.is_finite(), "f8"),
+        DbValue::String(v) => quote_string(v, dialect),
+        // MySQL and SQLite `X'..'` are binary strings; PostgreSQL's is a *bit*
+        // string, so bytes must go through `decode(.., 'hex')` there.
         DbValue::Bytes(v) => {
             let hex: String = v.iter().map(|b| format!("{b:02x}")).collect();
             match dialect {
-                MigrationDialect::MySql => format!("X'{hex}'"),
-                MigrationDialect::Postgres | MigrationDialect::Sqlite => format!("X'{hex}'"),
+                MigrationDialect::Postgres => format!("decode('{hex}', 'hex')"),
+                MigrationDialect::MySql | MigrationDialect::Sqlite => format!("X'{hex}'"),
             }
         }
         #[cfg(feature = "chrono")]
-        DbValue::DateTime(v) => quote_string(&v.to_rfc3339()),
+        DbValue::DateTime(v) => quote_string(&v.to_rfc3339(), dialect),
         #[cfg(feature = "chrono")]
-        DbValue::NaiveDateTime(v) => quote_string(&v.to_string()),
+        DbValue::NaiveDateTime(v) => quote_string(&v.to_string(), dialect),
         #[cfg(feature = "chrono")]
-        DbValue::NaiveDate(v) => quote_string(&v.to_string()),
+        DbValue::NaiveDate(v) => quote_string(&v.to_string(), dialect),
         #[cfg(feature = "uuid")]
-        DbValue::Uuid(v) => quote_string(&v.to_string()),
+        DbValue::Uuid(v) => quote_string(&v.to_string(), dialect),
         #[cfg(feature = "decimal")]
-        DbValue::Decimal(v) => quote_string(&v.to_string()),
+        DbValue::Decimal(v) => quote_string(&v.to_string(), dialect),
     }
 }
 
-fn quote_string(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+/// Floats have no portable spelling for NaN / infinities; refuse to emit an
+/// invalid DDL literal instead of producing SQL that fails when applied.
+fn render_float_text(text: String, finite: bool, kind: &str) -> String {
+    assert!(
+        finite,
+        "cannot render a non-finite {kind} float as a DDL literal"
+    );
+    // Keep a decimal point so the literal stays a float in every dialect.
+    if text.contains('.') || text.contains('e') || text.contains('E') {
+        text
+    } else {
+        format!("{text}.0")
+    }
+}
+
+/// Renders a string value as a dialect-correct SQL literal (quote doubling,
+/// plus backslash escaping for MySQL).
+pub(super) fn quote_string(value: &str, dialect: MigrationDialect) -> String {
+    let escaped = match dialect {
+        // MySQL treats `\` as an escape character inside string literals
+        // (`NO_BACKSLASH_ESCAPES` off by default), so double it; `'` is escaped
+        // by doubling in every supported dialect.
+        MigrationDialect::MySql => value.replace('\\', "\\\\").replace('\'', "''"),
+        MigrationDialect::Postgres | MigrationDialect::Sqlite => value.replace('\'', "''"),
+    };
+    format!("'{escaped}'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query::{BoolExpr, FilterCondition};
+
+    fn condition(column: &str, op: &str, values: Vec<DbValue>) -> BoolExpr {
+        BoolExpr::Filter(FilterCondition::with_values(column, op, values))
+    }
+
+    #[test]
+    fn string_literals_escape_quotes_and_mysql_backslashes() {
+        let value = DbValue::String("a'b\\c".into());
+        assert_eq!(sql_literal(&value, MigrationDialect::Postgres), "'a''b\\c'");
+        assert_eq!(sql_literal(&value, MigrationDialect::Sqlite), "'a''b\\c'");
+        assert_eq!(sql_literal(&value, MigrationDialect::MySql), "'a''b\\\\c'");
+    }
+
+    #[test]
+    fn bytes_render_as_blob_or_postgres_hex_decode() {
+        let value = DbValue::Bytes(vec![0xde, 0xad]);
+        assert_eq!(sql_literal(&value, MigrationDialect::MySql), "X'dead'");
+        assert_eq!(sql_literal(&value, MigrationDialect::Sqlite), "X'dead'");
+        assert_eq!(
+            sql_literal(&value, MigrationDialect::Postgres),
+            "decode('dead', 'hex')"
+        );
+    }
+
+    #[test]
+    fn bool_literals_follow_the_dialect() {
+        assert_eq!(
+            sql_literal(&DbValue::Bool(true), MigrationDialect::Postgres),
+            "TRUE"
+        );
+        assert_eq!(
+            sql_literal(&DbValue::Bool(false), MigrationDialect::MySql),
+            "0"
+        );
+    }
+
+    #[test]
+    fn floats_keep_a_decimal_point() {
+        assert_eq!(
+            sql_literal(&DbValue::F64(2.0), MigrationDialect::Postgres),
+            "2.0"
+        );
+        assert_eq!(
+            sql_literal(&DbValue::F64(2.5), MigrationDialect::Postgres),
+            "2.5"
+        );
+    }
+
+    #[test]
+    fn compound_filters_keep_parentheses() {
+        let expr = condition("a", "=", vec![DbValue::I32(1)]).and(BoolExpr::Or(
+            Box::new(condition("b", "=", vec![DbValue::I32(2)])),
+            Box::new(condition("c", "=", vec![DbValue::I32(3)])),
+        ));
+        assert_eq!(
+            render_filter(&expr, MigrationDialect::Postgres),
+            "(a = 1) AND ((b = 2) OR (c = 3))"
+        );
+    }
+
+    #[test]
+    fn empty_in_list_renders_as_unsatisfiable() {
+        let expr = condition("id", "IN", vec![]);
+        assert_eq!(render_filter(&expr, MigrationDialect::Sqlite), "1 = 0");
+    }
+
+    #[test]
+    #[should_panic(expected = "missing bound values")]
+    fn valueless_condition_is_rejected() {
+        let expr = BoolExpr::Filter(FilterCondition::new("a", "=", 1));
+        let _ = render_filter(&expr, MigrationDialect::Postgres);
+    }
+
+    #[test]
+    #[should_panic(expected = "subquery predicates are not supported")]
+    fn subquery_filter_is_rejected_instead_of_broadening_the_index() {
+        let spec = rust_ef_query_subquery_spec();
+        let expr = BoolExpr::Exists(Box::new(spec));
+        let _ = render_filter(&expr, MigrationDialect::Postgres);
+    }
+
+    fn rust_ef_query_subquery_spec() -> crate::query::SubquerySpec {
+        let mut spec = crate::query::SubquerySpec::new("posts", "Post::TABLE");
+        spec.outer_table = "Blog::TABLE".into();
+        spec
+    }
 }

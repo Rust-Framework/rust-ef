@@ -50,30 +50,105 @@ pub(super) fn seed_insert_sql(
 
 /// Split a migration script into individual executable statements.
 ///
-/// Semicolons inside single-quoted string literals (defaults, comments, CHECK
-/// expressions) do not terminate a statement; `--` line comments are removed.
-pub(super) fn split_sql_statements(sql: &str) -> Vec<String> {
+/// The splitter understands the lexical cases a migration script actually
+/// contains: semicolons inside single-quoted literals (including doubled `''`
+/// and, for MySQL, backslash escapes), `--` line comments, `/* ... */` block
+/// comments, and PostgreSQL `$tag$ ... $tag$` dollar-quoted strings (function
+/// bodies). Comments are dropped, statement text is trimmed, and empty
+/// statements are skipped.
+pub(super) fn split_sql_statements(sql: &str, dialect: MigrationDialect) -> Vec<String> {
+    let chars: Vec<char> = sql.chars().collect();
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut in_string = false;
-    let mut chars = sql.chars().peekable();
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut dollar_tag: Option<String> = None;
+    let mut i = 0;
 
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' => {
-                in_string = !in_string;
-                current.push(c);
+    while i < chars.len() {
+        let c = chars[i];
+
+        if in_line_comment {
+            if c == '\n' {
+                in_line_comment = false;
+                current.push('\n');
             }
-            '-' if !in_string && chars.peek() == Some(&'-') => {
-                // Skip the rest of the comment line.
-                for next in chars.by_ref() {
-                    if next == '\n' {
-                        current.push('\n');
-                        break;
+            i += 1;
+            continue;
+        }
+        if in_block_comment {
+            if c == '*' && chars.get(i + 1) == Some(&'/') {
+                in_block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(tag) = &dollar_tag {
+            let tag_chars: Vec<char> = tag.chars().collect();
+            if c == '$' && chars[i..].starts_with(&tag_chars) {
+                current.push_str(tag);
+                i += tag_chars.len();
+                dollar_tag = None;
+            } else {
+                current.push(c);
+                i += 1;
+            }
+            continue;
+        }
+        if in_string {
+            match c {
+                // MySQL: backslash escapes the next character inside a literal.
+                '\\' if dialect == MigrationDialect::MySql => {
+                    current.push(c);
+                    if let Some(next) = chars.get(i + 1) {
+                        current.push(*next);
+                        i += 1;
                     }
                 }
+                // A doubled quote is an escaped quote in every supported dialect.
+                '\'' if chars.get(i + 1) == Some(&'\'') => {
+                    current.push_str("''");
+                    i += 1;
+                }
+                '\'' => {
+                    in_string = false;
+                    current.push(c);
+                }
+                _ => current.push(c),
             }
-            ';' if !in_string => {
+            i += 1;
+            continue;
+        }
+
+        match c {
+            '\'' => {
+                in_string = true;
+                current.push(c);
+            }
+            '-' if chars.get(i + 1) == Some(&'-') => {
+                in_line_comment = true;
+                i += 1;
+            }
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                in_block_comment = true;
+                i += 1;
+            }
+            '$' if dialect == MigrationDialect::Postgres => match dollar_quote_tag(&chars, i) {
+                Some(tag) => {
+                    current.push_str(&tag);
+                    i += tag.chars().count() - 1;
+                    dollar_tag = Some(tag);
+                }
+                None => current.push(c),
+            },
+            // MySQL also accepts `#` line comments.
+            '#' if dialect == MigrationDialect::MySql => {
+                in_line_comment = true;
+            }
+            ';' => {
                 let statement = current.trim();
                 if !statement.is_empty() {
                     statements.push(statement.to_string());
@@ -82,6 +157,7 @@ pub(super) fn split_sql_statements(sql: &str) -> Vec<String> {
             }
             _ => current.push(c),
         }
+        i += 1;
     }
 
     let statement = current.trim();
@@ -89,6 +165,27 @@ pub(super) fn split_sql_statements(sql: &str) -> Vec<String> {
         statements.push(statement.to_string());
     }
     statements
+}
+
+/// Returns the full `$tag$` delimiter starting at `start`, if `chars[start..]`
+/// opens a PostgreSQL dollar-quoted string (`$$` or `$identifier$`).
+///
+/// PostgreSQL only treats `$...$` as a dollar quote when the tag is empty or a
+/// valid identifier (it cannot start with a digit), which keeps positional
+/// parameters such as `$1` out of this path.
+fn dollar_quote_tag(chars: &[char], start: usize) -> Option<String> {
+    let rest = &chars[start..];
+    let close = rest.iter().skip(1).position(|c| *c == '$').map(|p| p + 1)?;
+    let tag: String = rest[..=close].iter().collect();
+    let name = &tag[1..tag.len() - 1];
+    let valid_ident = match name.chars().next() {
+        None => true,
+        Some(first) => {
+            (first.is_ascii_alphabetic() || first == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+    };
+    valid_ident.then_some(tag)
 }
 
 /// Validates a migration id used as a directory name and history key.
@@ -236,5 +333,104 @@ impl MigrationStore {
         }
         let text = fs::read_to_string(path).map_err(migration_io_err)?;
         super::snapshot_io::parse_model_snapshot_json(&text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn split(sql: &str, dialect: MigrationDialect) -> Vec<String> {
+        split_sql_statements(sql, dialect)
+    }
+
+    #[test]
+    fn splits_plain_statements_and_drops_empty_ones() {
+        let out = split(
+            "CREATE TABLE a (id INT); ;CREATE TABLE b (id INT)",
+            MigrationDialect::Sqlite,
+        );
+        assert_eq!(
+            out,
+            vec!["CREATE TABLE a (id INT)", "CREATE TABLE b (id INT)"]
+        );
+    }
+
+    #[test]
+    fn semicolon_inside_string_literal_does_not_split() {
+        let out = split(
+            "INSERT INTO t VALUES ('a;b');SELECT 1",
+            MigrationDialect::MySql,
+        );
+        assert_eq!(out, vec!["INSERT INTO t VALUES ('a;b')", "SELECT 1"]);
+    }
+
+    #[test]
+    fn doubled_quote_is_an_escaped_quote() {
+        let out = split(
+            "INSERT INTO t VALUES ('it''s;ok');SELECT 1",
+            MigrationDialect::Postgres,
+        );
+        assert_eq!(out, vec!["INSERT INTO t VALUES ('it''s;ok')", "SELECT 1"]);
+    }
+
+    #[test]
+    fn mysql_backslash_escape_keeps_the_string_open() {
+        let out = split(
+            "INSERT INTO t VALUES ('it\\'s;ok');SELECT 1",
+            MigrationDialect::MySql,
+        );
+        assert_eq!(out, vec!["INSERT INTO t VALUES ('it\\'s;ok')", "SELECT 1"]);
+    }
+
+    #[test]
+    fn postgres_backslash_is_not_an_escape() {
+        // `'a\'` closes the literal; the following `;` separates statements.
+        let out = split("SELECT 'a\\';SELECT 1", MigrationDialect::Postgres);
+        assert_eq!(out, vec!["SELECT 'a\\'", "SELECT 1"]);
+    }
+
+    #[test]
+    fn line_comments_are_stripped() {
+        let out = split(
+            "-- note; still comment\nSELECT 1;",
+            MigrationDialect::Postgres,
+        );
+        assert_eq!(out, vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn block_comments_are_stripped() {
+        let out = split("/* a;b */ SELECT 1; /* tail */", MigrationDialect::Sqlite);
+        assert_eq!(out, vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn postgres_dollar_quoted_body_keeps_semicolons() {
+        let out = split(
+            "CREATE FUNCTION f() RETURNS void AS $$ BEGIN PERFORM 1; END $$ LANGUAGE plpgsql; SELECT 2",
+            MigrationDialect::Postgres,
+        );
+        assert_eq!(out.len(), 2);
+        assert!(out[0].contains("PERFORM 1; END"));
+        assert_eq!(out[1], "SELECT 2");
+    }
+
+    #[test]
+    fn dollar_inside_a_literal_is_not_a_dollar_quote() {
+        let out = split("SELECT '$';SELECT 1", MigrationDialect::Postgres);
+        assert_eq!(out, vec!["SELECT '$'", "SELECT 1"]);
+    }
+
+    #[test]
+    fn postgres_positional_parameters_are_not_dollar_quotes() {
+        let out = split("SELECT $1, $2;SELECT 3", MigrationDialect::Postgres);
+        assert_eq!(out, vec!["SELECT $1, $2", "SELECT 3"]);
+    }
+
+    #[test]
+    fn mysql_hash_comment_is_stripped() {
+        let out = split("# note; here\nSELECT 1;", MigrationDialect::MySql);
+        assert_eq!(out, vec!["SELECT 1"]);
     }
 }
