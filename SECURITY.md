@@ -4,9 +4,9 @@
 
 | Version | Supported |
 |---------|-----------|
-| 2.1.x | ✅ |
-| 2.0.x | ✅ (security fixes only) |
-| < 2.0 | ❌ |
+| 2.2.x | ✅ |
+| 2.1.x | ✅ (security fixes only) |
+| < 2.1 | ❌ |
 
 ## Reporting a vulnerability
 
