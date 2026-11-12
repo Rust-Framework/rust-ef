@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### English
+
+#### Added
+
+- **`Predicate<T>` — composable WHERE predicates (EF Core `PredicateBuilder` style).** `linq!(filter |b: T| ...)` already produces a self-contained `BoolExpr` with its bound values, but there was no public way to apply a composed expression tree to a query. `Predicate<T>` tags such a fragment with its entity and adds `and` / `or` / `not`, plus `always()` / `never()` identity seeds that never leak `1=1` / `1=0` into the SQL. `QueryBuilder::where_` appends a predicate with `AND` (accepting a bare `BoolExpr` too) and registers its values in tree order, so `count()` and the page query share one condition set.
+- `predicate.into_expr()` and the `BoolExpr ⇄ Predicate<T>` conversions bridge the predicate API with `ModelBuilder::has_query_filter`.
+
+#### Fixed
+
+- **`x.contains(y)` misclassified a variable argument as a column.** `linq!` treated *any* path argument as a column reference, so `b.url.contains(keyword)` compiled to `url IN (<value expression>)` and failed to compile — the common keyword-search pattern. `.contains()` is now `IN` only when the argument is a field reference (`ids.contains(b.id)`) and `LIKE` otherwise.
+- **Form C (`linq!(filter ...)`) `IN` used the receiver as the column.** `linq!(filter |b: T| ids.contains(b.id))` now emits `b.id IN (...)`, not `ids IN (...)`.
+- **`a && (b || c)` lost the grouping.** The Form A/B method chain appended an `OR` group with "OR with everything accumulated so far", so an `OR` on the right of `&&` bound to the whole left-hand side (`((a AND b) OR c)`). Such groups are now compiled as a self-contained predicate and `AND`-ed in.
+
+### 简体中文
+
+#### 新增
+
+- **`Predicate<T>`：可组合的 WHERE 谓词（对齐 EF Core `PredicateBuilder`）。** `linq!(filter |b: T| ...)` 本来就产出自带绑定值的 `BoolExpr`，但此前没有公开途径把组合好的表达式树应用到查询上。`Predicate<T>` 给表达式片段打上实体类型标记，并提供 `and` / `or` / `not` 以及 `always()` / `never()` 恒等起点（不会把 `1=1` / `1=0` 写入 SQL）。`QueryBuilder::where_` 以 `AND` 追加谓词（也接受裸 `BoolExpr`），按表达式树顺序登记绑定值，因此 `count()` 与列表查询共用同一套条件。
+- `predicate.into_expr()` 与 `BoolExpr ⇄ Predicate<T>` 互转，用于和 `ModelBuilder::has_query_filter` 等接收 `BoolExpr` 的 API 衔接。
+
+#### 修复
+
+- **`x.contains(y)` 把变量参数误判成列名。** `linq!` 把任何路径参数都当成列引用，导致 `b.url.contains(keyword)` 编译成 `url IN (<值表达式>)` 而编译失败——这正是最常见的关键字搜索写法。现在只有参数是字段引用（`ids.contains(b.id)`）时才生成 `IN`，否则生成 `LIKE`。
+- **形式 C（`linq!(filter ...)`）的 `IN` 用错了列。** `linq!(filter |b: T| ids.contains(b.id))` 现在生成 `b.id IN (...)`，而不是 `ids IN (...)`。
+- **`a && (b || c)` 丢失括号分组。** 形式 A/B 的方法链用「与已有条件整体 OR」来拼 `OR` 组，导致 `&&` 右侧的 `OR` 组绑到了整个左侧（`((a AND b) OR c)`）。这类分组现在编译成自包含谓词再 `AND` 进来。
+
 ## [2.1.0] — 2026-11-11 — rust-dix 0.10：MEDI scope、类型化 key、动态上下文与异步初始化
 
 > **English** · **简体中文**

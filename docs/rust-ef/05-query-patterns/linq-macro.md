@@ -8,7 +8,7 @@
 |------|------|------|
 | **A** 过滤闭包 | 可复用的 `BoolExpr` 或直接查询 | `linq!(\|b: Blog\| b.rating > 5)` |
 | **B** 多子句查询 | 一次性表达完整查询 | `linq!(ctx.set::<Blog>(); order_by b.rating desc)` |
-| **C** 值产生 | `ModelBuilder` 配置用，产出值 | `linq!(filter \|b: Blog\| b.deleted_at.is_null())` |
+| **C** 值产生 | 产出值而非链式调用（全局过滤器、索引、可组合谓词） | `linq!(filter \|b: Blog\| b.deleted_at.is_null())` |
 
 dispatch 规则：首 token 为 `filter` / `index` / `key` 关键字 → 形式 C；否则按形式 A/B 解析。
 
@@ -39,6 +39,7 @@ let blogs = linq!(ctx.set::<Blog>(), |b: Blog| b.rating > 5).to_list().await?;
 | StartsWith | `b.url.starts_with("https")` | `url LIKE 'https%'` |
 | EndsWith | `b.url.ends_with(".com")` | `url LIKE '%.com'` |
 | IN | `ids.contains(b.id)` | `id IN (?, ?, ?)` |
+| LIKE（参数是变量/字面量） | `b.url.contains(keyword)` | `url LIKE ?` |
 | BETWEEN | `b.rating.between(1, 5)` | `rating BETWEEN ? AND ?` |
 | IS NULL | `b.content.is_null()` | `content IS NULL` |
 | IS NOT NULL | `b.content.is_not_null()` | `content IS NOT NULL` |
@@ -54,6 +55,8 @@ let expr = linq!(|b: Blog|
 
 let blogs = set.filter(expr).to_list().await?;
 ```
+
+条件需要按请求动态拼装（可选参数、OR 组、整体 AND）时，用 `Predicate<T>` 组合再 `where_` 应用，见 [过滤、排序与分页](filter-sort-page.md) 的「动态条件组合」一节。
 
 ---
 
@@ -156,6 +159,19 @@ builder.has_index(linq!(index |b: Blog| (b.author_id, b.created_at)));
 
 // 主键定义 → 产出 &'static [&'static str]
 builder.has_key(linq!(key |b: Blog| b.blog_id));
+```
+
+形式 C 的 `filter` 输出自带绑定值，可以直接 `and` / `or` 组合成 `Predicate<T>`，再用 `QueryBuilder::where_` 应用：
+
+```rust
+let mut predicate = Predicate::<Blog>::always()
+    .and(linq!(filter |b: Blog| b.deleted_at.is_null()));
+
+if let Some(keyword) = keyword {
+    predicate = predicate.and(linq!(filter |b: Blog| b.url.contains(keyword)));
+}
+
+let blogs = ctx.set::<Blog>().query().where_(predicate).to_list().await?;
 ```
 
 ---
