@@ -36,6 +36,26 @@ pub(super) fn generate_impls(
         });
     }
 
+    // EF-6: name-based materialization. Resolve every property by its column
+    // name (a compile-time literal) into a positional row, then reuse the
+    // positional parser. Reordered columns / views therefore cannot shift
+    // values into the wrong field.
+    let mut from_row_named_entries = Vec::new();
+    for column_name in &ctx.from_row_column_names {
+        from_row_named_entries.push(quote! {
+            columns
+                .iter()
+                .find(|(name, _)| *name == #column_name)
+                .map(|(_, value)| value.clone())
+                .ok_or_else(|| {
+                    rust_ef::error::EFError::type_conversion(format!(
+                        "column `{}` is missing from the named row for entity `{}`",
+                        #column_name, #type_name_str
+                    ))
+                })?,
+        });
+    }
+
     // Generate column name constants for all mapped scalar fields
     let mut column_consts = Vec::new();
     for field in fields {
@@ -233,6 +253,17 @@ pub(super) fn generate_impls(
                 Ok(#struct_name {
                     #(#from_row_assignments)*
                 })
+            }
+
+            /// EF-6: materializes by column name, so column reordering cannot
+            /// silently mis-assign values.
+            fn from_row_named(
+                columns: &[(&str, rust_ef::provider::DbValue)],
+            ) -> rust_ef::error::EFResult<Self> {
+                let values: Vec<rust_ef::provider::DbValue> = vec![
+                    #(#from_row_named_entries)*
+                ];
+                <Self as rust_ef::entity::IFromRow>::from_row(&values)
             }
         }
 
