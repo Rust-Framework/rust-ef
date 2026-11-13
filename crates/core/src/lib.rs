@@ -25,6 +25,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod cascade;
 pub mod change_executor;
 pub mod db_context;
@@ -58,6 +59,9 @@ pub use rust_ef_macros::{column, entity, linq, DbContextKey, DbEnum, EntityType}
 
 /// Re-exports of the most commonly used types.
 pub mod prelude {
+    pub use crate::audit::{
+        AuditInterceptor, IAuditActor, IAuditable, IClock, NoAuditActor, SystemClock,
+    };
     pub use crate::db_context::{
         AsyncPreflight, AsyncPreflightFuture, DbContext, DbContextOptions, DbContextOptionsBuilder,
         SaveChangesResult,
@@ -71,8 +75,8 @@ pub mod prelude {
     pub use crate::entity_snapshot::EntitySnapshot;
     pub use crate::error::{EFError, EFErrorCode, EFResult};
     pub use crate::interceptor::{
-        ISaveChangesInterceptor, MutableEntityEntry, MutableSaveChangesContext,
-        SaveChangesContext, SaveChangesResultContext,
+        ISaveChangesInterceptor, MutableEntityEntry, MutableSaveChangesContext, SaveChangesContext,
+        SaveChangesResultContext,
     };
     pub use crate::lazy::{LazyContext, LazyContextImpl, MAX_LAZY_DEPTH};
     pub use crate::metadata::EntityTypeMeta;
