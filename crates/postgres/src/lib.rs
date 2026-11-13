@@ -14,8 +14,13 @@ pub mod type_mapping;
 
 pub use connection::PostgresConnection;
 pub use di_extension::DbContextOptionsBuilderExt;
-pub use introspection::{introspect_postgres, DbColumn, DbTable};
+pub use introspection::introspect_postgres;
 pub use provider::{PostgresOptions, PostgresProvider};
 pub use sql_generator::PostgresSqlGenerator;
 pub use tls::PgTlsMode;
 pub use type_mapping::PostgresTypeMapping;
+
+/// Re-exported for callers written against the pre-EF-5 per-provider
+/// introspection types; the canonical definitions now live in
+/// [`rust_ef::schema`].
+pub use rust_ef::schema::{DbColumn, DbTable};

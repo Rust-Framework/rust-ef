@@ -9,6 +9,7 @@ members = [
     "examples/blog",
     "examples/soft_delete",
     "examples/audit",
+    "examples/providers",
 ]
 resolver = "2"
 
