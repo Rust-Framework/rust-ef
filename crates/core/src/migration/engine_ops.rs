@@ -39,6 +39,38 @@ impl MigrationEngine {
         self.execute_script(provider, &sql).await
     }
 
+    /// Creates the full initial schema (tables, indexes and foreign keys) on an
+    /// **empty** database without touching `__ef_migrations_history`.
+    ///
+    /// This is the history-free bootstrap path (EF Core's `EnsureCreated`
+    /// equivalent for the migration engine): unlike [`Self::apply`] it never
+    /// creates the history table and the generated script contains no history
+    /// `INSERT`. A code-first installer therefore does not have to filter the
+    /// generated script or drop the history table afterwards.
+    ///
+    /// Semantics:
+    /// - the target database must be empty: `CREATE TABLE` is strict (not
+    ///   `IF NOT EXISTS`), so a non-empty schema fails loudly instead of
+    ///   silently mixing an old schema with the model;
+    /// - views are not created (same as [`Self::ensure_created`]);
+    /// - MySQL DDL is non-transactional (see [`Self::apply`]); a failure leaves
+    ///   partially created objects behind and reports the executed statements.
+    pub async fn bootstrap(
+        &self,
+        provider: &dyn IDatabaseProvider,
+        entity_types: &[EntityTypeMeta],
+    ) -> EFResult<()> {
+        if entity_types.is_empty() {
+            return Err(EFError::model_validation(
+                "bootstrap requires at least one entity type",
+            ));
+        }
+        let snapshot = self.create_snapshot("__bootstrap__", entity_types);
+        let changes = self.initial_create_with_fks(&snapshot);
+        let sql = self.generate_bootstrap_sql(&changes);
+        self.execute_script(provider, &sql).await
+    }
+
     /// Executes a migration script with the best available atomicity.
     async fn execute_script(&self, provider: &dyn IDatabaseProvider, sql: &str) -> EFResult<()> {
         let statements = split_sql_statements(sql, self.dialect);
