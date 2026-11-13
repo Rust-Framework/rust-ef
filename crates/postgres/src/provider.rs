@@ -169,6 +169,15 @@ impl IDatabaseProvider for PostgresProvider {
         rust_ef::migration::MigrationDialect::Postgres
     }
 
+    async fn introspect(&self) -> EFResult<Vec<rust_ef::schema::DbTable>> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| EFError::connection(format!("Pool error: {}", e)))?;
+        crate::introspection::introspect_postgres_client(&client).await
+    }
+
     #[cfg(feature = "tracing")]
     fn set_slow_query_threshold(&self, threshold: std::time::Duration) {
         self.slow_query_threshold_ms.store(

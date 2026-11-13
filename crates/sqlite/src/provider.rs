@@ -180,6 +180,11 @@ impl SqliteProvider {
             slow_query_threshold_ms: std::sync::atomic::AtomicU64::new(0),
         })
     }
+
+    /// Reads the live schema through the provider's pool/shared connection.
+    pub(crate) async fn introspect_live(&self) -> EFResult<Vec<rust_ef::schema::DbTable>> {
+        self.inner.introspect(self.acquire_timeout).await
+    }
 }
 
 #[async_trait]
@@ -217,6 +222,10 @@ impl IDatabaseProvider for SqliteProvider {
 
     fn migration_dialect(&self) -> rust_ef::migration::MigrationDialect {
         rust_ef::migration::MigrationDialect::Sqlite
+    }
+
+    async fn introspect(&self) -> EFResult<Vec<rust_ef::schema::DbTable>> {
+        self.introspect_live().await
     }
 
     #[cfg(feature = "tracing")]

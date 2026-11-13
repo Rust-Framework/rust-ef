@@ -185,6 +185,30 @@ impl SqliteProviderInner {
             }
         }
     }
+
+    /// Reads the live schema. Pooled providers borrow one connection; the
+    /// in-memory provider introspects through its shared connection.
+    pub(crate) async fn introspect(
+        &self,
+        timeout: Duration,
+    ) -> EFResult<Vec<rust_ef::schema::DbTable>> {
+        match self {
+            SqliteProviderInner::Pooled(pool) => {
+                let conn = acquire_pooled(pool, timeout).await?;
+                // PRAGMA/`sqlite_master` reads are synchronous; keep them off
+                // the async runtime like the execute/query paths do.
+                tokio::task::spawn_blocking(move || {
+                    crate::introspection::introspect_connection(&conn)
+                })
+                .await
+                .map_err(|e| EFError::query(format!("SQLite introspection task failed: {}", e)))?
+            }
+            SqliteProviderInner::Single(conn) => {
+                let guard = conn.lock().await;
+                crate::introspection::introspect_connection(&guard)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
