@@ -40,6 +40,7 @@
 mod compare;
 mod rebuild;
 mod render;
+mod reverse;
 
 use crate::metadata::EntityTypeMeta;
 use crate::migration::dialect::MigrationDialect;
@@ -182,6 +183,11 @@ pub struct TableRebuild {
 /// This intentionally does not reuse [`super::types::Migration`]: that type
 /// carries an `id`/`down_sql` for the file-based migration workflow, while a
 /// runtime diff has no versioned identity and no safe automatic rollback.
+///
+/// A diff whose statements are all additive can be inverted with
+/// [`MigrationDiff::reverse`]; non-additive statements and table rebuilds are
+/// reported by [`MigrationDiff::irreversible_items`] and by
+/// [`MigrationDiff::report`].
 #[derive(Debug, Clone, Default)]
 pub struct MigrationDiff {
     /// Executable SQL statements, in execution order (no trailing semicolons).
@@ -255,6 +261,11 @@ impl MigrationDiff {
                 warning.message
             ));
         }
+        let irreversible = self.irreversible_items();
+        out.push_str(&format!("  irreversible items: {}\n", irreversible.len()));
+        for item in &irreversible {
+            out.push_str(&format!("    - {item}\n"));
+        }
         out
     }
 
@@ -267,14 +278,18 @@ impl MigrationDiff {
     ///
     /// # No automatic down migration
     ///
-    /// A runtime diff has no safe inverse: dropping constraints or rebuilding
-    /// tables can lose data, and the plan does not capture the previous values.
-    /// `down_sql` therefore only contains the
+    /// A runtime diff has no generally safe inverse: dropping constraints or
+    /// rebuilding tables can lose data, and the plan does not capture the
+    /// previous values. `down_sql` therefore only contains the
     /// `RUNTIME_DIFF_DOWN_MARKER` comment, and
     /// [`MigrationEngine::revert`](super::engine::MigrationEngine::revert)
     /// returns a typed error for such a migration (it must not silently remove
     /// the history row while leaving the schema upgraded). Restore from a backup
     /// or write a versioned migration with an explicit down script.
+    ///
+    /// A **purely additive** diff can be inverted explicitly with
+    /// [`MigrationDiff::reverse`]; that plan is not embedded here because
+    /// whether it is safe depends on the caller's rollback story.
     ///
     /// Runtime upgrades should normally use
     /// [`MigrationEngine::apply_diff`](super::engine::MigrationEngine::apply_diff),

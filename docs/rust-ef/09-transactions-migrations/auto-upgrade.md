@@ -115,6 +115,7 @@ if !diff.is_empty() {
 | `rebuilds: Vec<TableRebuild>` | SQLite 将重建的表：拷贝列、新列、无默认值的 NOT NULL 新列、触发器是否保留 |
 
 辅助方法：`is_empty()`、`up_sql()`、`report()`（人类可读升级报告）、`rebuild_count()`、
+`irreversible_items()`（不可逆项清单，报告里同样会列出）、`reverse(dialect)`（纯加性 diff 的反向计划，见 §7.5）、
 `into_migration(id, dialect)`（转成带 `__ef_migrations_history` 记录的版本化 `Migration`，供已有 `apply` 流程使用；
 **运行时 diff 没有自动 down**，对产物调用 `revert()` 会返回 typed error，需从备份恢复或另写带 down 的版本化迁移）。
 
@@ -157,6 +158,40 @@ if !diff.is_empty() {
 | 需要 `__ef_migrations_history` 记录 | `diff.into_migration("Upgrade_2026", dialect)` 后走 `apply`（产物的 `down` 不可执行，不能 `revert`；回退靠备份或另写版本化迁移） |
 
 > 运行时差分不写 `__ef_migrations_history`；`apply_diff` 重复执行需要重新 diff（天然幂等：diff 为空即无操作）。
+
+### 7.5 反向计划：`reverse(dialect)`（2.4.0，EF-9 附加）
+
+运行时 diff 的**反向计划仅在「纯加性」时存在**：删除表/列、改列（ALTER COLUMN / MODIFY COLUMN）、
+SQLite 重建表都会丢失计划无法还原的信息（旧定义、旧数据），因此不会伪造 down 脚本。
+
+```rust
+let diff = engine.diff_metas(&model, &live);
+
+// 1) 先看不可逆项：空 = 纯加性，可生成反向计划
+let irreversible = diff.irreversible_items();
+if irreversible.is_empty() {
+    // 2) 反向语句（执行前请备份；反向计划本身也是一次 schema 变更）
+    let reverse = diff.reverse(MigrationDialect::Sqlite)?;
+    tracing::info!(sql = %reverse.up_sql(), "rollback plan");
+    engine.apply_diff(&provider, &reverse).await?;
+} else {
+    tracing::warn!(?irreversible, "schema upgrade has no automatic inverse");
+}
+```
+
+- **可逆（生成反向语句）**：`CREATE TABLE` → `DROP TABLE`、`ADD COLUMN` → `DROP COLUMN`、
+  `CREATE [UNIQUE] INDEX` → `DROP INDEX`（MySQL 为 `DROP INDEX … ON …`）、
+  `ADD CONSTRAINT`（FK/CHECK）→ 对应 `DROP CONSTRAINT` / `DROP FOREIGN KEY` / `DROP CHECK`、
+  `CREATE SEQUENCE` → `DROP SEQUENCE`；语句按**逆序**输出（先删索引/约束，再删列/表）。
+- **不可逆（`reverse()` 返回 typed `EFError::Migration`，消息里列出原因）**：
+  `DROP …`、`ALTER COLUMN` / `MODIFY COLUMN`、表选项变更、SQLite 表重建、`manual_action` 警告，
+  以及对**已存在对象**的注释变更（旧注释值未记录）。
+- 注释类语句（`COMMENT ON …` / MySQL `ALTER TABLE … COMMENT = …`）在反向计划中省略：它们只出现在计划
+  自己创建的表/列上，随对象一起消失。
+- 实现按语句形状分类（语句由框架自己的 DDL 生成器产生，形状封闭），不修改 `MigrationDiff` 的公开字段，
+  因此 2.4.0 是纯加法（不破坏结构体字面量构造）。
+- `reverse()` 只保证「把本次加的加回来」，不处理库中已有但模型缺失的对象（这些仍由 `skipped_removal`
+  警告报告、不会被删除）。
 
 
 ## 6. 最小验收

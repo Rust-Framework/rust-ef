@@ -890,3 +890,145 @@ async fn runtime_diff_migration_revert_returns_typed_error() {
         .await
         .expect("apply is idempotent while recorded as applied");
 }
+
+// ---------------------------------------------------------------------------
+// EF-9 addendum: reverse of a purely additive runtime diff
+// ---------------------------------------------------------------------------
+
+/// Same table/model as `WidgetV2` but with a different default for `stock`, so
+/// SQLite has to rebuild the table (a non-additive change).
+#[derive(Debug, Clone, EntityType)]
+#[table("widgets")]
+struct WidgetV3 {
+    #[primary_key]
+    #[auto_increment]
+    pub id: i32,
+    pub name: String,
+    pub stock: i32,
+}
+
+#[derive(Default)]
+struct WidgetV3Config;
+
+impl IEntityTypeConfiguration<WidgetV3> for WidgetV3Config {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, WidgetV3>) {
+        entity.property_named("stock").has_default("7").has_index();
+        entity.property_named("name").has_index();
+    }
+}
+
+fn widget_v3_model() -> Vec<EntityTypeMeta> {
+    let mut builder = ModelBuilder::new();
+    builder.apply_configuration::<WidgetV3Config, WidgetV3>();
+    builder.build()
+}
+
+#[tokio::test]
+async fn additive_runtime_diff_reverse_removes_created_objects_end_to_end() {
+    let database = TempDb::new("reverse_additive");
+    let provider = database.provider();
+    let engine = MigrationEngine::new(MigrationDialect::Sqlite);
+
+    // Fresh database: the whole plan is additive (tables + indexes).
+    let live = read_sqlite_schema(&*provider).await;
+    assert!(live.is_empty(), "expected a fresh database: {live:?}");
+    let diff = engine.diff_metas(&widget_v2_model(), &live);
+    assert!(!diff.is_empty());
+    assert!(
+        diff.irreversible_items().is_empty(),
+        "purely additive plan must be reversible: {:?}",
+        diff.irreversible_items()
+    );
+    assert!(
+        diff.report().contains("irreversible items: 0"),
+        "report must list irreversible items:\n{}",
+        diff.report()
+    );
+
+    let applied = engine
+        .apply_diff(&*provider, &diff)
+        .await
+        .expect("apply forward plan");
+    assert_eq!(applied.executed_statements, diff.statements.len());
+    let live = read_sqlite_schema(&*provider).await;
+    assert!(
+        live.iter().any(|table| table.name == "widgets"),
+        "forward plan must create the table: {live:?}"
+    );
+
+    let reverse = diff
+        .reverse(MigrationDialect::Sqlite)
+        .expect("a purely additive diff is reversible");
+    assert!(!reverse.statements.is_empty());
+    engine
+        .apply_diff(&*provider, &reverse)
+        .await
+        .expect("apply reverse plan");
+
+    // Everything the forward plan created is gone again.
+    let live = read_sqlite_schema(&*provider).await;
+    assert!(
+        live.is_empty(),
+        "reverse plan must remove the created tables/indexes: {live:?}"
+    );
+}
+
+#[tokio::test]
+async fn runtime_diff_with_table_rebuild_is_not_reversible() {
+    let database = TempDb::new("reverse_rebuild");
+    let provider = database.provider();
+    let engine = MigrationEngine::new(MigrationDialect::Sqlite);
+
+    // Install v1, upgrade to v2 additively.
+    let initial = engine
+        .generate("Initial", &[WidgetV1::entity_meta()], &None)
+        .expect("generate initial");
+    engine
+        .apply(&*provider, &initial)
+        .await
+        .expect("apply initial");
+    let live = read_sqlite_schema(&*provider).await;
+    let v2 = engine.diff_metas(&widget_v2_model(), &live);
+    engine
+        .apply_diff(&*provider, &v2)
+        .await
+        .expect("apply additive upgrade");
+
+    // Changing the `stock` default makes SQLite rebuild the table.
+    let live = read_sqlite_schema(&*provider).await;
+    let diff = engine.diff_metas(&widget_v3_model(), &live);
+    assert_eq!(
+        diff.rebuild_count(),
+        1,
+        "expected a table rebuild:\n{}",
+        diff.report()
+    );
+    let items = diff.irreversible_items();
+    assert!(
+        items
+            .iter()
+            .any(|item| item.contains("table rebuild required for widgets")),
+        "items: {items:?}"
+    );
+    // The rebuild's own shadow-table statements are reported as well; they are
+    // equally non-invertible.
+    assert!(
+        items
+            .iter()
+            .any(|item| item.starts_with("destructive/unsupported statement: DROP TABLE")),
+        "items: {items:?}"
+    );
+    let report = diff.report();
+    assert!(
+        report.contains("irreversible items: ") && !report.contains("irreversible items: 0"),
+        "report:\n{report}"
+    );
+
+    let error = diff
+        .reverse(MigrationDialect::Sqlite)
+        .expect_err("a plan with a table rebuild has no automatic inverse");
+    assert!(
+        error.to_string().contains("not reversible"),
+        "unexpected error: {error}"
+    );
+}
