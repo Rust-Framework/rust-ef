@@ -31,11 +31,11 @@
 //!   report them. In that case a model `CHECK` that cannot be verified is
 //!   reported as [`WarningKind::ConstraintNotIntrospected`] instead of being
 //!   duplicated or silently ignored.
-//! - **SQLite table rebuilds are atomic.** SQLite cannot `ALTER` constraints or
-//!   column types, so such changes rebuild the table (shadow table + copy data
-//!   + rename) inside a single transaction with foreign keys disabled and
-//!   `PRAGMA foreign_key_check` before commit. Warnings and the rebuild list
-//!   are part of the returned plan so an installer can print an upgrade report.
+//! - **SQLite table rebuilds are atomic.** SQLite cannot `ALTER` constraints
+//!   or column types, so such changes rebuild the table inside a single
+//!   transaction with foreign keys disabled and `PRAGMA foreign_key_check`
+//!   before commit. The rebuild list and warnings are part of the returned
+//!   plan, so an installer can print an upgrade report.
 
 mod compare;
 mod rebuild;
