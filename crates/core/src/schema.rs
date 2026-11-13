@@ -44,6 +44,16 @@ pub struct DbColumn {
     /// Declared maximum length for character types, when reported separately
     /// from [`data_type`](Self::data_type).
     pub max_length: Option<usize>,
+    /// Numeric/decimal precision, when reported by the database.
+    ///
+    /// `None` means the provider did not report precision (or the type has no
+    /// precision); it is not equivalent to a precision of zero.
+    pub precision: Option<u32>,
+    /// Numeric/decimal scale, when reported by the database.
+    ///
+    /// `None` means the provider did not report scale (or the type has no
+    /// scale); it is not equivalent to a scale of zero.
+    pub scale: Option<u32>,
     /// Raw `DEFAULT` expression as reported by the database, if any.
     pub default_value: Option<String>,
 }
@@ -108,6 +118,12 @@ pub struct DbForeignKey {
     pub referenced_columns: Vec<String>,
     /// `ON DELETE` action (e.g. `CASCADE`), if any.
     pub on_delete: Option<String>,
+    /// `ON UPDATE` action (e.g. `CASCADE`), if any.
+    ///
+    /// `None` means the provider did not report the action (or the database
+    /// default `NO ACTION` applies); it is not equivalent to an explicit
+    /// `NO ACTION` clause.
+    pub on_update: Option<String>,
 }
 
 /// A `CHECK` constraint as reported by live-schema introspection.
@@ -190,10 +206,7 @@ impl DbTable {
     /// Whether the table has a `TRIGGER` with the given name and the provider
     /// reported trigger metadata.
     pub fn trigger(&self, name: &str) -> Option<&DbTrigger> {
-        self.triggers
-            .as_deref()?
-            .iter()
-            .find(|t| t.name == name)
+        self.triggers.as_deref()?.iter().find(|t| t.name == name)
     }
 }
 
@@ -231,6 +244,32 @@ mod tests {
             ..Default::default()
         };
         assert!(!nullable.is_not_null());
+    }
+
+    #[test]
+    fn numeric_precision_and_on_update_are_optional() {
+        let column = DbColumn {
+            name: "unit_price".into(),
+            data_type: "DECIMAL(12, 2)".into(),
+            precision: Some(12),
+            scale: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(column.precision, Some(12));
+        assert_eq!(column.scale, Some(2));
+        assert_eq!(DbColumn::default().precision, None);
+        assert_eq!(DbColumn::default().scale, None);
+
+        let fk = DbForeignKey {
+            columns: vec!["tenant_id".into()],
+            referenced_table: "tenant".into(),
+            referenced_columns: vec!["id".into()],
+            on_delete: Some("CASCADE".into()),
+            on_update: Some("RESTRICT".into()),
+            ..Default::default()
+        };
+        assert_eq!(fk.on_update.as_deref(), Some("RESTRICT"));
+        assert_eq!(DbForeignKey::default().on_update, None);
     }
 
     #[test]
