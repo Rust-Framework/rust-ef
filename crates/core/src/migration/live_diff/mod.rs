@@ -270,7 +270,7 @@ impl MigrationDiff {
     /// A runtime diff has no safe inverse: dropping constraints or rebuilding
     /// tables can lose data, and the plan does not capture the previous values.
     /// `down_sql` therefore only contains the
-    /// [`RUNTIME_DIFF_DOWN_MARKER`] comment, and
+    /// `RUNTIME_DIFF_DOWN_MARKER` comment, and
     /// [`MigrationEngine::revert`](super::engine::MigrationEngine::revert)
     /// returns a typed error for such a migration (it must not silently remove
     /// the history row while leaving the schema upgraded). Restore from a backup

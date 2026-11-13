@@ -253,7 +253,7 @@ pub struct ConnectionString {
     /// Host without IPv6 brackets.
     pub host: Option<String>,
     /// Explicit port; `None` means the driver default
-    /// ([`Self::default_port`]).
+    /// ([`ConnectionProtocol::default_port`]).
     pub port: Option<u16>,
     /// Database/schema name.
     pub database: Option<String>,
@@ -383,7 +383,7 @@ impl ConnectionString {
 
     /// Builds the URL, percent-encoding userinfo and query values.
     ///
-    /// The port is only emitted when explicitly set; use [`Self::default_port`]
+    /// The port is only emitted when explicitly set; use [`ConnectionProtocol::default_port`]
     /// for "driver default" semantics.
     pub fn build(&self) -> Result<String, ConnectionStringError> {
         self.validate()?;

@@ -34,7 +34,7 @@ pub struct SeedData<'a> {
 /// The report is attached to the returned [`EFError::Migration`] as its
 /// `source`; retrieve it with
 /// `err.source().and_then(|s| s.downcast_ref::<PartialMigrationFailure>())`, or
-/// read the [`Display`] output directly (it lists the statements).
+/// read the [`std::fmt::Display`] output directly (it lists the statements).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartialMigrationFailure {
     /// Statements that committed successfully, in execution order.
