@@ -53,7 +53,10 @@ rust-ef migration apply --connection "$DATABASE_URL" --dir Migrations
 
 - 已应用记录在 `__ef_migrations_history`；重复执行是 no-op。
 - PostgreSQL / SQLite：整个迁移脚本（含历史行）在**一个事务**里执行，失败自动回滚。
-- MySQL：DDL 隐式提交，无法整体回滚；失败后迁移不会被记录，需要人工修复到一致状态再重试。
+- MySQL：DDL 隐式提交，**无法整体回滚**；失败后迁移不会被记录，已提交的语句会保留，需要人工修复到一致状态再重试。
+  引擎不伪造原子性：失败时返回的错误（`source` 为 `PartialMigrationFailure`）与错误消息都会逐条列出
+  `executed`（已提交，按执行顺序）、`failed`（失败语句）和 `not_executed`（未执行）语句，
+  据此可确定性地清理已创建对象或补跑剩余语句。同一语义适用于 `apply` / `revert` / `bootstrap`。
 - 并发发布：不要多个实例同时迁移；在发布流程里只让一个 job 执行 `migrate`/`apply`。
 - 迁移 id 由 CLI 自动加 Unix 时间戳前缀，`load_all` 按 id 排序即创建顺序；`MigrationStore` 会拒绝 `../`、路径分隔符等不安全 id。
 
