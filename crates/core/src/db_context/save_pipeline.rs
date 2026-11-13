@@ -66,12 +66,48 @@ impl super::DbContext {
         SaveChangesContext::from_views(views)
     }
 
+    /// Builds the mutable pre-save interceptor context from the actual tracked
+    /// entities. The returned borrow is tied to `sets`, so callers can still
+    /// touch other `DbContext` fields (for example the interceptor pipeline)
+    /// while the context is alive.
+    fn build_mutable_save_context<'a>(
+        sets: &'a mut std::collections::HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>,
+        savers: &std::collections::HashMap<TypeId, Box<dyn super::ErasedSetOps>>,
+        change_tracker: &crate::tracking::ChangeTracker,
+    ) -> crate::interceptor::MutableSaveChangesContext<'a> {
+        let mut entries = Vec::new();
+        for (type_id, set) in sets.iter_mut() {
+            if let Some(saver) = savers.get(type_id) {
+                saver.collect_entries_mut(set.as_mut(), change_tracker, &mut entries);
+            }
+        }
+        crate::interceptor::MutableSaveChangesContext::new(entries)
+    }
+
     /// Saves all pending changes across all DbSets.
     ///
-    /// Detects changes, runs interceptors, executes INSERT/UPDATE/DELETE in a
-    /// transaction, and clears tracked entries on success.
+    /// Runs the mutable pre-save hooks (which may adjust entities), detects
+    /// changes, runs the read-only interceptors, executes INSERT/UPDATE/DELETE
+    /// in a transaction, and clears tracked entries on success.
     pub async fn save_changes(&mut self) -> EFResult<SaveChangesResult> {
         let _save_guard = crate::observability::SaveChangesGuard::new();
+
+        // Mutable pre-save hooks run first: whatever they write (audit
+        // timestamps/actors, derived fields) is what change detection and the
+        // save's own transaction see and commit. A hook error aborts the save
+        // before any SQL runs. Skip building the type-erased context entirely
+        // when no interceptor is registered.
+        if self.interceptor_pipeline.has_interceptors() {
+            let mut mut_ctx = Self::build_mutable_save_context(
+                &mut self.sets,
+                &self.savers,
+                &self.change_tracker,
+            );
+            self.interceptor_pipeline
+                .on_saving_mut(&mut mut_ctx)
+                .await?;
+        }
+
         let type_ids: Vec<TypeId> = self.sets.keys().copied().collect();
         for type_id in &type_ids {
             let Some(set) = self.sets.get_mut(type_id) else {

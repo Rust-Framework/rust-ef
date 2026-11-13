@@ -71,7 +71,8 @@ pub mod prelude {
     pub use crate::entity_snapshot::EntitySnapshot;
     pub use crate::error::{EFError, EFErrorCode, EFResult};
     pub use crate::interceptor::{
-        ISaveChangesInterceptor, SaveChangesContext, SaveChangesResultContext,
+        ISaveChangesInterceptor, MutableEntityEntry, MutableSaveChangesContext,
+        SaveChangesContext, SaveChangesResultContext,
     };
     pub use crate::lazy::{LazyContext, LazyContextImpl, MAX_LAZY_DEPTH};
     pub use crate::metadata::EntityTypeMeta;

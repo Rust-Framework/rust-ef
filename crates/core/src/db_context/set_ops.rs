@@ -48,6 +48,16 @@ pub(crate) trait ErasedSetOps: Send + Sync {
         tracker: &ChangeTracker,
     ) -> Vec<crate::tracking::EntityEntryView>;
 
+    /// Collects type-erased **mutable** handles to all tracked entries, joined
+    /// by `entry_id`. Used to build the interceptor context for
+    /// `on_saving_mut`.
+    fn collect_entries_mut<'a>(
+        &self,
+        raw_set: &'a mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
+        out: &mut Vec<crate::interceptor::MutableEntityEntry<'a>>,
+    );
+
     // ── Cascade pipeline methods ──
 
     /// Drains HasMany/ManyToMany children from all Added entries. Returns
@@ -229,6 +239,29 @@ where
                 })
             })
             .collect()
+    }
+
+    fn collect_entries_mut<'a>(
+        &self,
+        raw_set: &'a mut (dyn Any + Send + Sync),
+        tracker: &ChangeTracker,
+        out: &mut Vec<crate::interceptor::MutableEntityEntry<'a>>,
+    ) {
+        let Some(db_set) = raw_set.downcast_mut::<DbSet<E>>() else {
+            return;
+        };
+        let type_name = E::entity_meta().type_name.to_string();
+        for entry in db_set.entries.iter_mut() {
+            let Some(state) = tracker.entry_state(entry.entry_id) else {
+                continue;
+            };
+            out.push(crate::interceptor::MutableEntityEntry::new(
+                state,
+                TypeId::of::<E>(),
+                type_name.clone(),
+                &mut entry.entity,
+            ));
+        }
     }
 
     fn drain_cascade_children(
