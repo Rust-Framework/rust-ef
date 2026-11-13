@@ -1,4 +1,4 @@
-﻿//! Model-vs-live-schema detection.
+//! Model-vs-live-schema detection.
 //!
 //! [`detect`] produces one [`TableDelta`] per model table plus structured
 //! warnings. It is dialect-aware only where comparison semantics require it
@@ -1008,10 +1008,9 @@ fn check_status(check: &SnapshotCheck, live_checks: &[DbCheck]) -> CheckStatus {
     }) {
         return CheckStatus::Exact(position);
     }
-    if let Some(position) = live_checks
-        .iter()
-        .position(|live_check| same_expression(live_check))
-    {
+    if let Some(position) = live_checks.iter().position(|live_check| {
+        normalize_expression(&check.expression) == normalize_expression(&live_check.expression)
+    }) {
         return CheckStatus::Renamed(position);
     }
     if let Some(position) = live_checks.iter().position(|live_check| {
