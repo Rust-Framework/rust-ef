@@ -13,6 +13,8 @@ pub mod type_conversion;
 
 pub use connection::SqliteConnection;
 pub use di_extension::DbContextOptionsBuilderExt;
+#[allow(deprecated)]
+// compatibility re-export of the legacy free function; prefer IDatabaseProvider::introspect
 pub use introspection::introspect_sqlite;
 pub use provider::{SqliteOptions, SqliteProvider};
 pub use sql_generator::SqliteSqlGenerator;

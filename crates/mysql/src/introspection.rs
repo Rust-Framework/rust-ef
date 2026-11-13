@@ -12,6 +12,7 @@ use sqlx_core::row::Row;
 use sqlx_mysql::MySqlPool;
 
 /// Reads tables and their schema from a MySQL database.
+#[deprecated(note = "use IDatabaseProvider::introspect instead")]
 pub async fn introspect_mysql(connection_string: &str) -> EFResult<Vec<DbTable>> {
     let pool = MySqlPool::connect(connection_string)
         .await

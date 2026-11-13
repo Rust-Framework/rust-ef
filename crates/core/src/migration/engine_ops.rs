@@ -166,6 +166,28 @@ impl MigrationEngine {
     /// Executes a migration script with the best available atomicity.
     async fn execute_script(&self, provider: &dyn IDatabaseProvider, sql: &str) -> EFResult<()> {
         let statements = split_sql_statements(sql, self.dialect);
+        self.execute_statements(provider, &statements).await
+    }
+
+    /// Executes already-split statements with the best available atomicity.
+    ///
+    /// This is the single execution plan shared by the versioned migration
+    /// workflow (`apply`/`revert`/`bootstrap`) and the runtime schema upgrade
+    /// path (`apply_diff`), so the MySQL non-atomic guarantee (EF-13 — a
+    /// [`PartialMigrationFailure`] report with the executed / failed /
+    /// not-executed statements) holds for every caller instead of being
+    /// re-implemented per path.
+    ///
+    /// - MySQL: statements run one by one through the provider's DDL path (DDL
+    ///   implicitly commits). A failure returns an [`EFError::Migration`] whose
+    ///   source is a [`PartialMigrationFailure`].
+    /// - SQLite/PostgreSQL: all statements run in one transaction; any failure
+    ///   rolls the whole plan back.
+    pub(crate) async fn execute_statements(
+        &self,
+        provider: &dyn IDatabaseProvider,
+        statements: &[String],
+    ) -> EFResult<()> {
         if statements.is_empty() {
             return Ok(());
         }
@@ -197,7 +219,7 @@ impl MigrationEngine {
 
         let mut conn = provider.get_connection().await?;
         conn.begin_transaction().await?;
-        for statement in &statements {
+        for statement in statements {
             if let Err(err) = conn.execute(statement, &[]).await {
                 let _ = conn.rollback_transaction().await;
                 return Err(err);
@@ -211,6 +233,12 @@ impl MigrationEngine {
     }
 
     /// Reverts a migration using its Down SQL.
+    ///
+    /// Migrations produced by
+    /// [`MigrationDiff::into_migration`](super::live_diff::MigrationDiff::into_migration)
+    /// have no executable down script (a runtime diff cannot be reversed
+    /// safely), so reverting one fails with a typed error instead of silently
+    /// deleting the history row while leaving the schema upgraded.
     pub async fn revert(
         &self,
         provider: &dyn IDatabaseProvider,
@@ -219,6 +247,14 @@ impl MigrationEngine {
         if !self.is_applied(provider, &migration.id).await? {
             return Err(EFError::migration(format!(
                 "migration '{}' is not applied",
+                migration.id
+            )));
+        }
+        if super::live_diff::is_runtime_diff_migration(migration) {
+            return Err(EFError::migration(format!(
+                "cannot revert migration '{}': it was produced from a runtime schema diff \
+                 (MigrationDiff::into_migration) and has no automatic down migration; \
+                 restore from a backup or write a versioned migration",
                 migration.id
             )));
         }

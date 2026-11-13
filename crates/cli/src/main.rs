@@ -352,6 +352,11 @@ fn cmd_script(
     Ok(())
 }
 
+// Scaffolding still uses the legacy free introspection functions (they take a
+// connection string and configure TLS per call); the canonical entry point is
+// `IDatabaseProvider::introspect`. The allow documents the remaining call sites
+// instead of letting them emit deprecation warnings.
+#[allow(deprecated)]
 async fn cmd_scaffold_dbcontext(
     connection: &str,
     provider: ProviderArg,

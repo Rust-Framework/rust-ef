@@ -10,7 +10,7 @@
 //! |---|---|
 //! | SQLite | One transaction. Foreign-key enforcement is disabled *outside* the transaction (otherwise `DROP TABLE` would fire `ON DELETE` actions on child rows), `PRAGMA foreign_key_check` runs before commit, any error rolls everything back, and the connection's original PRAGMA value is restored. |
 //! | PostgreSQL | One transaction; any failed statement rolls the whole plan back. |
-//! | MySQL | DDL implicitly commits, so statements are executed individually. Partial application is possible (engine limitation, see EF-13); the plan is validated by `diff` beforehand. |
+//! | MySQL | DDL implicitly commits, so statements are executed individually through the shared statement executor ([`MigrationEngine::execute_statements`]). Partial application is possible (engine limitation, see EF-13), and a failure returns the same [`PartialMigrationFailure`](super::engine_ops::PartialMigrationFailure) report as the versioned `apply` path: executed / failed / not-executed statements. |
 
 use crate::error::{EFError, EFResult};
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
@@ -56,13 +56,13 @@ impl MigrationEngine {
         self.preflight_rebuilds(provider, diff).await?;
 
         match self.dialect {
-            MigrationDialect::MySql => {
-                for statement in &diff.statements {
-                    provider.execute_migration_command(statement).await?;
-                }
+            // PostgreSQL: one transaction. MySQL: statement-by-statement with
+            // the shared EF-13 partial-failure report. Both share the exact
+            // execution plan used by the versioned migration workflow.
+            MigrationDialect::MySql | MigrationDialect::Postgres => {
+                self.execute_statements(provider, &diff.statements).await?;
             }
             MigrationDialect::Sqlite => self.apply_sqlite(provider, diff).await?,
-            MigrationDialect::Postgres => self.apply_transactionally(provider, diff).await?,
         }
 
         Ok(DiffApplyResult {
@@ -129,16 +129,6 @@ impl MigrationEngine {
         }
         outcome
     }
-
-    /// PostgreSQL: one transaction, no PRAGMA handling needed.
-    async fn apply_transactionally(
-        &self,
-        provider: &dyn IDatabaseProvider,
-        diff: &MigrationDiff,
-    ) -> EFResult<()> {
-        let mut connection = provider.get_connection().await?;
-        run_transaction(&mut *connection, diff, false).await
-    }
 }
 
 async fn run_transaction(
@@ -182,4 +172,130 @@ async fn read_pragma_bool(connection: &mut dyn IAsyncConnection, pragma: &str) -
         .cloned()
         .unwrap_or(DbValue::Null);
     Ok(i64::try_from(value).unwrap_or(0) != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migration::live_diff::MigrationDiff;
+    use crate::provider::ISqlGenerator;
+    use std::sync::Mutex;
+
+    /// MySQL provider double: records DDL statements and fails at a fixed call.
+    struct FailingProvider {
+        fail_at: usize,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl FailingProvider {
+        fn failing_at(fail_at: usize) -> Self {
+            Self {
+                fail_at,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls lock").clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl IDatabaseProvider for FailingProvider {
+        fn sql_generator(&self) -> &'static dyn ISqlGenerator {
+            unimplemented!("apply_diff's MySQL path does not use the SQL generator")
+        }
+
+        async fn get_connection(&self) -> EFResult<Box<dyn IAsyncConnection>> {
+            unimplemented!("apply_diff's MySQL path does not need a connection")
+        }
+
+        async fn execute_migration_command(&self, sql: &str) -> EFResult<()> {
+            let mut calls = self.calls.lock().expect("calls lock");
+            calls.push(sql.to_string());
+            if calls.len() == self.fail_at {
+                return Err(EFError::query("simulated DDL failure"));
+            }
+            Ok(())
+        }
+
+        fn name(&self) -> &str {
+            "failing"
+        }
+
+        fn migration_dialect(&self) -> MigrationDialect {
+            MigrationDialect::MySql
+        }
+    }
+
+    fn partial_failure(error: &EFError) -> &crate::migration::PartialMigrationFailure {
+        std::error::Error::source(error)
+            .and_then(|source| source.downcast_ref())
+            .expect("error source must be the partial-migration report")
+    }
+
+    #[tokio::test]
+    async fn mysql_apply_diff_reports_executed_and_pending_statements() {
+        let provider = FailingProvider::failing_at(2);
+        let engine = MigrationEngine::new(MigrationDialect::MySql);
+        let diff = MigrationDiff {
+            statements: vec![
+                "CREATE TABLE diff_a (id INT)".to_string(),
+                "CREATE TABLE diff_b (id INT)".to_string(),
+                "CREATE TABLE diff_c (id INT)".to_string(),
+            ],
+            warnings: Vec::new(),
+            rebuilds: Vec::new(),
+        };
+
+        let error = engine
+            .apply_diff(&provider, &diff)
+            .await
+            .expect_err("the second statement fails");
+
+        // The runtime diff path reuses the shared executor, so the EF-13
+        // partial-failure report is available exactly like for `apply()`.
+        let failure = partial_failure(&error);
+        assert_eq!(
+            failure.executed,
+            vec!["CREATE TABLE diff_a (id INT)"],
+            "only the committed statements are reported"
+        );
+        assert_eq!(failure.failed, "CREATE TABLE diff_b (id INT)");
+        assert_eq!(
+            failure.not_executed,
+            vec!["CREATE TABLE diff_c (id INT)"],
+            "statements after the failure are reported as not executed"
+        );
+        assert!(failure.cause.contains("simulated DDL failure"));
+        assert_eq!(
+            provider.calls(),
+            vec![
+                "CREATE TABLE diff_a (id INT)",
+                "CREATE TABLE diff_b (id INT)"
+            ],
+            "execution stops at the failing statement"
+        );
+        assert!(
+            error.message().contains("partially applied"),
+            "the error message must state the non-atomic outcome: {}",
+            error.message()
+        );
+    }
+
+    #[tokio::test]
+    async fn mysql_apply_diff_without_failure_returns_all_statements() {
+        let provider = FailingProvider::failing_at(usize::MAX);
+        let engine = MigrationEngine::new(MigrationDialect::MySql);
+        let diff = MigrationDiff {
+            statements: vec!["CREATE TABLE diff_a (id INT)".to_string()],
+            warnings: Vec::new(),
+            rebuilds: Vec::new(),
+        };
+
+        let result = engine.apply_diff(&provider, &diff).await.expect("apply");
+        assert_eq!(result.executed_statements, 1);
+        assert!(result.rebuilt_tables.is_empty());
+        assert_eq!(provider.calls().len(), 1);
+    }
 }

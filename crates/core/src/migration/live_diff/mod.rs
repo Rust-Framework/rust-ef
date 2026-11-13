@@ -50,6 +50,16 @@ use crate::schema::DbTable;
 use super::engine::MigrationEngine;
 use super::types::ModelSnapshot;
 
+/// First line of the `down_sql` of a [`Migration`] produced by
+/// [`MigrationDiff::into_migration`].
+///
+/// A runtime diff has no safe automatic down migration (dropping constraints or
+/// rebuilding tables can lose data), so
+/// [`MigrationEngine::revert`](super::engine::MigrationEngine::revert) detects
+/// this marker and returns a typed error instead of pretending to roll back.
+pub(crate) const RUNTIME_DIFF_DOWN_MARKER: &str =
+    "-- rust-ef runtime diff: no automatic down migration";
+
 /// Severity of a [`DiffWarning`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum WarningSeverity {
@@ -72,8 +82,6 @@ impl WarningSeverity {
 /// Machine-readable category of a [`DiffWarning`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WarningKind {
-    /// The plan rebuilds the table (SQLite) to apply a constraint/column change.
-    TableRebuild,
     /// An object exists in the live database but not in the model and is not
     /// dropped automatically (destructive change).
     SkippedRemoval,
@@ -96,7 +104,6 @@ impl WarningKind {
     /// Stable snake-case identifier for logs/telemetry.
     pub fn as_str(&self) -> &'static str {
         match self {
-            WarningKind::TableRebuild => "table_rebuild",
             WarningKind::SkippedRemoval => "skipped_removal",
             WarningKind::ConstraintNotIntrospected => "constraint_not_introspected",
             WarningKind::IndexDefinitionMismatch => "index_definition_mismatch",
@@ -258,11 +265,20 @@ impl MigrationDiff {
     /// history `INSERT`; apply it with
     /// [`MigrationEngine::apply`](super::engine::MigrationEngine::apply).
     ///
+    /// # No automatic down migration
+    ///
+    /// A runtime diff has no safe inverse: dropping constraints or rebuilding
+    /// tables can lose data, and the plan does not capture the previous values.
+    /// `down_sql` therefore only contains the
+    /// [`RUNTIME_DIFF_DOWN_MARKER`] comment, and
+    /// [`MigrationEngine::revert`](super::engine::MigrationEngine::revert)
+    /// returns a typed error for such a migration (it must not silently remove
+    /// the history row while leaving the schema upgraded). Restore from a backup
+    /// or write a versioned migration with an explicit down script.
+    ///
     /// Runtime upgrades should normally use
     /// [`MigrationEngine::apply_diff`](super::engine::MigrationEngine::apply_diff),
-    /// which keeps the structured warnings/rebuild report. A runtime diff has no
-    /// safe automatic rollback, so `down_sql` only contains an explanatory
-    /// comment.
+    /// which keeps the structured warnings/rebuild report.
     pub fn into_migration(&self, id: impl Into<String>, dialect: MigrationDialect) -> Migration {
         let id = id.into();
         let mut up_sql = self.up_sql();
@@ -276,11 +292,20 @@ impl MigrationDiff {
             id: id.clone(),
             description: id,
             up_sql,
-            down_sql: "-- Runtime schema diff: no automatic down migration. \
-                       Restore from a backup or write a versioned migration.\n"
-                .to_string(),
+            down_sql: format!(
+                "{RUNTIME_DIFF_DOWN_MARKER}: restore from a backup or write a versioned migration.\n"
+            ),
         }
     }
+}
+
+/// Whether `migration` was produced by [`MigrationDiff::into_migration`] and
+/// therefore has no executable down script.
+pub(crate) fn is_runtime_diff_migration(migration: &Migration) -> bool {
+    migration
+        .down_sql
+        .trim_start()
+        .starts_with(RUNTIME_DIFF_DOWN_MARKER)
 }
 
 impl MigrationEngine {

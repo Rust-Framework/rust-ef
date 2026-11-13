@@ -91,6 +91,9 @@ type AuditToucher =
 ///
 /// - INSERT (`Added`): `created_at`/`created_by` **and** `updated_at`/`updated_by`.
 /// - UPDATE (any tracked existing entity): `updated_at`/`updated_by` only.
+/// - Without a current actor ([`NoAuditActor`] / `None`): INSERT writes `NULL`
+///   to the `*_by` columns (server-owned, caller values cannot win), while
+///   UPDATE keeps the stored `updated_by` value instead of erasing it.
 ///
 /// Registration is explicit per entity type (Rust has no specialization for
 /// "all `T: IAuditable`"), one builder line per type, centralized in host setup.
@@ -136,11 +139,21 @@ impl AuditInterceptor {
         self.touchers.push(Arc::new(|ctx, now_ms, actor| {
             ctx.for_each_entity_mut::<T>(|state, entity| {
                 if state == EntityState::Added {
+                    // Server-owned values on insert: overwrite whatever the
+                    // caller supplied, including `None` when there is no actor.
                     entity.set_created_at(now_ms);
                     entity.set_created_by(actor);
+                    entity.set_updated_at(now_ms);
+                    entity.set_updated_by(actor);
+                    return;
                 }
                 entity.set_updated_at(now_ms);
-                entity.set_updated_by(actor);
+                // Without a current actor (background job, migration) keep the
+                // stored `updated_by` value: overwriting it with `None` would
+                // erase who last changed the row.
+                if actor.is_some() {
+                    entity.set_updated_by(actor);
+                }
             });
         }));
         self

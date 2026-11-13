@@ -817,3 +817,76 @@ async fn apply_diff_rejects_rebuild_that_would_need_not_null_backfill() {
     );
     assert!(children.checks.as_ref().expect("checks").is_empty());
 }
+
+#[tokio::test]
+async fn runtime_diff_migration_revert_returns_typed_error() {
+    let database = TempDb::new("into_migration_revert");
+    let provider = database.provider();
+    let engine = MigrationEngine::new(MigrationDialect::Sqlite);
+
+    let initial = engine
+        .generate("Initial", &[WidgetV1::entity_meta()], &None)
+        .expect("generate initial");
+    engine
+        .apply(&*provider, &initial)
+        .await
+        .expect("apply initial");
+
+    let live = read_sqlite_schema(&*provider).await;
+    let diff = engine.diff_metas(&widget_v2_model(), &live);
+    assert!(
+        !diff.is_empty(),
+        "expected an upgrade plan:\n{}",
+        diff.report()
+    );
+    let migration = diff.into_migration("Runtime_Upgrade", MigrationDialect::Sqlite);
+    assert!(
+        migration
+            .down_sql
+            .starts_with("-- rust-ef runtime diff: no automatic down migration"),
+        "the down script must carry the no-automatic-down marker: {}",
+        migration.down_sql
+    );
+
+    engine
+        .apply(&*provider, &migration)
+        .await
+        .expect("apply runtime migration");
+    assert!(engine
+        .is_applied(&*provider, "Runtime_Upgrade")
+        .await
+        .expect("history"));
+
+    // A runtime upgrade has no safe inverse: revert must fail loudly instead of
+    // deleting the history row and pretending the schema was rolled back.
+    let error = engine
+        .revert(&*provider, &migration)
+        .await
+        .expect_err("runtime upgrades cannot be reverted automatically");
+    assert!(
+        error.to_string().contains("no automatic down"),
+        "unexpected error: {error}"
+    );
+
+    // State stays consistent: the history row is still there and the schema is
+    // still upgraded (no half-reverted database).
+    assert!(engine
+        .is_applied(&*provider, "Runtime_Upgrade")
+        .await
+        .expect("history"));
+    let mut connection = provider.get_connection().await.expect("connection");
+    let columns = connection
+        .query("PRAGMA table_info('widgets')", &[])
+        .await
+        .expect("table_info");
+    assert!(
+        columns.iter().any(|row| string_value(&row[1]) == "stock"),
+        "the applied upgrade must stay in place"
+    );
+
+    // The history guard keeps re-applying idempotent.
+    engine
+        .apply(&*provider, &migration)
+        .await
+        .expect("apply is idempotent while recorded as applied");
+}

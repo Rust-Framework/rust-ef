@@ -14,6 +14,8 @@ pub mod type_mapping;
 
 pub use connection::MySqlConnection;
 pub use di_extension::DbContextOptionsBuilderExt;
+#[allow(deprecated)]
+// compatibility re-export of the legacy free function; prefer IDatabaseProvider::introspect
 pub use introspection::introspect_mysql;
 pub use provider::{MySqlOptions, MySqlProvider};
 pub use sql_generator::MySqlSqlGenerator;

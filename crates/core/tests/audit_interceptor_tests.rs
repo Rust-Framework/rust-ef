@@ -199,3 +199,61 @@ async fn only_tracked_entity_types_are_touched() {
         "entity types not registered with track() must not be touched"
     );
 }
+
+#[tokio::test]
+async fn system_update_without_actor_preserves_updated_by() {
+    let (mut ctx, ports) = make_ctx();
+    ctx.set::<AuditOrder>();
+    ctx.ensure_created().await.unwrap();
+
+    *ports.clock.now_ms.lock().unwrap() = 1_000;
+    *ports.actor.actor.lock().unwrap() = Some("creator".into());
+    ctx.add::<AuditOrder>(new_order("alpha"));
+    ctx.save_changes().await.expect("insert");
+
+    ctx.clear_tracking();
+    let loaded = load_first_order(&mut ctx).await;
+    ctx.attach::<AuditOrder>(loaded);
+    ctx.set::<AuditOrder>()
+        .tracked_entries_mut()
+        .next()
+        .unwrap()
+        .name = "alpha-system".into();
+
+    // Background/system work: there is no current actor any more.
+    *ports.actor.actor.lock().unwrap() = None;
+    *ports.clock.now_ms.lock().unwrap() = 3_000;
+    ctx.save_changes().await.expect("system update");
+
+    let order = load_first_order(&mut ctx).await;
+    assert_eq!(order.name, "alpha-system");
+    assert_eq!(order.updated_at, 3_000, "updated_at is still stamped");
+    assert_eq!(
+        order.updated_by.as_deref(),
+        Some("creator"),
+        "a system update without an actor must not erase updated_by"
+    );
+    assert_eq!(order.created_by.as_deref(), Some("creator"));
+}
+
+#[tokio::test]
+async fn insert_without_actor_clears_caller_supplied_audit_values() {
+    let (mut ctx, ports) = make_ctx();
+    ctx.set::<AuditOrder>();
+    ctx.ensure_created().await.unwrap();
+
+    *ports.clock.now_ms.lock().unwrap() = 4_000;
+    *ports.actor.actor.lock().unwrap() = None;
+    // `new_order` deliberately carries client-supplied created_by/updated_by.
+    ctx.add::<AuditOrder>(new_order("alpha"));
+    ctx.save_changes().await.expect("insert");
+
+    let order = load_first_order(&mut ctx).await;
+    assert_eq!(order.created_at, 4_000);
+    assert_eq!(order.updated_at, 4_000);
+    assert_eq!(
+        order.created_by, None,
+        "insert without an actor clears caller-supplied created_by (server-owned)"
+    );
+    assert_eq!(order.updated_by, None);
+}

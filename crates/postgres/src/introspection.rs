@@ -17,6 +17,7 @@ use tokio_postgres::NoTls;
 /// The `tls` parameter controls transport encryption. For local dev
 /// (plaintext), pass [`PgTlsMode::Disable`]; for production, use
 /// [`PgTlsMode::Require`] with a configured `TlsConnector`.
+#[deprecated(note = "use IDatabaseProvider::introspect instead")]
 pub async fn introspect_postgres(
     connection_string: &str,
     tls: PgTlsMode,

@@ -19,6 +19,7 @@ use rust_ef::schema::{
 ///
 /// Migration-internal tables (`__ef_migrations_history` etc.) and SQLite
 /// internal tables (`sqlite_%`) are excluded.
+#[deprecated(note = "use IDatabaseProvider::introspect instead")]
 pub async fn introspect_sqlite(connection_string: &str) -> EFResult<Vec<DbTable>> {
     let path = connection_string.to_string();
     tokio::task::spawn_blocking(move || {
