@@ -1,0 +1,13 @@
+[package]
+name = "rust-ef-providers-example"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+
+[dependencies]
+rust-ef = { path = "../../crates/core" }
+rust-ef-sqlite = { path = "../../crates/sqlite" }
+rust-ef-mysql = { path = "../../crates/mysql" }
+rust-ef-postgres = { path = "../../crates/postgres" }
+tokio = { version = "1", features = ["full"] }
