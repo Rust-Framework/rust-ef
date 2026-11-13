@@ -1,5 +1,5 @@
 use crate::pool_strategy::{
-    SqliteConnectionCustomizer, SqliteConnectionManager, SqliteProviderInner,
+    connection_init_sql, SqliteConnectionCustomizer, SqliteConnectionManager, SqliteProviderInner,
     SQLITE_DEFAULT_POOL_ACQUIRE_TIMEOUT, SQLITE_DEFAULT_POOL_SIZE,
 };
 use crate::sql_generator::SqliteSqlGenerator;
@@ -20,6 +20,7 @@ pub struct SqliteOptions {
     pub(crate) path: String,
     pub(crate) max_pool_size: u32,
     pub(crate) pool_acquire_timeout: Duration,
+    pub(crate) foreign_keys: bool,
 }
 
 impl SqliteOptions {
@@ -28,7 +29,22 @@ impl SqliteOptions {
             path: path.into(),
             max_pool_size: SQLITE_DEFAULT_POOL_SIZE,
             pool_acquire_timeout: SQLITE_DEFAULT_POOL_ACQUIRE_TIMEOUT,
+            foreign_keys: false,
         }
+    }
+
+    /// Enables SQLite foreign-key enforcement on every connection.
+    ///
+    /// SQLite's `PRAGMA foreign_keys` is a **connection-level** switch, and its
+    /// initial value depends on how the SQLite library was compiled (`rusqlite`
+    /// bundles SQLite with `SQLITE_DEFAULT_FOREIGN_KEYS`, while a system SQLite
+    /// usually starts `OFF`). Enabling this option makes the behavior explicit
+    /// and build-independent: `PRAGMA foreign_keys=ON` runs on the same
+    /// acquisition hook as `journal_mode=WAL`/`busy_timeout`, so every pooled
+    /// or shared connection enforces `REFERENCES` constraints.
+    pub fn foreign_keys(&mut self, enabled: bool) -> &mut Self {
+        self.foreign_keys = enabled;
+        self
     }
 
     /// Sets the maximum number of pooled connections.
@@ -80,7 +96,12 @@ impl SqliteProvider {
     /// keeps the default pool. `:memory:` is rejected: each connection would
     /// get its own isolated database.
     pub fn new_with_pool(path: impl AsRef<std::path::Path>, max_size: u32) -> EFResult<Self> {
-        Self::build_pool(path.as_ref(), max_size, SQLITE_DEFAULT_POOL_ACQUIRE_TIMEOUT)
+        Self::build_pool(
+            path.as_ref(),
+            max_size,
+            SQLITE_DEFAULT_POOL_ACQUIRE_TIMEOUT,
+            false,
+        )
     }
 
     /// Creates a file-based provider from [`SqliteOptions`].
@@ -89,6 +110,7 @@ impl SqliteProvider {
             std::path::Path::new(&options.path),
             options.max_pool_size,
             options.pool_acquire_timeout,
+            options.foreign_keys,
         )
     }
 
@@ -96,6 +118,7 @@ impl SqliteProvider {
         path: &std::path::Path,
         max_size: u32,
         acquire_timeout: Duration,
+        foreign_keys: bool,
     ) -> EFResult<Self> {
         if path == std::path::Path::new(":memory:") {
             return Err(EFError::configuration(
@@ -116,7 +139,7 @@ impl SqliteProvider {
         let pool = r2d2::Pool::builder()
             .max_size(max_size)
             .connection_timeout(acquire_timeout)
-            .connection_customizer(Box::new(SqliteConnectionCustomizer))
+            .connection_customizer(Box::new(SqliteConnectionCustomizer { foreign_keys }))
             .build(manager)
             .map_err(|e| EFError::connection(format!("SQLite pool creation failed: {}", e)))?;
         Ok(Self {
@@ -135,11 +158,20 @@ impl SqliteProvider {
     /// pre-v1.4 behavior: each `new_in_memory()` call creates a fresh,
     /// independent database with full test isolation.
     pub fn new_in_memory() -> EFResult<Self> {
+        Self::new_in_memory_with_options(&SqliteOptions::new(":memory:"))
+    }
+
+    /// Creates an in-memory provider from [`SqliteOptions`].
+    ///
+    /// `:memory:` has a single shared connection, so the WAL/busy_timeout/
+    /// foreign_keys PRAGMAs are applied once when the connection opens.
+    pub(crate) fn new_in_memory_with_options(options: &SqliteOptions) -> EFResult<Self> {
         let conn = rusqlite::Connection::open_in_memory()
             .map_err(|e| EFError::connection(format!("SQLite in-memory open failed: {}", e)))?;
         // WAL isn't supported for in-memory databases (SQLite silently
-        // ignores the PRAGMA), but busy_timeout still applies.
-        conn.execute_batch("PRAGMA busy_timeout=5000;")
+        // ignores the PRAGMA), but busy_timeout and (when enabled)
+        // foreign_keys still apply.
+        conn.execute_batch(connection_init_sql(options.foreign_keys))
             .map_err(|e| EFError::connection(format!("SQLite pragma setup failed: {}", e)))?;
         Ok(Self {
             inner: SqliteProviderInner::Single(Arc::new(Mutex::new(conn))),

@@ -64,12 +64,30 @@ impl r2d2::ManageConnection for SqliteConnectionManager {
 /// timeout makes writers wait up to 5 seconds for `SQLITE_BUSY` to clear
 /// instead of failing immediately. Applied to every connection at acquisition
 /// time so pool growth doesn't lose the PRAGMAs.
+///
+/// When `foreign_keys` is enabled, `PRAGMA foreign_keys=ON` runs on the same
+/// acquisition hook: SQLite's foreign-key enforcement is a *connection-level*
+/// switch, so it must be re-applied to every connection the pool hands out.
 #[derive(Debug)]
-pub(crate) struct SqliteConnectionCustomizer;
+pub(crate) struct SqliteConnectionCustomizer {
+    pub(crate) foreign_keys: bool,
+}
+
+/// SQLite PRAGMAs applied when a connection is acquired/opened.
+///
+/// Kept as a single function so the pooled (`r2d2` customizer) and the
+/// in-memory (shared connection) paths cannot drift apart.
+pub(crate) fn connection_init_sql(foreign_keys: bool) -> &'static str {
+    if foreign_keys {
+        "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;"
+    } else {
+        "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;"
+    }
+}
 
 impl CustomizeConnection<Connection, rusqlite::Error> for SqliteConnectionCustomizer {
     fn on_acquire(&self, conn: &mut Connection) -> Result<(), rusqlite::Error> {
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
+        conn.execute_batch(connection_init_sql(self.foreign_keys))
     }
 }
 
