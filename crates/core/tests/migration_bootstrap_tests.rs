@@ -203,7 +203,7 @@ async fn dbcontext_bootstrap_runs_bootstrap_then_seed_in_one_call() {
     assert_eq!(i64::try_from(rows[0][0].clone()).unwrap(), 1);
 
     // The one-call install path must not create migration bookkeeping.
-    let tables = table_names(&*ctx.provider()).await;
+    let tables = table_names(ctx.provider()).await;
     assert!(
         !tables.iter().any(|t| t == "__ef_migrations_history"),
         "tables: {tables:?}"
