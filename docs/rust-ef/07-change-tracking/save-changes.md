@@ -35,6 +35,14 @@ match ctx.save_changes().await {
 }
 ```
 
+## 插入顺序
+
+同一次 `save_changes()` 内的 INSERT 按**类型级依赖图**（`DependencyGraph`）的拓扑序执行：先 principal（父/被
+引用方），再 dependent（子/引用方）；DELETE 顺序相反。依赖边来自 `HasMany`/`ManyToMany` 导航、`BelongsTo`
+导航以及外键元数据（含没有导航的标量 `#[foreign_key(Target)]` 与复合 `has_foreign_key`），所以**只在子侧声明
+关系**（父侧没有 `HasMany<Child>`）也能在单批 save 中正确排序，不需要手动拆分多次 `save_changes()`。
+细节见[一对多与 BelongsTo / HasMany](../04-relationships/one-to-many.md)。
+
 ## 拦截器钩子
 
 `save_changes()` 在事务前后触发拦截器（全部带默认空实现）：
