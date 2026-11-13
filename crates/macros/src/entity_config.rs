@@ -61,8 +61,9 @@ pub fn expand_entity_config(args: TokenStream, input: TokenStream) -> TokenStrea
     };
 
     let item_impl: ItemImpl = parse_macro_input!(input as ItemImpl);
+    let ef = crate::crate_path::ef_crate_path();
 
-    match rewrite_impl(&item_impl, &entity_ty, &context_key_tokens) {
+    match rewrite_impl(&item_impl, &entity_ty, &context_key_tokens, &ef) {
         Ok(tokens) => TokenStream::from(tokens),
         Err(err) => err.to_compile_error().into(),
     }
@@ -93,6 +94,7 @@ fn rewrite_impl(
     item: &ItemImpl,
     entity_ty: &Type,
     context_key_tokens: &TokenStream2,
+    ef: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     let self_ty = &item.self_ty;
     let impl_tokens = item.to_token_stream();
@@ -100,19 +102,19 @@ fn rewrite_impl(
     Ok(quote! {
         #impl_tokens
 
-        rust_ef::inventory::submit!({
-            rust_ef::registration::EntityConfigRegistration {
+        #ef::inventory::submit!({
+            #ef::registration::EntityConfigRegistration {
                 type_id: std::any::TypeId::of::<#entity_ty>(),
                 type_name: stringify!(#entity_ty),
-                apply_fn: |builder: &mut rust_ef::model_builder::ModelBuilder| {
-                    let meta = <#entity_ty as rust_ef::entity::IEntityType>::entity_meta();
+                apply_fn: |builder: &mut #ef::model_builder::ModelBuilder| {
+                    let meta = <#entity_ty as #ef::entity::IEntityType>::entity_meta();
                     builder.register_entity_meta(meta);
                     let config = <#self_ty as std::default::Default>::default();
                     let type_id = std::any::TypeId::of::<#entity_ty>();
                     let mut entity_builder =
-                        <rust_ef::model_builder::EntityTypeBuilder<'_, #entity_ty>>
+                        <#ef::model_builder::EntityTypeBuilder<'_, #entity_ty>>
                             ::new(builder, type_id);
-                    <#self_ty as rust_ef::model_builder::IEntityTypeConfiguration<#entity_ty>>
+                    <#self_ty as #ef::model_builder::IEntityTypeConfiguration<#entity_ty>>
                         ::configure(&config, &mut entity_builder);
                 },
                 context_key: #context_key_tokens,

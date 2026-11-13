@@ -23,8 +23,9 @@ use super::context::{extract_field, extract_field_nav, extract_value, LinqCtx};
 
 pub fn expand_linq(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as LinqInput);
+    let ef = crate::crate_path::ef_crate_path();
     let result = match input {
-        LinqInput::Query(q) => expand_query(&q),
+        LinqInput::Query(q) => expand_query(&q, &ef),
         LinqInput::Value(v) => expand_value(&v),
     };
     match result {
@@ -37,11 +38,11 @@ pub fn expand_linq(input: TokenStream) -> TokenStream {
 // Predicate / query expansion
 // ---------------------------------------------------------------------------
 
-fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
+fn expand_query(input: &QueryInput, ef: &TokenStream2) -> syn::Result<TokenStream2> {
     let entity = &input.entity;
     let where_param = input.where_param.as_ref();
 
-    let predicate = compile_where_predicate(entity, input.where_body.as_ref(), where_param)?;
+    let predicate = compile_where_predicate(entity, input.where_body.as_ref(), where_param, ef)?;
 
     // `=> order` sugar (only meaningful on a query).
     let order_chain = if let Some(order) = &input.order {
@@ -70,7 +71,7 @@ fn expand_query(input: &QueryInput) -> syn::Result<TokenStream2> {
         )
     })?;
 
-    let clause_chain = expand_clauses(input, entity)?;
+    let clause_chain = expand_clauses(input, entity, ef)?;
 
     // `.filter(predicate)` normalizes the source (DbSet or QueryBuilder) into a
     // QueryBuilder and appends the condition with AND.
@@ -82,18 +83,19 @@ fn compile_where_predicate(
     entity: &Type,
     body: Option<&Expr>,
     param: Option<&Ident>,
+    ef: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     match body {
         // `linq!(|b: T| true)` / an empty body — no condition.
         Some(body) if is_true_expr(body) => {
-            Ok(quote! { rust_ef::query::Predicate::<#entity>::always() })
+            Ok(quote! { #ef::query::Predicate::<#entity>::always() })
         }
         Some(body) => {
             let ctx = LinqCtx::single(entity, param);
-            let expr = compile_bool_expr(&ctx, body)?;
-            Ok(quote! { rust_ef::query::Predicate::<#entity>::from_expr(#expr) })
+            let expr = compile_bool_expr(&ctx, body, ef)?;
+            Ok(quote! { #ef::query::Predicate::<#entity>::from_expr(#expr) })
         }
-        None => Ok(quote! { rust_ef::query::Predicate::<#entity>::always() }),
+        None => Ok(quote! { #ef::query::Predicate::<#entity>::always() }),
     }
 }
 
@@ -106,7 +108,11 @@ fn is_true_expr(expr: &Expr) -> bool {
 // Clause expansion
 // ---------------------------------------------------------------------------
 
-fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2> {
+fn expand_clauses(
+    input: &QueryInput,
+    entity: &Type,
+    ef: &TokenStream2,
+) -> syn::Result<TokenStream2> {
     let mut chain = quote! {};
     let mut set_clauses: Vec<TokenStream2> = Vec::new();
     let mut terminal: Option<TokenStream2> = None;
@@ -152,7 +158,7 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
                 chain = quote! { #chain .select_internal(#cols) };
             }
             LinqClause::HavingExpr { expr } => {
-                let having_code = compile_having_expr(expr, &ctx)?;
+                let having_code = compile_having_expr(expr, &ctx, ef)?;
                 chain = quote! {
                     #chain .having_expr_internal(#having_code)
                 };
@@ -221,7 +227,7 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
                 // resolve to the CTE entity's column constants, not the main
                 // query's entity.
                 let cte_ctx = LinqCtx::single(entity, Some(param));
-                let bool_expr_code = compile_bool_expr(&cte_ctx, body)?;
+                let bool_expr_code = compile_bool_expr(&cte_ctx, body, ef)?;
                 let name_str = name.as_str();
                 if *recursive {
                     let (fk_expr, pk_expr) = link
@@ -311,7 +317,7 @@ fn expand_clauses(input: &QueryInput, entity: &Type) -> syn::Result<TokenStream2
                 let col = extract_field(&ctx, field)?;
                 let val = extract_value(value)?;
                 set_clauses
-                    .push(quote! { .set_column(#col, rust_ef::provider::DbValue::from(#val)) });
+                    .push(quote! { .set_column(#col, #ef::provider::DbValue::from(#val)) });
             }
             LinqClause::ExecuteUpdate => {
                 if !in_update_mode {

@@ -10,6 +10,7 @@ use super::parse::parse_fields;
 pub fn expand_entity_type(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let struct_name = &input.ident;
+    let ef = crate::crate_path::ef_crate_path();
 
     let table_args = match extract_table_args(&input.attrs) {
         Ok(args) => args,
@@ -55,7 +56,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         }
     };
 
-    let ctx = match parse_fields(struct_name, &table_name, fields) {
+    let ctx = match parse_fields(struct_name, &table_name, fields, &ef) {
         Ok(ctx) => ctx,
         Err(e) => return e.to_compile_error().into(),
     };
@@ -67,6 +68,7 @@ pub fn expand_entity_type(input: TokenStream) -> TokenStream {
         is_view,
         is_keyless,
         table_comment,
+        &ef,
     );
     TokenStream::from(expanded)
 }

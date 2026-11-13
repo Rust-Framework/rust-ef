@@ -16,6 +16,15 @@ proc-macro = true
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+# MACRO-1: resolve the real dependency name of `rust-ef` (renamed or not).
+proc-macro-crate = "3.5"
+
+[dev-dependencies]
+# MACRO-1 regression: the macros must work when the dependency is renamed. This
+# dev-dependency is intentionally renamed (`ef`) so `tests/rename.rs` reproduces
+# Travel's `ef = { package = "rust-ef" }` setup without the
+# `extern crate ef as rust_ef;` shim.
+ef = { package = "rust-ef", path = "../core" }
 
 [features]
 default = []

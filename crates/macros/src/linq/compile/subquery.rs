@@ -70,6 +70,7 @@ fn compile_subquery_parts(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,
     kind: SubqueryKind,
+    ef: &TokenStream2,
 ) -> syn::Result<(TokenStream2, TokenStream2, TokenStream2)> {
     // Extract navigation field from receiver (e.g. `b.posts` → Blog, "posts")
     let nav_ref = extract_field_ref(ctx, &call.receiver)?;
@@ -107,12 +108,12 @@ fn compile_subquery_parts(
 
     // Compile the predicate body in the related entity's context
     let sub_ctx = LinqCtx::single(&related_entity, Some(&param));
-    let predicate_expr = compile_bool_expr(&sub_ctx, &closure.body)?;
+    let predicate_expr = compile_bool_expr(&sub_ctx, &closure.body, ef)?;
 
     // Wrap in NOT for `all` (all p.X = NOT EXISTS any NOT p.X)
     let predicate_bool_expr = if kind.negate_predicate() {
         quote! {
-            rust_ef::query::BoolExpr::Not(Box::new(#predicate_expr))
+            #ef::query::BoolExpr::Not(Box::new(#predicate_expr))
         }
     } else {
         predicate_expr
@@ -127,17 +128,18 @@ pub(crate) fn compile_subquery_bool(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,
     kind: SubqueryKind,
+    ef: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
-    let (nav_field, nav_related, predicate) = compile_subquery_parts(ctx, call, kind)?;
+    let (nav_field, nav_related, predicate) = compile_subquery_parts(ctx, call, kind, ef)?;
     let negated = kind.negated();
     let ctor = if negated {
-        quote! { rust_ef::query::BoolExpr::NotExists }
+        quote! { #ef::query::BoolExpr::NotExists }
     } else {
-        quote! { rust_ef::query::BoolExpr::Exists }
+        quote! { #ef::query::BoolExpr::Exists }
     };
     Ok(quote! {
         #ctor(Box::new({
-            let mut __spec = rust_ef::query::SubquerySpec::new(#nav_field, #nav_related);
+            let mut __spec = #ef::query::SubquerySpec::new(#nav_field, #nav_related);
             __spec.predicate = Some(Box::new(#predicate));
             __spec
         }))
@@ -199,17 +201,18 @@ pub(crate) fn compile_in_subquery_bool(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,
     negated: bool,
+    ef: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     let (outer_col, source_tbl, proj_col) = compile_in_subquery_parts(ctx, call)?;
     // Resolve the &'static str constants to owned Strings for the spec.
     let ctor = if negated {
-        quote! { rust_ef::query::BoolExpr::NotInSubquery }
+        quote! { #ef::query::BoolExpr::NotInSubquery }
     } else {
-        quote! { rust_ef::query::BoolExpr::InSubquery }
+        quote! { #ef::query::BoolExpr::InSubquery }
     };
     Ok(quote! {
         #ctor(Box::new(
-            rust_ef::query::InSubquerySpec::new(#outer_col, #source_tbl, #proj_col)
+            #ef::query::InSubquerySpec::new(#outer_col, #source_tbl, #proj_col)
         ))
     })
 }

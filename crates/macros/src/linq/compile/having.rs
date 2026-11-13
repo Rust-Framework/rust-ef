@@ -1,5 +1,5 @@
 //! `HAVING` expression compilation — converts `HavingExprAst` into Rust code
-//! that constructs the corresponding `rust_ef::query::HavingExpr` runtime value.
+//! that constructs the corresponding `HavingExpr` runtime value.
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
@@ -9,7 +9,7 @@ use super::super::ast::HavingExprAst;
 use super::super::context::{extract_field, extract_value, LinqCtx};
 
 /// Compiles a `HavingExprAst` into Rust code that constructs the corresponding
-/// `rust_ef::query::HavingExpr` runtime value.
+/// `HavingExpr` runtime value.
 ///
 /// Column references are resolved to `Entity::COLUMN_*` constants via
 /// `extract_field`, and value literals via `extract_value`. Aggregate names
@@ -17,6 +17,7 @@ use super::super::context::{extract_field, extract_value, LinqCtx};
 pub(crate) fn compile_having_expr(
     ast: &HavingExprAst,
     ctx: &LinqCtx<'_>,
+    ef: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     match ast {
         HavingExprAst::Compare {
@@ -30,32 +31,32 @@ pub(crate) fn compile_having_expr(
             let agg_kind = agg_kind_ident(agg);
             let op_ident = op_to_ident(op);
             Ok(quote! {
-                rust_ef::query::HavingExpr::Compare {
-                    agg: rust_ef::query::AggKind::#agg_kind,
+                #ef::query::HavingExpr::Compare {
+                    agg: #ef::query::AggKind::#agg_kind,
                     col: #col_const.to_string(),
-                    op: rust_ef::query::CompareOp::#op_ident,
-                    value: rust_ef::provider::DbValue::from(#val),
+                    op: #ef::query::CompareOp::#op_ident,
+                    value: #ef::provider::DbValue::from(#val),
                 }
             })
         }
         HavingExprAst::And(left, right) => {
-            let l = compile_having_expr(left, ctx)?;
-            let r = compile_having_expr(right, ctx)?;
+            let l = compile_having_expr(left, ctx, ef)?;
+            let r = compile_having_expr(right, ctx, ef)?;
             Ok(quote! {
-                rust_ef::query::HavingExpr::And(Box::new(#l), Box::new(#r))
+                #ef::query::HavingExpr::And(Box::new(#l), Box::new(#r))
             })
         }
         HavingExprAst::Or(left, right) => {
-            let l = compile_having_expr(left, ctx)?;
-            let r = compile_having_expr(right, ctx)?;
+            let l = compile_having_expr(left, ctx, ef)?;
+            let r = compile_having_expr(right, ctx, ef)?;
             Ok(quote! {
-                rust_ef::query::HavingExpr::Or(Box::new(#l), Box::new(#r))
+                #ef::query::HavingExpr::Or(Box::new(#l), Box::new(#r))
             })
         }
         HavingExprAst::Not(inner) => {
-            let i = compile_having_expr(inner, ctx)?;
+            let i = compile_having_expr(inner, ctx, ef)?;
             Ok(quote! {
-                rust_ef::query::HavingExpr::Not(Box::new(#i))
+                #ef::query::HavingExpr::Not(Box::new(#i))
             })
         }
         HavingExprAst::CompareAgg {
@@ -71,11 +72,11 @@ pub(crate) fn compile_having_expr(
             let right_agg_kind = agg_kind_ident(right_agg);
             let op_ident = op_to_ident(op);
             Ok(quote! {
-                rust_ef::query::HavingExpr::CompareAgg {
-                    left_agg: rust_ef::query::AggKind::#left_agg_kind,
+                #ef::query::HavingExpr::CompareAgg {
+                    left_agg: #ef::query::AggKind::#left_agg_kind,
                     left_col: #left_col_const.to_string(),
-                    op: rust_ef::query::CompareOp::#op_ident,
-                    right_agg: rust_ef::query::AggKind::#right_agg_kind,
+                    op: #ef::query::CompareOp::#op_ident,
+                    right_agg: #ef::query::AggKind::#right_agg_kind,
                     right_col: #right_col_const.to_string(),
                 }
             })

@@ -246,17 +246,20 @@ pub(crate) fn extract_sequence_name(attrs: &[syn::Attribute]) -> Option<String> 
     None
 }
 
-pub(crate) fn extract_on_delete(attrs: &[syn::Attribute]) -> proc_macro2::TokenStream {
+pub(crate) fn extract_on_delete(
+    attrs: &[syn::Attribute],
+    ef: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
     for attr in attrs {
         if attr.path().is_ident("on_delete") {
             let tokens = &attr.meta;
             if let syn::Meta::List(list) = tokens {
                 let behavior: String = list.tokens.to_string().trim().to_string();
                 return match behavior.as_str() {
-                    "Cascade" => quote! { Some(rust_ef::relations::DeleteBehavior::Cascade) },
-                    "Restrict" => quote! { Some(rust_ef::relations::DeleteBehavior::Restrict) },
-                    "SetNull" => quote! { Some(rust_ef::relations::DeleteBehavior::SetNull) },
-                    "NoAction" => quote! { Some(rust_ef::relations::DeleteBehavior::NoAction) },
+                    "Cascade" => quote! { Some(#ef::relations::DeleteBehavior::Cascade) },
+                    "Restrict" => quote! { Some(#ef::relations::DeleteBehavior::Restrict) },
+                    "SetNull" => quote! { Some(#ef::relations::DeleteBehavior::SetNull) },
+                    "NoAction" => quote! { Some(#ef::relations::DeleteBehavior::NoAction) },
                     _ => quote! { None },
                 };
             }
@@ -376,6 +379,7 @@ pub(crate) fn generate_parse_expr(
     ty: &Type,
     type_str: &str,
     idx: syn::Index,
+    ef: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     // Check if it's Option<T>
     if type_str.starts_with("Option <") || type_str.starts_with("Option<") {
@@ -390,7 +394,7 @@ pub(crate) fn generate_parse_expr(
                         return quote! {
                             {
                                 let v = &values[#idx];
-                                if matches!(v, rust_ef::provider::DbValue::Null) {
+                                if matches!(v, #ef::provider::DbValue::Null) {
                                     None
                                 } else {
                                     Some(#inner_parse)
