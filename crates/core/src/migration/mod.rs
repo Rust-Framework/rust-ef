@@ -5,10 +5,15 @@
 //!   - Detect added/removed/altered columns
 //!   - Generate Up/Down SQL with dialect-specific type mappings
 //!   - Maintain `__ef_migrations_history` tracking table
+//!
+//! Runtime upgrades (installed databases, model as the source of truth) use
+//! [`MigrationEngine::diff`] against an introspected [`crate::schema::DbTable`]
+//! list and [`MigrationEngine::apply_diff`], see the `live_diff` module.
 
 mod ddl_expr;
 mod dialect;
 mod diff;
+mod diff_apply;
 mod engine;
 mod engine_ops;
 mod engine_sql;
@@ -20,6 +25,7 @@ mod snapshot_io;
 mod types;
 
 pub use dialect::MigrationDialect;
+pub use diff_apply::DiffApplyResult;
 pub use engine::MigrationEngine;
 pub use history::{
     create_migration_history_table_sql, validate_migration_id, MigrationHistoryEntry,
