@@ -8,6 +8,11 @@ repository.workspace = true
 description = "Procedural macros for Rust Entity Framework"
 keywords = ["orm", "efcore", "entity-framework", "derive", "proc-macro"]
 categories = ["database", "development-tools::procedural-macro-helpers"]
+# The rename regression test needs a *renamed* dev-dependency on the core crate
+# (`ef = { package = "rust-ef", … }`), which Cargo strips from published
+# packages. Keep the test repo-only so the published crate never ships a test
+# target whose dev-dependency is missing.
+exclude = ["tests/"]
 
 [lib]
 proc-macro = true

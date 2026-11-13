@@ -45,7 +45,12 @@ fn entity_derive_resolves_renamed_crate() {
     assert_eq!(meta.table_name.as_ref(), "rename_widgets");
     // Navigation metadata + IFromRow snapshots are generated in the same
     // expansion; touching them proves those paths compiled.
-    assert_eq!(<Widget as ef::entity::IEntityType>::entity_meta().navigations.len(), 1);
+    assert_eq!(
+        <Widget as ef::entity::IEntityType>::entity_meta()
+            .navigations
+            .len(),
+        1
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
