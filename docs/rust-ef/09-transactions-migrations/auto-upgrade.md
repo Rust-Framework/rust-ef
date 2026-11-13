@@ -115,11 +115,12 @@ if !diff.is_empty() {
 | `rebuilds: Vec<TableRebuild>` | SQLite 将重建的表：拷贝列、新列、无默认值的 NOT NULL 新列、触发器是否保留 |
 
 辅助方法：`is_empty()`、`up_sql()`、`report()`（人类可读升级报告）、`rebuild_count()`、
-`into_migration(id, dialect)`（转成带 `__ef_migrations_history` 记录的版本化 `Migration`，供已有 `apply` 流程使用）。
+`into_migration(id, dialect)`（转成带 `__ef_migrations_history` 记录的版本化 `Migration`，供已有 `apply` 流程使用；
+**运行时 diff 没有自动 down**，对产物调用 `revert()` 会返回 typed error，需从备份恢复或另写带 down 的版本化迁移）。
 
 **为什么 `diff` 不直接返回 `Migration`**：`Migration { id, description, up_sql, down_sql }` 是公开结构体，
 外部代码大量用结构体字面量构造；在 2.3.0（minor）给它加 `warnings` 字段是破坏性变更。运行时差分也没有
-版本化 id 和可靠 Down，因此用独立的 `MigrationDiff` 类型（只想走版本化流程时用 `into_migration`）。
+版本化 id 和可靠 Down，因此用独立的 `MigrationDiff` 类型（只想走版本化流程时用 `into_migration`，其 `down` 不可执行）。
 
 ### 7.2 warnings 语义（不是「忽略」，是「明确报告」）
 
@@ -131,7 +132,9 @@ if !diff.is_empty() {
 | `index_definition_mismatch` | 同名索引定义不同 | 版本化迁移 drop + create |
 | `unsupported_change` | 方言不支持（MySQL 部分非唯一索引、SQLite 以外的 INCLUDE 等） | 按提示调整模型或改用支持的方言 |
 | `manual_action` | 需要人工（PG 生成列改表达式、SQLite 重建会丢未声明列、触发器无法内省等） | 人工处理后再升级 |
-| `table_rebuild` | 保留值（重建信息通过 `rebuilds` 提供） | — |
+
+> SQLite 的重建信息**不在 `warnings` 里**：将重建的表明细由 `MigrationDiff::rebuilds`（`TableRebuild`）提供——
+> 拷贝列、新增列、无默认值的 NOT NULL 新列、触发器是否保留，可直接用于升级报告。
 
 ### 7.3 安全策略
 
@@ -151,7 +154,7 @@ if !diff.is_empty() {
 |---|---|
 | 安装器/升级自检、明确只做加法（加列/索引/约束） | `diff` + `apply_diff`（无需迁移文件） |
 | 删除列/表、重命名、数据回填、需要历史记录 | 版本化迁移（1–3 节）；可先 `diff` 生成 SQL 参考 |
-| 需要 `__ef_migrations_history` 记录 | `diff.into_migration("Upgrade_2026", dialect)` 后走 `apply` |
+| 需要 `__ef_migrations_history` 记录 | `diff.into_migration("Upgrade_2026", dialect)` 后走 `apply`（产物的 `down` 不可执行，不能 `revert`；回退靠备份或另写版本化迁移） |
 
 > 运行时差分不写 `__ef_migrations_history`；`apply_diff` 重复执行需要重新 diff（天然幂等：diff 为空即无操作）。
 
