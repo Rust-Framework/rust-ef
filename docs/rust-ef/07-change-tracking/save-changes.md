@@ -37,11 +37,14 @@ match ctx.save_changes().await {
 
 ## 拦截器钩子
 
-`save_changes()` 在事务前后触发拦截器：
+`save_changes()` 在事务前后触发拦截器（全部带默认空实现）：
 
-1. `on_saving` —— 事务开始前（可验证、可中止）
-2. `on_saved` —— 事务提交成功后（可记录审计日志）
-3. `on_save_failed` —— 事务失败后（可记录失败原因）
+1. `on_saving_mut` —— 事务开始前、change detection 之前，可拿 `&mut` 实体写服务端字段（随本次 save 的事务提交）
+2. `on_saving` —— 事务开始前，只读快照（可验证、可中止）
+3. `on_saved` —— 事务提交成功后（可记录审计日志）
+4. `on_save_failed` —— 事务失败后（可记录失败原因）
+
+详见 [SaveChanges 拦截器](../10-di-interceptors/save-changes-interceptors.md)。
 
 ## 设计要点
 

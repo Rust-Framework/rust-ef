@@ -1,10 +1,51 @@
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
+use sqlx_core::error::ErrorKind;
 use sqlx_core::executor::Executor;
 use sqlx_core::raw_sql::raw_sql;
 use sqlx_core::row::Row;
 use sqlx_mysql::MySql;
+
+/// Maps a `sqlx` error to a typed [`EFError`].
+///
+/// Duplicate-key errors (`ER_DUP_ENTRY` / `ER_DUP_KEY` / `ER_DUP_UNIQUE`) are
+/// promoted to [`EFError::UniqueViolation`]; `sqlx` normalizes them to
+/// [`ErrorKind::UniqueViolation`]. The table and index name are parsed from the
+/// driver message (`Duplicate entry '…' for key 'table.index'`), which is the
+/// only place MySQL exposes them through `sqlx`.
+fn map_mysql_error(e: sqlx_core::Error, context: &str) -> EFError {
+    if let sqlx_core::Error::Database(db) = &e {
+        if db.kind() == ErrorKind::UniqueViolation {
+            let (table, constraint) = parse_duplicate_key(db.message());
+            return EFError::UniqueViolation { constraint, table };
+        }
+    }
+    EFError::query(format!("{context}: {e}"))
+}
+
+/// Parses `(table, constraint)` from a MySQL duplicate-entry message.
+///
+/// `"Duplicate entry '1' for key 'order_record.ux_order_tenant'"` yields
+/// `(Some("order_record"), Some("ux_order_tenant"))`. `ER_DUP_ENTRY` reports
+/// only the key name in some versions, in which case the table is `None`.
+fn parse_duplicate_key(message: &str) -> (Option<String>, Option<String>) {
+    const MARKER: &str = "for key '";
+    let Some(start) = message.find(MARKER) else {
+        return (None, None);
+    };
+    let rest = &message[start + MARKER.len()..];
+    let Some(end) = rest.find('\'') else {
+        return (None, None);
+    };
+    let key = &rest[..end];
+    match key.split_once('.') {
+        Some((table, constraint)) if !table.is_empty() && !constraint.is_empty() => {
+            (Some(table.to_string()), Some(constraint.to_string()))
+        }
+        _ => (None, Some(key.to_string())),
+    }
+}
 
 pub struct MySqlConnection {
     conn: Option<sqlx_core::pool::PoolConnection<MySql>>,
@@ -55,7 +96,7 @@ impl MySqlConnection {
         let result = conn
             .execute(raw_sql(sqlx_core::sql_str::AssertSqlSafe(sql)))
             .await
-            .map_err(|e| EFError::query(format!("Execution error: {}", e)))?;
+            .map_err(|e| map_mysql_error(e, "Execution error"))?;
         Ok(result.rows_affected())
     }
 }
@@ -71,7 +112,7 @@ impl IAsyncConnection for MySqlConnection {
         let result = crate::type_conversion::build_mysql_query(sql, params)
             .execute(&mut **conn)
             .await
-            .map_err(|e| EFError::query(format!("Execution error: {}", e)))?;
+            .map_err(|e| map_mysql_error(e, "Execution error"))?;
         Ok(result.rows_affected())
     }
 
@@ -84,7 +125,7 @@ impl IAsyncConnection for MySqlConnection {
         let rows = crate::type_conversion::build_mysql_query(sql, params)
             .fetch_all(&mut **conn)
             .await
-            .map_err(|e| EFError::query(format!("Query error: {}", e)))?;
+            .map_err(|e| map_mysql_error(e, "Query error"))?;
 
         if rows.is_empty() {
             return Ok(Vec::new());
@@ -161,5 +202,34 @@ impl IAsyncConnection for MySqlConnection {
             // it, and MySQL rolls back any open transaction on disconnect.
             let _ = conn.detach();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_duplicate_key;
+
+    #[test]
+    fn parses_table_and_index_from_duplicate_entry() {
+        let (table, constraint) = parse_duplicate_key(
+            "Duplicate entry '1-acme' for key 'order_record.ux_order_tenant_request'",
+        );
+        assert_eq!(table.as_deref(), Some("order_record"));
+        assert_eq!(constraint.as_deref(), Some("ux_order_tenant_request"));
+    }
+
+    #[test]
+    fn parses_primary_key_duplicate_without_table() {
+        let (table, constraint) = parse_duplicate_key("Duplicate entry '42' for key 'PRIMARY'");
+        assert_eq!(table, None);
+        assert_eq!(constraint.as_deref(), Some("PRIMARY"));
+    }
+
+    #[test]
+    fn unrelated_message_yields_none() {
+        assert_eq!(
+            parse_duplicate_key("Table 'db.missing' doesn't exist"),
+            (None, None)
+        );
     }
 }

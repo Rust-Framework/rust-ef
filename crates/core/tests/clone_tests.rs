@@ -132,7 +132,7 @@ async fn test_execute_update_builder_clone() {
         .query()
         .filter(linq!(|c: CloneItem| c.value > 30))
         .execute_update()
-        .set_column_internal(CloneItem::COLUMN_VALUE, 999);
+        .set_column(CloneItem::COLUMN_VALUE, 999);
     let _copy = builder.clone();
     let updated = builder.execute().await.unwrap();
     assert_eq!(updated, 2);

@@ -1,6 +1,7 @@
 //! Provider traits: `ISqlGenerator`, `IAsyncConnection`, `IDatabaseProvider`.
 
-use crate::error::EFResult;
+use crate::error::{EFError, EFResult};
+use crate::schema::DbTable;
 use async_trait::async_trait;
 
 use super::db_value::DbValue;
@@ -225,6 +226,26 @@ pub trait IDatabaseProvider: Send + Sync {
 
     /// Returns the migration dialect for this provider.
     fn migration_dialect(&self) -> crate::migration::MigrationDialect;
+
+    /// Reads the live database schema.
+    ///
+    /// Returns every user table (migration-internal tables such as
+    /// `__ef_migrations_history` are excluded) with its columns, indexes,
+    /// foreign keys, and — where the provider can report them — checks and
+    /// triggers. The shape is provider-neutral ([`DbTable`]) so callers can
+    /// diff it against a model without dispatching on the dialect.
+    ///
+    /// The default implementation reports that introspection is unsupported,
+    /// keeping third-party providers source-compatible. Existing providers
+    /// override it.
+    ///
+    /// [`DbTable`]: crate::schema::DbTable
+    async fn introspect(&self) -> EFResult<Vec<DbTable>> {
+        Err(EFError::provider(format!(
+            "database introspection is not implemented for provider '{}'",
+            self.name()
+        )))
+    }
 
     /// Sets the slow query threshold for all connections from this provider.
     ///

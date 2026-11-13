@@ -40,7 +40,7 @@
 | EF Core API | rust-ef 等价 | 状态 | 说明 |
 |---|---|---|---|
 | `IsRequired()` | `#[required]` / `property_named(...).is_required()` | ✅ | |
-| `IsNullable()` | `property_named(...).is_optional()` | ✅ | |
+| `IsNullable()` | `property_named(...).is_nullable()`（别名 `.is_optional()`） | ✅ | |
 | `HasMaxLength(n)` | `#[max_length(n)]` / `.has_max_length(n)` | ✅ | |
 | `HasPrecision(p, s)` | `#[precision(p, s)]` / `.has_precision(p, s)` | ✅ | Decimal → `DECIMAL(p,s)` / `NUMERIC(p,s)`；时间类型 → `DATETIME(p)` / `TIMESTAMP(p)` |
 | `HasColumnType("...")` | `#[column_type("...")]` / `.has_column_type("...")` | ✅ | 原样输出（如 `JSON`、`MEDIUMTEXT`、`ENUM(...)`） |

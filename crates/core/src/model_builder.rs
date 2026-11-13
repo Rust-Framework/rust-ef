@@ -876,6 +876,15 @@ impl<'a, T, V> PropertyBuilder<'a, T, V> {
         self
     }
 
+    /// Alias of [`Self::is_optional`] (EF Core's `IsNullable` spelling).
+    ///
+    /// Explicitly overrides the `Option<T>`-based requiredness inference: a
+    /// non-`Option` field marked with this method generates a nullable column.
+    pub fn is_nullable(mut self) -> Self {
+        self.override_entry().is_required = Some(false);
+        self
+    }
+
     /// Overrides the database column type verbatim for every dialect
     /// (`HasColumnType`), e.g. `"JSON"`, `"MEDIUMTEXT"`, `"DECIMAL(12,2)"`.
     pub fn has_column_type(mut self, sql_type: &str) -> Self {

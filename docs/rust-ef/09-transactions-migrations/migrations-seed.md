@@ -28,6 +28,25 @@ ctx.set::<Blog>();
 ctx.ensure_created().await?;  // 建表后自动插入种子数据
 ```
 
+## 新装：history-free bootstrap（bootstrap → seed）
+
+空库安装不需要经过迁移历史表，也不需要调用方过滤生成的 history `INSERT` 或删除历史表：
+
+```rust
+// 一次调用：建全量 schema（表 + 索引 + 外键）+ 插入 has_data 声明的种子行
+ctx.bootstrap().await?;
+```
+
+- `DbContext::bootstrap` 是 `bootstrap → seed` 的一条路径；引擎级入口为
+  `MigrationEngine::bootstrap`（只建 schema）与 `bootstrap_with_seed`（建 schema + 种子）。
+- 不创建、不写入 `__ef_migrations_history`；安装/探测状态仍由业务自己记录（如安装标记表）。
+- 目标库必须为空：bootstrap 生成严格 `CREATE TABLE`（不是 `IF NOT EXISTS`），非空库会显式报错，
+  避免把旧 schema 与当前模型静默混合。
+- 种子行按 `bootstrap_with_seed` 的 `seeds` 顺序插入，有外键依赖时先插入主表行。
+- 与 `ensure_created` 的区别：bootstrap 包含独立索引与外键且不写历史表；`ensure_created` 只建表
+  （幂等 DDL，无独立索引/外键），适合测试与快速原型。注意 `DbContext::ensure_created` 会额外插入
+  `has_data` 种子，引擎层 `MigrationEngine::ensure_created` 才是纯 DDL；`DbContext::bootstrap` 同样会插种子。
+
 ## CLI 工具
 
 ```bash

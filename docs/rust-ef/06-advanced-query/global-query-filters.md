@@ -88,7 +88,7 @@ let all = ctx.set::<Blog>().query_ignore_filters().to_list().await?;
 
 1. **全局过滤器**隐藏 `is_deleted = true` 的行（本文档）
 2. **应用代码**手动把 `is_deleted` 设为 `true` 并调用 `detect_changes()` 标记 Modified
-3. **审计拦截器**记录保存事件（拦截器只读，不能改实体字段）
+3. **审计拦截器**记录保存事件（只读钩子 `on_saving`；要写 `updated_at` 等服务端字段用 `on_saving_mut` 或内置 `AuditInterceptor`，见 [SaveChanges 拦截器](../10-di-interceptors/save-changes-interceptors.md)）
 
 ```rust
 // 1) 注册过滤器

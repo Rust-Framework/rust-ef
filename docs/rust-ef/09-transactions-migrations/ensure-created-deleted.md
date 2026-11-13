@@ -15,7 +15,11 @@ ctx.ensure_created().await?;
 
 同时会执行 `has_data` 注册的种子数据插入。
 
-`ensure_created` 生成 `CREATE TABLE`（含列默认值、注释、计算列、CHECK 约束、MySQL 表选项），但**不生成独立的索引与外键**（与 SQLite 内联外键一样只出现在迁移脚本中）；`to_view` / `#[table(..., view)]` 映射的视图不参与建表。需要完整的 `UNIQUE` / 复合索引 / 外键约束时，使用 `MigrationEngine::generate` + `apply`。
+> **两层 API 的语义**：`DbContext::ensure_created()` = 引擎层幂等建表 DDL + `has_data` 种子；
+> `MigrationEngine::ensure_created(provider, entity_types)` 只执行建表 DDL，不碰种子数据。
+> 两层都不创建独立索引与外键。
+
+`ensure_created` 生成 `CREATE TABLE IF NOT EXISTS`（含列默认值、注释、计算列、CHECK 约束、MySQL 表选项），但**不生成独立的索引与外键**（与 SQLite 内联外键一样只出现在迁移脚本中）；`to_view` / `#[table(..., view)]` 映射的视图不参与建表。需要完整的 `UNIQUE` / 复合索引 / 外键约束时，使用空库安装路径 `ctx.bootstrap()`（history-free，见[迁移引擎与种子数据](migrations-seed.md)）或 `MigrationEngine::generate` + `apply`。
 
 ## EnsureDeleted
 

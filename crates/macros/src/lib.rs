@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod column_macro;
+mod crate_path;
 mod db_context_key;
 mod db_enum;
 mod entity;

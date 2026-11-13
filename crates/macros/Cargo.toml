@@ -8,6 +8,11 @@ repository.workspace = true
 description = "Procedural macros for Rust Entity Framework"
 keywords = ["orm", "efcore", "entity-framework", "derive", "proc-macro"]
 categories = ["database", "development-tools::procedural-macro-helpers"]
+# The rename regression test needs a *renamed* dev-dependency on the core crate
+# (`ef = { package = "rust-ef", … }`), which Cargo strips from published
+# packages. Keep the test repo-only so the published crate never ships a test
+# target whose dev-dependency is missing.
+exclude = ["tests/"]
 
 [lib]
 proc-macro = true
@@ -16,6 +21,15 @@ proc-macro = true
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+# MACRO-1: resolve the real dependency name of `rust-ef` (renamed or not).
+proc-macro-crate = "3.5"
+
+[dev-dependencies]
+# MACRO-1 regression: the macros must work when the dependency is renamed. This
+# dev-dependency is intentionally renamed (`ef`) so `tests/rename.rs` reproduces
+# Travel's `ef = { package = "rust-ef" }` setup without the
+# `extern crate ef as rust_ef;` shim.
+ef = { package = "rust-ef", path = "../core" }
 
 [features]
 default = []

@@ -141,3 +141,63 @@ jobs:
               cargo test --workspace --features chrono,uuid,decimal --test mysql_crud_tests -- --test-threads=1
               ;;
           esac
+
+  provider-smoke:
+    name: Provider smoke (${{ matrix.db }})
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres, mysql]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: rust_ef_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d rust_ef_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: rust_ef_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -ptest"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUST_EF_PG_URL: postgres://test:test@localhost:5432/rust_ef_test
+      RUST_EF_MYSQL_URL: mysql://root:test@localhost:3306/rust_ef_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Provider parity (generate -> apply -> introspect)
+        run: |
+          case "${{ matrix.db }}" in
+            sqlite)
+              cargo run --package rust-ef-providers-example -- --provider sqlite --url /tmp/rust_ef_provider_smoke.db
+              ;;
+            postgres)
+              cargo run --package rust-ef-providers-example -- --provider postgres --url "$RUST_EF_PG_URL"
+              ;;
+            mysql)
+              cargo run --package rust-ef-providers-example -- --provider mysql --url "$RUST_EF_MYSQL_URL"
+              ;;
+          esac
+      - name: Real-database introspection assertions
+        if: matrix.db != 'sqlite'
+        run: |
+          cargo test -p rust-ef --features chrono,uuid,decimal \
+            --test provider_parity_tests -- --ignored --test-threads=1
+

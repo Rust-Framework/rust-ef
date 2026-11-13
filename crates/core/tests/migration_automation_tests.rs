@@ -64,7 +64,7 @@ async fn add_column_upgrade_is_generated_and_applied() {
     .await
     .unwrap();
 
-    // Iteration 2: add `stock` (default 0) + nullable `note`.
+    // Iteration 2: add `stock` (non-Option → NOT NULL, default 0) + nullable `note`.
     let v1_snapshot = engine.create_snapshot("v1", &[WidgetV1::entity_meta()]);
     let upgrade = engine
         .generate("AddStockAndNote", &v2_model(), &Some(v1_snapshot))
@@ -72,7 +72,7 @@ async fn add_column_upgrade_is_generated_and_applied() {
     assert!(
         upgrade
             .up_sql
-            .contains("ALTER TABLE \"widgets\" ADD COLUMN \"stock\" INTEGER NULL DEFAULT 0"),
+            .contains("ALTER TABLE \"widgets\" ADD COLUMN \"stock\" INTEGER NOT NULL DEFAULT 0"),
         "expected ADD COLUMN with default:\n{}",
         upgrade.up_sql
     );

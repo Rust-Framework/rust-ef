@@ -262,6 +262,10 @@ impl IDatabaseProvider for SessionProvider {
         self.session.write.migration_dialect()
     }
 
+    async fn introspect(&self) -> EFResult<Vec<crate::schema::DbTable>> {
+        self.session.write.introspect().await
+    }
+
     #[cfg(feature = "tracing")]
     fn set_slow_query_threshold(&self, threshold: std::time::Duration) {
         self.session.write.set_slow_query_threshold(threshold);

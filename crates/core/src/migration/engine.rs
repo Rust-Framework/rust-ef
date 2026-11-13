@@ -1,4 +1,4 @@
-//! `MigrationEngine` — model snapshot diffing and migration generation.
+﻿//! `MigrationEngine` 鈥?model snapshot diffing and migration generation.
 
 use super::ddl_expr;
 use super::dialect::MigrationDialect;
@@ -14,7 +14,7 @@ use crate::error::EFResult;
 use crate::metadata::EntityTypeMeta;
 use std::collections::{HashMap, HashSet};
 
-/// The migration engine — compares old and new model snapshots to generate
+/// The migration engine 鈥?compares old and new model snapshots to generate
 /// migration SQL.
 pub struct MigrationEngine {
     pub(crate) dialect: MigrationDialect,
@@ -35,7 +35,7 @@ impl MigrationEngine {
         let current_snapshot = self.create_snapshot("__current__", current);
 
         let changes = match previous_snapshot {
-            Some(prev) => self.diff(prev, &current_snapshot),
+            Some(prev) => self.diff_snapshots(prev, &current_snapshot),
             None => self.initial_create_with_fks(&current_snapshot),
         };
 
@@ -63,7 +63,7 @@ impl MigrationEngine {
         previous_snapshot: &Option<ModelSnapshot>,
     ) -> EFResult<Migration> {
         let changes = match previous_snapshot {
-            Some(prev) => self.diff(prev, current),
+            Some(prev) => self.diff_snapshots(prev, current),
             None => self.initial_create_with_fks(current),
         };
         Ok(Migration {
@@ -266,7 +266,7 @@ impl MigrationEngine {
             .collect()
     }
 
-    fn diff(&self, old: &ModelSnapshot, new: &ModelSnapshot) -> Vec<SchemaChange> {
+    fn diff_snapshots(&self, old: &ModelSnapshot, new: &ModelSnapshot) -> Vec<SchemaChange> {
         let mut changes = Vec::new();
 
         // Build lookup maps by table name
@@ -315,7 +315,7 @@ impl MigrationEngine {
             Self::append_declared_indexes(&mut changes, et);
         }
 
-        // Tables present in both — compare columns
+        // Tables present in both 鈥?compare columns
         for name in old_names.intersection(&new_names) {
             let old_et = old_tables[name];
             let new_et = new_tables[name];
@@ -370,10 +370,10 @@ impl MigrationEngine {
                 let old_col = old_cols[col_name];
                 let new_col = new_cols[col_name];
 
-                // Index state changes → CreateIndex/DropIndex
+                // Index state changes 鈫?CreateIndex/DropIndex
                 changes.extend(diff_indexes(table, old_col, new_col));
 
-                // Structural changes (excluding index fields) → AlterColumn
+                // Structural changes (excluding index fields) 鈫?AlterColumn
                 if !columns_structurally_equal(old_col, new_col) {
                     changes.push(SchemaChange::AlterColumn {
                         table: table.clone(),

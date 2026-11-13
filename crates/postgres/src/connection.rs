@@ -1,7 +1,24 @@
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
+use tokio_postgres::error::SqlState;
 use tokio_postgres::types::ToSql;
+
+/// Maps a `tokio_postgres` error to a typed [`EFError`].
+///
+/// SQLSTATE `23505` (unique violation) is promoted to
+/// [`EFError::UniqueViolation`], using PostgreSQL's structured
+/// `table`/`constraint` fields instead of parsing the message.
+fn map_pg_error(e: tokio_postgres::Error, context: &str) -> EFError {
+    if e.code() == Some(&SqlState::UNIQUE_VIOLATION) {
+        let db_error = e.as_db_error();
+        return EFError::UniqueViolation {
+            constraint: db_error.and_then(|d| d.constraint()).map(str::to_string),
+            table: db_error.and_then(|d| d.table()).map(str::to_string),
+        };
+    }
+    EFError::query(format!("{context}: {e}"))
+}
 
 pub struct PostgresConnection {
     pub(crate) client: deadpool_postgres::Client,
@@ -42,7 +59,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .execute(sql, &refs)
             .await
-            .map_err(|e| EFError::query(format!("Execution error: {}", e)))
+            .map_err(|e| map_pg_error(e, "Execution error"))
     }
 
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<DbValue>>> {
@@ -56,7 +73,7 @@ impl IAsyncConnection for PostgresConnection {
             .client
             .query(sql, &refs)
             .await
-            .map_err(|e| EFError::query(format!("Query error: {}", e)))?;
+            .map_err(|e| map_pg_error(e, "Query error"))?;
         let columns: Vec<&tokio_postgres::Column> = if !rows.is_empty() {
             rows[0].columns().iter().collect()
         } else {
@@ -150,5 +167,15 @@ impl IAsyncConnection for PostgresConnection {
         // Take the connection out of the deadpool object; dropping it closes
         // the connection, and PostgreSQL rolls back on disconnect.
         let _ = deadpool_postgres::Client::take(this.client);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SqlState;
+
+    #[test]
+    fn unique_violation_sqlstate_is_23505() {
+        assert_eq!(SqlState::UNIQUE_VIOLATION.code(), "23505");
     }
 }

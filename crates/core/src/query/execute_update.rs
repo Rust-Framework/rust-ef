@@ -23,14 +23,49 @@ pub struct ExecuteUpdateBuilder<T: IEntityType> {
 }
 
 impl<T: IEntityType> ExecuteUpdateBuilder<T> {
-    /// Sets a named column to a DbValue.
+    /// Sets a named column to a value.
     ///
-    /// `#[doc(hidden)]` — called by `linq!(set b.views, 10; execute_update)`
-    /// expansion.
-    #[doc(hidden)]
-    pub fn set_column_internal(mut self, column: &'static str, value: impl Into<DbValue>) -> Self {
+    /// This is the public, semver-stable entry point for dynamic bulk updates;
+    /// `linq!` expands `set b.views, 10; execute_update` to `set_column` calls.
+    /// The column name is normally an entity `COLUMN_*` constant, and the
+    /// value is anything convertible into [`DbValue`].
+    ///
+    /// # Conditional update (compare-and-swap / optimistic concurrency)
+    ///
+    /// The `WHERE` guard and every `SET` assignment execute as **one**
+    /// statement, so a version/status guard and the version bump cannot be
+    /// interleaved with a concurrent writer. `execute()` returns the number of
+    /// affected rows: `0` means the guard no longer matched (the row was
+    /// changed or removed by someone else):
+    ///
+    /// ```ignore
+    /// let affected = ctx
+    ///     .set::<Order>()
+    ///     .query()
+    ///     .filter(linq!(|o: Order| o.id == order_id && o.version == expected_version))
+    ///     .execute_update()
+    ///     .set_column(Order::COLUMN_STATUS, "paid")
+    ///     .set_column(Order::COLUMN_VERSION, expected_version + 1)
+    ///     .execute()
+    ///     .await?;
+    ///
+    /// if affected == 0 {
+    ///     // lost the race: re-read the row and retry or report a conflict
+    /// }
+    /// ```
+    pub fn set_column(mut self, column: &'static str, value: impl Into<DbValue>) -> Self {
         self.updates.push((column.to_string(), value.into()));
         self
+    }
+
+    /// Deprecated alias for [`set_column`](Self::set_column), kept for one
+    /// release so existing callers keep compiling.
+    #[deprecated(
+        since = "2.3.0",
+        note = "renamed to `set_column`, which is now public and semver-stable"
+    )]
+    pub fn set_column_internal(self, column: &'static str, value: impl Into<DbValue>) -> Self {
+        self.set_column(column, value)
     }
 
     /// Returns the generated SQL.
@@ -85,7 +120,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
         if self.updates.is_empty() {
             return Err(crate::error::EFError::configuration(
                 "execute_update requires at least one set column (e.g. \
-                 `set_column_internal`)"
+                 `set_column`)"
                     .to_string(),
             ));
         }

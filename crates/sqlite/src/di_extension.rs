@@ -22,6 +22,19 @@ pub trait DbContextOptionsBuilderExt {
     ) -> &mut Self;
 
     fn use_sqlite_in_memory(&mut self) -> &mut Self;
+
+    /// Registers an in-memory SQLite provider and configures it through a
+    /// delegate (e.g. `options.foreign_keys(true)`).
+    ///
+    /// ```rust,ignore
+    /// options.use_sqlite_in_memory_with(|options| {
+    ///     options.foreign_keys(true);
+    /// });
+    /// ```
+    fn use_sqlite_in_memory_with(
+        &mut self,
+        configure: impl Fn(&mut SqliteOptions) + Send + Sync + 'static,
+    ) -> &mut Self;
 }
 
 impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder {
@@ -55,12 +68,25 @@ impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder
     }
 
     fn use_sqlite_in_memory(&mut self) -> &mut Self {
+        self.use_sqlite_in_memory_with(|_| {})
+    }
+
+    fn use_sqlite_in_memory_with(
+        &mut self,
+        configure: impl Fn(&mut SqliteOptions) + Send + Sync + 'static,
+    ) -> &mut Self {
+        let configure: Arc<dyn Fn(&mut SqliteOptions) + Send + Sync> = Arc::new(configure);
         self.set_provider_factory(
             "sqlite",
             ":memory:",
-            Arc::new(|_cs: &str| {
-                Ok(Arc::new(crate::provider::SqliteProvider::new_in_memory()?)
-                    as Arc<dyn IDatabaseProvider>)
+            Arc::new(move |_cs: &str| {
+                let mut options = SqliteOptions::new(":memory:");
+                configure(&mut options);
+                Ok(
+                    Arc::new(crate::provider::SqliteProvider::new_in_memory_with_options(
+                        &options,
+                    )?) as Arc<dyn IDatabaseProvider>,
+                )
             }),
         )
     }

@@ -172,6 +172,10 @@ impl IDatabaseProvider for MySqlProvider {
         rust_ef::migration::MigrationDialect::MySql
     }
 
+    async fn introspect(&self) -> EFResult<Vec<rust_ef::schema::DbTable>> {
+        crate::introspection::introspect_mysql_pool(&self.pool).await
+    }
+
     #[cfg(feature = "tracing")]
     fn set_slow_query_threshold(&self, threshold: std::time::Duration) {
         self.slow_query_threshold_ms.store(
