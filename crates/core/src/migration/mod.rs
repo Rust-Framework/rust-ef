@@ -27,6 +27,7 @@ mod types;
 pub use dialect::MigrationDialect;
 pub use diff_apply::DiffApplyResult;
 pub use engine::MigrationEngine;
+pub use engine_ops::{PartialMigrationFailure, SeedData};
 pub use history::{
     create_migration_history_table_sql, validate_migration_id, MigrationHistoryEntry,
     MigrationStore, MIGRATION_HISTORY_TABLE, PRODUCT_VERSION,

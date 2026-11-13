@@ -94,7 +94,11 @@ pub(super) fn parse_fields<'a>(
                 "#[auto_increment] and #[sequence] are mutually exclusive",
             ));
         }
-        let is_required = has_attr(&field.attrs, "required");
+        // Requiredness is a property of the Rust type: a field that cannot be
+        // `None` is `NOT NULL`, `Option<T>` is nullable. `#[required]` promotes
+        // an `Option<T>` to NOT NULL, and the Fluent `.is_required()` /
+        // `.is_nullable()` overrides are applied later by `ModelBuilder::build`.
+        let is_required = has_attr(&field.attrs, "required") || !is_option_type(field_type);
         let is_foreign_key = has_attr(&field.attrs, "foreign_key");
         let is_concurrency_token = has_attr(&field.attrs, "concurrency_check");
         let is_unique = has_attr(&field.attrs, "unique");
@@ -563,4 +567,22 @@ pub(super) fn parse_fields<'a>(
     }
 
     Ok(ctx)
+}
+
+/// Whether a field type is `Option<T>` (including fully-qualified spellings).
+///
+/// Only the outermost type path is inspected, so `Vec<Option<T>>` is not
+/// mistaken for an optional field.
+fn is_option_type(ty: &syn::Type) -> bool {
+    let syn::Type::Path(type_path) = ty else {
+        return false;
+    };
+    if type_path.qself.is_some() {
+        return false;
+    }
+    type_path
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Option")
 }

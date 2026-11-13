@@ -170,7 +170,7 @@ fn fluent_api_ddl_matches_derive_attributes() {
         "ignored column must not appear in DDL:\n{sql}"
     );
     assert!(
-        sql.contains("\"code\" CHAR(8) COLLATE utf8mb4_bin NULL"),
+        sql.contains("\"code\" CHAR(8) COLLATE utf8mb4_bin NOT NULL"),
         "missing fluent column type/collation:\n{sql}"
     );
     assert!(
@@ -254,7 +254,7 @@ fn postgres_ddl_covers_entity_configuration() {
         "missing fixed-length CHAR:\n{sql}"
     );
     assert!(
-        sql.contains("\"code\" TEXT COLLATE utf8mb4_bin NULL"),
+        sql.contains("\"code\" TEXT COLLATE utf8mb4_bin NOT NULL"),
         "missing column collation:\n{sql}"
     );
     // Computed column (PostgreSQL requires STORED).
@@ -323,7 +323,7 @@ fn mysql_ddl_uses_inline_comments_and_type_overrides() {
         "missing fixed-length column:\n{sql}"
     );
     assert!(
-        sql.contains("`code` TEXT COLLATE utf8mb4_bin NULL"),
+        sql.contains("`code` TEXT COLLATE utf8mb4_bin NOT NULL"),
         "missing collation:\n{sql}"
     );
     assert!(
