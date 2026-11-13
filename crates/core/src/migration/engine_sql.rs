@@ -85,6 +85,11 @@ impl MigrationEngine {
             format!("{}{}", col_type, collation)
         };
 
+        // Requiredness is resolved before DDL generation: the derive macro
+        // infers it from the field type (`Option<T>` → nullable, otherwise NOT
+        // NULL) and `ModelBuilder` applies explicit `.is_required()` /
+        // `.is_nullable()` overrides. The engine only consumes the resolved
+        // flag (primary keys are always NOT NULL).
         let nullable = if col.is_required || col.is_primary_key {
             "NOT NULL"
         } else {

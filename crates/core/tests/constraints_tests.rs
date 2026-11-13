@@ -218,13 +218,13 @@ fn postgres_generates_composite_indexes_and_constraints() {
         sql.contains("CONSTRAINT \"CK_order_records_amount\" CHECK (amount > 0)"),
         "missing column CHECK:\n{sql}"
     );
-    // Defaults.
+    // Defaults (non-`Option` fields are inferred NOT NULL).
     assert!(
-        sql.contains("\"version\" INTEGER NULL DEFAULT 1"),
+        sql.contains("\"version\" INTEGER NOT NULL DEFAULT 1"),
         "missing version default:\n{sql}"
     );
     assert!(
-        sql.contains("\"amount\" BIGINT NULL DEFAULT 0"),
+        sql.contains("\"amount\" BIGINT NOT NULL DEFAULT 0"),
         "missing amount default:\n{sql}"
     );
     // Option<String> keeps VARCHAR(n).
