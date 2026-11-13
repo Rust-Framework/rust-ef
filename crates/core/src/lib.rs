@@ -27,6 +27,7 @@
 
 pub mod cascade;
 pub mod change_executor;
+pub mod connection_string;
 pub mod db_context;
 pub mod db_set;
 pub mod dependency_graph;
