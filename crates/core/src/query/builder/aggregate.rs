@@ -261,6 +261,10 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Executes a SUM aggregation query.
     ///
+    /// SQL returns a single `NULL` cell when the input set is empty (or when
+    /// every value is `NULL`). `SUM` over an empty set is the neutral value
+    /// `0.0`, never a type-conversion error (EF-17).
+    ///
     /// `#[doc(hidden)]` — called by `linq!(sum b.views)` expansion.
     #[doc(hidden)]
     pub async fn sum_internal(self, column: &'static str) -> EFResult<f64> {
@@ -276,16 +280,13 @@ impl<T: IEntityType> QueryBuilder<T> {
         let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
-        if let Some(first) = rows.first().and_then(|r| r.first()) {
-            f64::try_from(first.clone()).map_err(|_| {
-                crate::error::EFError::type_conversion("SUM result is not f64".to_string())
-            })
-        } else {
-            Ok(0.0)
-        }
+        aggregate_f64_cell(&rows, "SUM")
     }
 
     /// Executes an AVG aggregation query.
+    ///
+    /// An empty input set yields a SQL `NULL` cell, normalized to the documented
+    /// neutral value `0.0` (same rule as `SUM`; EF-17).
     ///
     /// `#[doc(hidden)]` — called by `linq!(avg b.rating)` expansion.
     #[doc(hidden)]
@@ -302,13 +303,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
-        if let Some(first) = rows.first().and_then(|r| r.first()) {
-            f64::try_from(first.clone()).map_err(|_| {
-                crate::error::EFError::type_conversion("AVG result is not f64".to_string())
-            })
-        } else {
-            Ok(0.0)
-        }
+        aggregate_f64_cell(&rows, "AVG")
     }
 
     /// Executes a MIN aggregation query, returning the typed result.
@@ -374,6 +369,69 @@ impl<T: IEntityType> QueryBuilder<T> {
             state,
             provider: self.provider,
             _phantom: PhantomData,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Aggregate cell conversion (EF-17)
+// ---------------------------------------------------------------------------
+
+/// Converts the single cell returned by a `SUM`/`AVG` query into an `f64`.
+///
+/// SQL aggregate queries always return exactly one row. An empty input set —
+/// and also an input set whose values are all `NULL` — produces a `NULL` cell.
+/// The documented rust-ef semantics (EF-17) map that SQL `NULL` to the neutral
+/// value `0.0` for `SUM` and `AVG`:
+///
+/// - `SUM` over an empty set is `0` in SQL/EF Core.
+/// - `AVG` over an empty set is undefined in SQL (`NULL`); rust-ef exposes the
+///   same neutral value `0.0` instead of a `TypeConversion` error.
+/// - `MIN`/`MAX` keep their `Option<V>` signatures and return `None`
+///   ([`convert_aggregate_cell`]); `COUNT` counts rows and is unaffected.
+fn aggregate_f64_cell(rows: &[Vec<DbValue>], func: &str) -> EFResult<f64> {
+    match rows.first().and_then(|row| row.first()) {
+        // No rows at all (should not happen for an aggregate) or a SQL NULL
+        // cell (empty/NULL-only input set): neutral value.
+        None | Some(DbValue::Null) => Ok(0.0),
+        Some(cell) => f64::try_from(cell.clone()).map_err(|_| {
+            crate::error::EFError::type_conversion(format!("{func} result is not f64"))
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::EFError;
+
+    #[test]
+    fn success_cell_is_converted_unchanged() {
+        let rows = vec![vec![DbValue::F64(15.0)]];
+        assert_eq!(aggregate_f64_cell(&rows, "SUM").unwrap(), 15.0);
+    }
+
+    #[test]
+    fn null_cell_is_the_neutral_zero() {
+        let rows = vec![vec![DbValue::Null]];
+        assert_eq!(aggregate_f64_cell(&rows, "SUM").unwrap(), 0.0);
+        assert_eq!(aggregate_f64_cell(&rows, "AVG").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn no_rows_is_the_neutral_zero() {
+        assert_eq!(aggregate_f64_cell(&[], "SUM").unwrap(), 0.0);
+        assert_eq!(aggregate_f64_cell(&[vec![]], "AVG").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn non_numeric_cell_stays_a_type_error() {
+        let rows = vec![vec![DbValue::String("not-a-number".to_string())]];
+        match aggregate_f64_cell(&rows, "SUM") {
+            Err(EFError::TypeConversion(message, _)) => {
+                assert_eq!(message, "SUM result is not f64");
+            }
+            other => panic!("expected a TypeConversion error, got {other:?}"),
         }
     }
 }
