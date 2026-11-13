@@ -20,6 +20,7 @@ mod types;
 
 pub use dialect::MigrationDialect;
 pub use engine::MigrationEngine;
+pub use engine_ops::SeedData;
 pub use history::{
     create_migration_history_table_sql, validate_migration_id, MigrationHistoryEntry,
     MigrationStore, MIGRATION_HISTORY_TABLE, PRODUCT_VERSION,

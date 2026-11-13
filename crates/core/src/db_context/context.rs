@@ -21,7 +21,7 @@ use crate::entity::{
 use crate::error::{EFError, EFResult};
 use crate::interceptor::InterceptorPipeline;
 use crate::metadata::EntityTypeMeta;
-use crate::migration::MigrationEngine;
+use crate::migration::{MigrationEngine, SeedData};
 use crate::model_builder::ModelBuilder;
 use crate::provider::{DbValue, IDatabaseProvider, IsolationLevel};
 use crate::session::{Session, SessionConnection, SessionProvider};
@@ -211,6 +211,35 @@ impl DbContext {
             }
         }
         Ok(())
+    }
+
+    /// Bootstraps an empty database from the registered model and inserts the
+    /// rows declared with `has_data` (`bootstrap → seed`, EF-8/EF-11).
+    ///
+    /// Unlike [`Self::ensure_created`] this also creates indexes and foreign
+    /// keys, and it never creates or writes `__ef_migrations_history`. Use it
+    /// as the code-first install step for a fresh database; use
+    /// [`Self::migrate`] for later schema upgrades.
+    pub async fn bootstrap(&self) -> EFResult<()> {
+        let mut metas: Vec<EntityTypeMeta> = self.model_builder.build();
+        if metas.is_empty() {
+            metas = self.entity_metas.values().cloned().collect();
+        }
+        if metas.is_empty() {
+            return Err(self.empty_model_error("bootstrap"));
+        }
+        let seeds: Vec<SeedData<'_>> = metas
+            .iter()
+            .filter(|meta| !meta.is_view)
+            .filter_map(|meta| {
+                let rows = self.model_builder.seed_rows_for(&meta.type_id);
+                (!rows.is_empty()).then_some(SeedData { meta, rows })
+            })
+            .collect();
+        let dialect = self.provider.migration_dialect();
+        MigrationEngine::new(dialect)
+            .bootstrap_with_seed(&*self.provider, &metas, &seeds)
+            .await
     }
 
     /// Applies all pending migrations from `dir` (EF Core `Database.Migrate()`).

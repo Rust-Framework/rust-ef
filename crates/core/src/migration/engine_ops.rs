@@ -12,6 +12,16 @@ use crate::error::{EFError, EFResult};
 use crate::metadata::EntityTypeMeta;
 use crate::provider::IDatabaseProvider;
 
+/// Seed rows declared for one entity type, as produced by
+/// [`crate::model_builder::EntityTypeBuilder::has_data`].
+#[derive(Debug, Clone, Copy)]
+pub struct SeedData<'a> {
+    /// Entity metadata the rows belong to.
+    pub meta: &'a EntityTypeMeta,
+    /// Rows in insertion order.
+    pub rows: &'a [EntitySnapshot],
+}
+
 impl MigrationEngine {
     /// Ensures the migration history table exists.
     pub async fn ensure_history_table(&self, provider: &dyn IDatabaseProvider) -> EFResult<()> {
@@ -69,6 +79,31 @@ impl MigrationEngine {
         let changes = self.initial_create_with_fks(&snapshot);
         let sql = self.generate_bootstrap_sql(&changes);
         self.execute_script(provider, &sql).await
+    }
+
+    /// Bootstraps the schema and inserts rows declared with
+    /// [`crate::model_builder::EntityTypeBuilder::has_data`] — the
+    /// `bootstrap → seed` install path (EF-11).
+    ///
+    /// `seeds` is applied in slice order, so list principals before dependents
+    /// when the schema enforces foreign keys (an empty database has no rows to
+    /// violate them unless a seed references a later one). Views and empty
+    /// row sets are skipped.
+    pub async fn bootstrap_with_seed(
+        &self,
+        provider: &dyn IDatabaseProvider,
+        entity_types: &[EntityTypeMeta],
+        seeds: &[SeedData<'_>],
+    ) -> EFResult<()> {
+        self.bootstrap(provider, entity_types).await?;
+        for seed in seeds {
+            if seed.meta.is_view || seed.rows.is_empty() {
+                continue;
+            }
+            self.apply_seed_data(provider, seed.meta, seed.rows)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Executes a migration script with the best available atomicity.
