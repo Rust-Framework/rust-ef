@@ -23,6 +23,7 @@ pub(crate) fn expand(input: DeriveInput) -> TokenStream {
 
 fn expand_inner(input: DeriveInput) -> syn::Result<TokenStream> {
     let ident = input.ident;
+    let ef = crate::crate_path::ef_crate_path();
     let data = match input.data {
         Data::Enum(data) => data,
         _ => {
@@ -50,7 +51,7 @@ fn expand_inner(input: DeriveInput) -> syn::Result<TokenStream> {
     }
 
     Ok(quote! {
-        impl ::rust_ef::di::IDbContextKey for #ident {
+        impl #ef::di::IDbContextKey for #ident {
             fn name(&self) -> &str {
                 match self {
                     #(#arms),*
@@ -58,9 +59,9 @@ fn expand_inner(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
-        impl ::core::convert::From<#ident> for ::rust_ef::di::ServiceKey {
+        impl ::core::convert::From<#ident> for #ef::di::ServiceKey {
             fn from(value: #ident) -> Self {
-                ::rust_ef::di::ServiceKey::new(value)
+                #ef::di::ServiceKey::new(value)
             }
         }
     })

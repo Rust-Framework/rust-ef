@@ -15,6 +15,7 @@ pub(super) fn generate_impls(
     is_view: bool,
     is_keyless: bool,
     table_comment: Option<String>,
+    ef: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     let struct_name = ctx.struct_name;
     let type_name_str = &ctx.struct_name_str;
@@ -30,7 +31,7 @@ pub(super) fn generate_impls(
     for (idx, (field_name, field_type)) in ctx.from_row_fields.iter().enumerate() {
         let idx_lit = syn::Index::from(idx);
         let type_str = quote!(#field_type).to_string();
-        let parse_expr = generate_parse_expr(field_type, &type_str, idx_lit);
+        let parse_expr = generate_parse_expr(field_type, &type_str, idx_lit, ef);
         from_row_assignments.push(quote! {
             #field_name: #parse_expr,
         });
@@ -109,7 +110,7 @@ pub(super) fn generate_impls(
     for (field_name, _field_type) in &ctx.from_row_fields {
         let field_name_str = field_name.to_string();
         snapshot_entries.push(quote! {
-            (#field_name_str, rust_ef::provider::DbValue::from(self.#field_name.clone())),
+            (#field_name_str, #ef::provider::DbValue::from(self.#field_name.clone())),
         });
     }
 
@@ -138,9 +139,9 @@ pub(super) fn generate_impls(
     let lazy_init_arms = &ctx.lazy_init_arms;
 
     quote! {
-        impl rust_ef::entity::IEntityType for #struct_name {
-            fn entity_meta() -> rust_ef::metadata::EntityTypeMeta {
-                rust_ef::metadata::EntityTypeMeta {
+        impl #ef::entity::IEntityType for #struct_name {
+            fn entity_meta() -> #ef::metadata::EntityTypeMeta {
+                #ef::metadata::EntityTypeMeta {
                     type_id: std::any::TypeId::of::<Self>(),
                     type_name: std::borrow::Cow::Borrowed(#type_name_str),
                     table_name: std::borrow::Cow::Borrowed(#table_name),
@@ -158,7 +159,7 @@ pub(super) fn generate_impls(
                         #(#foreign_key_builders,)*
                     ],
                     checks: vec![],
-                    table_options: rust_ef::metadata::TableOptions::default(),
+                    table_options: #ef::metadata::TableOptions::default(),
                     is_view: #is_view,
                     is_keyless: #is_keyless,
                     comment: #table_comment_lit,
@@ -196,11 +197,11 @@ pub(super) fn generate_impls(
             }
         }
 
-        impl rust_ef::entity::IGetKeyValues for #struct_name {
-            fn key_values(&self) -> rust_ef::entity_snapshot::EntitySnapshot {
-                rust_ef::entity_snapshot::EntitySnapshot::new(vec![
+        impl #ef::entity::IGetKeyValues for #struct_name {
+            fn key_values(&self) -> #ef::entity_snapshot::EntitySnapshot {
+                #ef::entity_snapshot::EntitySnapshot::new(vec![
                     #(
-                        (stringify!(#pk_field_idents), rust_ef::provider::DbValue::from(self.#pk_field_idents.clone())),
+                        (stringify!(#pk_field_idents), #ef::provider::DbValue::from(self.#pk_field_idents.clone())),
                     )*
                 ])
             }
@@ -215,18 +216,18 @@ pub(super) fn generate_impls(
             }
         }
 
-        impl rust_ef::entity::IEntitySnapshot for #struct_name {
-            fn snapshot(&self) -> rust_ef::entity_snapshot::EntitySnapshot {
-                rust_ef::entity_snapshot::EntitySnapshot::new(vec![
+        impl #ef::entity::IEntitySnapshot for #struct_name {
+            fn snapshot(&self) -> #ef::entity_snapshot::EntitySnapshot {
+                #ef::entity_snapshot::EntitySnapshot::new(vec![
                     #(#snapshot_entries)*
                 ])
             }
         }
 
-        impl rust_ef::entity::IFromRow for #struct_name {
-            fn from_row(values: &[rust_ef::provider::DbValue]) -> rust_ef::error::EFResult<Self> {
+        impl #ef::entity::IFromRow for #struct_name {
+            fn from_row(values: &[#ef::provider::DbValue]) -> #ef::error::EFResult<Self> {
                 if values.len() < #field_count {
-                    return Err(rust_ef::error::EFError::type_conversion(
+                    return Err(#ef::error::EFError::type_conversion(
                         format!("Expected {} columns, got {}", #field_count, values.len())
                     ));
                 }
@@ -236,13 +237,13 @@ pub(super) fn generate_impls(
             }
         }
 
-        #[rust_ef::async_trait::async_trait]
-        impl rust_ef::entity::INavigationSetter for #struct_name {
+        #[#ef::async_trait::async_trait]
+        impl #ef::entity::INavigationSetter for #struct_name {
             fn apply_has_many(
                 &mut self,
                 field: &str,
-                rows: &[Vec<rust_ef::provider::DbValue>],
-            ) -> rust_ef::error::EFResult<()> {
+                rows: &[Vec<#ef::provider::DbValue>],
+            ) -> #ef::error::EFResult<()> {
                 #( #has_many_setter_arms )*
                 Ok(())
             }
@@ -250,8 +251,8 @@ pub(super) fn generate_impls(
             fn apply_reference(
                 &mut self,
                 field: &str,
-                row: &[rust_ef::provider::DbValue],
-            ) -> rust_ef::error::EFResult<()> {
+                row: &[#ef::provider::DbValue],
+            ) -> #ef::error::EFResult<()> {
                 #( #reference_setter_arms )*
                 Ok(())
             }
@@ -267,34 +268,34 @@ pub(super) fn generate_impls(
             async fn load_nested_includes(
                 entities: &mut [Self],
                 parent_navigation: &str,
-                nested: &[rust_ef::query::IncludePath],
-                provider: &dyn rust_ef::provider::IDatabaseProvider,
-                filter_map: ::core::option::Option<&std::collections::HashMap<String, rust_ef::query::CompiledFilter>>,
-            ) -> rust_ef::error::EFResult<()> {
+                nested: &[#ef::query::IncludePath],
+                provider: &dyn #ef::provider::IDatabaseProvider,
+                filter_map: ::core::option::Option<&std::collections::HashMap<String, #ef::query::CompiledFilter>>,
+            ) -> #ef::error::EFResult<()> {
                 #( #nested_loader_arms )*
                 Ok(())
             }
         }
 
-        impl rust_ef::entity::ILazyInit for #struct_name {
+        impl #ef::entity::ILazyInit for #struct_name {
             fn attach_lazy_contexts(
                 &mut self,
-                provider: std::sync::Arc<dyn rust_ef::provider::IDatabaseProvider>,
-                filter_map: ::core::option::Option<std::sync::Arc<std::collections::HashMap<String, rust_ef::query::CompiledFilter>>>,
+                provider: std::sync::Arc<dyn #ef::provider::IDatabaseProvider>,
+                filter_map: ::core::option::Option<std::sync::Arc<std::collections::HashMap<String, #ef::query::CompiledFilter>>>,
                 depth: usize,
             ) {
-                let meta = <Self as rust_ef::entity::IEntityType>::entity_meta();
-                let key_values = <Self as rust_ef::entity::IGetKeyValues>::key_values(self);
-                let snapshot = <Self as rust_ef::entity::IEntitySnapshot>::snapshot(self);
+                let meta = <Self as #ef::entity::IEntityType>::entity_meta();
+                let key_values = <Self as #ef::entity::IGetKeyValues>::key_values(self);
+                let snapshot = <Self as #ef::entity::IEntitySnapshot>::snapshot(self);
                 #( #lazy_init_arms )*
             }
         }
 
-        rust_ef::inventory::submit!({
-            rust_ef::registration::EntityRegistration {
+        #ef::inventory::submit!({
+            #ef::registration::EntityRegistration {
                 type_id: std::any::TypeId::of::<#struct_name>(),
                 type_name: stringify!(#struct_name),
-                meta_fn: <#struct_name as rust_ef::entity::IEntityType>::entity_meta,
+                meta_fn: <#struct_name as #ef::entity::IEntityType>::entity_meta,
                 context_key: #context_key_tokens,
             }
         });

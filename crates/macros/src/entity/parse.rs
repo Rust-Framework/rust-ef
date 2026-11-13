@@ -47,6 +47,7 @@ pub(super) fn parse_fields<'a>(
     struct_name: &'a syn::Ident,
     table_name: &str,
     fields: &'a syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
+    ef: &proc_macro2::TokenStream,
 ) -> syn::Result<EntityContext<'a>> {
     let struct_name_str = struct_name.to_string();
 
@@ -123,16 +124,16 @@ pub(super) fn parse_fields<'a>(
             let nav_kind = nav_info.kind;
             let nav_kind_token = match nav_kind {
                 NavigationDiscriminant::BelongsTo => {
-                    quote! { rust_ef::metadata::NavigationKind::BelongsTo }
+                    quote! { #ef::metadata::NavigationKind::BelongsTo }
                 }
                 NavigationDiscriminant::HasOne => {
-                    quote! { rust_ef::metadata::NavigationKind::HasOne }
+                    quote! { #ef::metadata::NavigationKind::HasOne }
                 }
                 NavigationDiscriminant::HasMany => {
-                    quote! { rust_ef::metadata::NavigationKind::HasMany }
+                    quote! { #ef::metadata::NavigationKind::HasMany }
                 }
                 NavigationDiscriminant::ManyToMany => {
-                    quote! { rust_ef::metadata::NavigationKind::ManyToMany }
+                    quote! { #ef::metadata::NavigationKind::ManyToMany }
                 }
             };
             let fk_field = extract_foreign_key_field_name(&field.attrs);
@@ -150,7 +151,7 @@ pub(super) fn parse_fields<'a>(
             let related_type_name = type_ident_string(inner_type);
             let fk_const =
                 syn::Ident::new(&format!("FK_{}", parent_type_name), ctx.struct_name.span());
-            let delete_behavior_tokens = extract_on_delete(&field.attrs);
+            let delete_behavior_tokens = extract_on_delete(&field.attrs, ef);
 
             ctx.navigation_builders.push(match nav_kind {
                 NavigationDiscriminant::ManyToMany => {
@@ -160,7 +161,7 @@ pub(super) fn parse_fields<'a>(
                         .expect("ManyToMany requires join type");
                     let _ = related_type_name;
                     quote! {
-                        rust_ef::metadata::NavigationMeta {
+                        #ef::metadata::NavigationMeta {
                             field_name: std::borrow::Cow::Borrowed(#field_name_str),
                             kind: #nav_kind_token,
                             related_type_id: std::any::TypeId::of::<#inner_type>(),
@@ -188,13 +189,13 @@ pub(super) fn parse_fields<'a>(
                             referenced_key_column: Some(std::borrow::Cow::Borrowed(<#inner_type>::pk_column_name())),
                             fk_row_index: 0,
                             pk_row_index: <#inner_type>::pk_column_index(),
-                            related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                            related_entity_meta: Some(<#inner_type as #ef::entity::IEntityType>::entity_meta),
                             delete_behavior: #delete_behavior_tokens,
                         }
                     }
                 }
                 NavigationDiscriminant::HasMany => quote! {
-                    rust_ef::metadata::NavigationMeta {
+                    #ef::metadata::NavigationMeta {
                         field_name: std::borrow::Cow::Borrowed(#field_name_str),
                         kind: #nav_kind_token,
                         related_type_id: std::any::TypeId::of::<#inner_type>(),
@@ -212,12 +213,12 @@ pub(super) fn parse_fields<'a>(
                         referenced_key_column: Some(std::borrow::Cow::Borrowed(#parent_pk_col)),
                         fk_row_index: <#inner_type>::fk_column_index(stringify!(#fk_const)),
                         pk_row_index: <#inner_type>::pk_column_index(),
-                        related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                        related_entity_meta: Some(<#inner_type as #ef::entity::IEntityType>::entity_meta),
                         delete_behavior: #delete_behavior_tokens,
                     }
                 },
                 NavigationDiscriminant::BelongsTo | NavigationDiscriminant::HasOne => quote! {
-                    rust_ef::metadata::NavigationMeta {
+                    #ef::metadata::NavigationMeta {
                         field_name: std::borrow::Cow::Borrowed(#field_name_str),
                         kind: #nav_kind_token,
                         related_type_id: std::any::TypeId::of::<#inner_type>(),
@@ -237,7 +238,7 @@ pub(super) fn parse_fields<'a>(
                         )),
                         fk_row_index: Self::fk_column_index(#parent_fk_col),
                         pk_row_index: <#inner_type>::pk_column_index(),
-                        related_entity_meta: Some(<#inner_type as rust_ef::entity::IEntityType>::entity_meta),
+                        related_entity_meta: Some(<#inner_type as #ef::entity::IEntityType>::entity_meta),
                         delete_behavior: #delete_behavior_tokens,
                     }
                 },
@@ -247,11 +248,11 @@ pub(super) fn parse_fields<'a>(
                 NavigationDiscriminant::HasMany | NavigationDiscriminant::ManyToMany => {
                     ctx.has_many_setter_arms.push(quote! {
                         if field == #field_name_str {
-                            let items: rust_ef::error::EFResult<Vec<#inner_type>> = rows
+                            let items: #ef::error::EFResult<Vec<#inner_type>> = rows
                                 .iter()
-                                .map(|r| <#inner_type as rust_ef::entity::IFromRow>::from_row(r))
+                                .map(|r| <#inner_type as #ef::entity::IFromRow>::from_row(r))
                                 .collect();
-                            self.#field_name = rust_ef::relations::HasMany::with(items?);
+                            self.#field_name = #ef::relations::HasMany::with(items?);
                             return Ok(());
                         }
                     });
@@ -279,12 +280,12 @@ pub(super) fn parse_fields<'a>(
                                 all_children.extend(items);
                             }
                             if !all_children.is_empty() {
-                                rust_ef::navigation_loader::load_includes(
+                                #ef::navigation_loader::load_includes(
                                     &mut all_children, nested, provider, filter_map,
                                 ).await?;
                                 for path in nested {
                                     if !path.nested.is_empty() {
-                                        <#inner_type as rust_ef::entity::INavigationSetter>::load_nested_includes(
+                                        <#inner_type as #ef::entity::INavigationSetter>::load_nested_includes(
                                             &mut all_children,
                                             &path.navigation,
                                             &path.nested,
@@ -305,8 +306,8 @@ pub(super) fn parse_fields<'a>(
                 NavigationDiscriminant::BelongsTo => {
                     ctx.reference_setter_arms.push(quote! {
                         if field == #field_name_str {
-                            self.#field_name = rust_ef::relations::BelongsTo::with(
-                                <#inner_type as rust_ef::entity::IFromRow>::from_row(row)?,
+                            self.#field_name = #ef::relations::BelongsTo::with(
+                                <#inner_type as #ef::entity::IFromRow>::from_row(row)?,
                             );
                             return Ok(());
                         }
@@ -327,12 +328,12 @@ pub(super) fn parse_fields<'a>(
                                 }
                             }
                             if !all_related.is_empty() {
-                                rust_ef::navigation_loader::load_includes(
+                                #ef::navigation_loader::load_includes(
                                     &mut all_related, nested, provider, filter_map,
                                 ).await?;
                                 for path in nested {
                                     if !path.nested.is_empty() {
-                                        <#inner_type as rust_ef::entity::INavigationSetter>::load_nested_includes(
+                                        <#inner_type as #ef::entity::INavigationSetter>::load_nested_includes(
                                             &mut all_related,
                                             &path.navigation,
                                             &path.nested,
@@ -345,7 +346,7 @@ pub(super) fn parse_fields<'a>(
                             let mut iter = all_related.into_iter();
                             for (entity, pos) in entities.iter_mut().zip(positions) {
                                 if pos.is_some() {
-                                    entity.#field_name = rust_ef::relations::BelongsTo::with(iter.next().unwrap());
+                                    entity.#field_name = #ef::relations::BelongsTo::with(iter.next().unwrap());
                                 }
                             }
                             return Ok(());
@@ -355,8 +356,8 @@ pub(super) fn parse_fields<'a>(
                 NavigationDiscriminant::HasOne => {
                     ctx.reference_setter_arms.push(quote! {
                         if field == #field_name_str {
-                            self.#field_name = rust_ef::relations::HasOne::with(
-                                <#inner_type as rust_ef::entity::IFromRow>::from_row(row)?,
+                            self.#field_name = #ef::relations::HasOne::with(
+                                <#inner_type as #ef::entity::IFromRow>::from_row(row)?,
                             );
                             return Ok(());
                         }
@@ -377,12 +378,12 @@ pub(super) fn parse_fields<'a>(
                                 }
                             }
                             if !all_related.is_empty() {
-                                rust_ef::navigation_loader::load_includes(
+                                #ef::navigation_loader::load_includes(
                                     &mut all_related, nested, provider, filter_map,
                                 ).await?;
                                 for path in nested {
                                     if !path.nested.is_empty() {
-                                        <#inner_type as rust_ef::entity::INavigationSetter>::load_nested_includes(
+                                        <#inner_type as #ef::entity::INavigationSetter>::load_nested_includes(
                                             &mut all_related,
                                             &path.navigation,
                                             &path.nested,
@@ -395,7 +396,7 @@ pub(super) fn parse_fields<'a>(
                             let mut iter = all_related.into_iter();
                             for (entity, pos) in entities.iter_mut().zip(positions) {
                                 if pos.is_some() {
-                                    entity.#field_name = rust_ef::relations::HasOne::with(iter.next().unwrap());
+                                    entity.#field_name = #ef::relations::HasOne::with(iter.next().unwrap());
                                 }
                             }
                             return Ok(());
@@ -408,7 +409,7 @@ pub(super) fn parse_fields<'a>(
             // and attaches a LazyContextImpl to the container.
             ctx.lazy_init_arms.push(quote! {
                 if let Some(nav) = meta.find_navigation(#field_name_str) {
-                    let ctx = rust_ef::lazy::LazyContextImpl::new(
+                    let ctx = #ef::lazy::LazyContextImpl::new(
                         std::sync::Arc::clone(&provider),
                         snapshot.clone(),
                         key_values.clone(),
@@ -450,7 +451,7 @@ pub(super) fn parse_fields<'a>(
                 None => (quote! { None }, false),
             };
             ctx.property_builders.push(quote! {
-                rust_ef::metadata::PropertyMeta {
+                #ef::metadata::PropertyMeta {
                     field_name: std::borrow::Cow::Borrowed(#field_name_str),
                     column_name: std::borrow::Cow::Borrowed(#column_name),
                     type_id: std::any::TypeId::of::<#field_type>(),
@@ -485,11 +486,11 @@ pub(super) fn parse_fields<'a>(
                     let target_ident = syn::Ident::new(&target, field_name.span());
                     let fk_ident = syn::Ident::new(&format!("FK_{}", target), field_name.span());
                     let col = column_name.clone();
-                    let on_delete_tokens = extract_on_delete(&field.attrs);
+                    let on_delete_tokens = extract_on_delete(&field.attrs, ef);
                     // Scalar `#[foreign_key(Target)]` now participates in DDL:
                     // it points at the target's primary key column.
                     ctx.foreign_key_builders.push(quote! {
-                        rust_ef::metadata::ForeignKeyMeta {
+                        #ef::metadata::ForeignKeyMeta {
                             name: None,
                             columns: vec![std::borrow::Cow::Borrowed(#col)],
                             referenced_table: std::borrow::Cow::Borrowed(<#target_ident>::TABLE),
@@ -498,7 +499,7 @@ pub(super) fn parse_fields<'a>(
                             )],
                             on_delete: {
                                 let behavior: ::core::option::Option<
-                                    rust_ef::relations::DeleteBehavior,
+                                    #ef::relations::DeleteBehavior,
                                 > = #on_delete_tokens;
                                 behavior.map(|b| std::borrow::Cow::Borrowed(b.to_sql_clause()))
                             },

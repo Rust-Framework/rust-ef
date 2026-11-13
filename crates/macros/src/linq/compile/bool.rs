@@ -12,57 +12,65 @@ use super::super::context::{extract_field, extract_value, is_field_expr, LinqCtx
 use super::subquery::{compile_in_subquery_bool, compile_subquery_bool, SubqueryKind};
 
 /// Compiles a boolean expression to a self-contained `BoolExpr` value.
-pub(crate) fn compile_bool_expr(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<TokenStream2> {
+pub(crate) fn compile_bool_expr(
+    ctx: &LinqCtx<'_>,
+    expr: &Expr,
+    ef: &TokenStream2,
+) -> syn::Result<TokenStream2> {
     match expr {
-        Expr::Group(g) => compile_bool_expr(ctx, &g.expr),
-        Expr::Paren(p) => compile_bool_expr(ctx, &p.expr),
+        Expr::Group(g) => compile_bool_expr(ctx, &g.expr, ef),
+        Expr::Paren(p) => compile_bool_expr(ctx, &p.expr, ef),
         Expr::Unary(ExprUnary {
             op: UnOp::Not(_),
             expr: inner,
             ..
         }) => {
-            let inner_ts = compile_bool_expr(ctx, inner)?;
+            let inner_ts = compile_bool_expr(ctx, inner, ef)?;
             Ok(quote! {
-                rust_ef::query::BoolExpr::Not(Box::new(#inner_ts))
+                #ef::query::BoolExpr::Not(Box::new(#inner_ts))
             })
         }
         Expr::Binary(b) if matches!(b.op, BinOp::And(_)) => {
-            let left = compile_bool_expr(ctx, &b.left)?;
-            let right = compile_bool_expr(ctx, &b.right)?;
+            let left = compile_bool_expr(ctx, &b.left, ef)?;
+            let right = compile_bool_expr(ctx, &b.right, ef)?;
             Ok(quote! {
-                rust_ef::query::BoolExpr::And(
+                #ef::query::BoolExpr::And(
                     Box::new(#left),
                     Box::new(#right),
                 )
             })
         }
         Expr::Binary(b) if matches!(b.op, BinOp::Or(_)) => {
-            let left = compile_bool_expr(ctx, &b.left)?;
-            let right = compile_bool_expr(ctx, &b.right)?;
+            let left = compile_bool_expr(ctx, &b.left, ef)?;
+            let right = compile_bool_expr(ctx, &b.right, ef)?;
             Ok(quote! {
-                rust_ef::query::BoolExpr::Or(
+                #ef::query::BoolExpr::Or(
                     Box::new(#left),
                     Box::new(#right),
                 )
             })
         }
-        Expr::MethodCall(call) => compile_bool_method(ctx, call),
+        Expr::MethodCall(call) => compile_bool_method(ctx, call, ef),
         Expr::Field(_) | Expr::Path(_) => {
             // Boolean field: `b.active` → `col = true`
             let column = extract_field(ctx, expr)?;
             Ok(quote! {
-                rust_ef::query::BoolExpr::Filter(
-                    rust_ef::query::FilterCondition::with_values(
-                        #column, "=", vec![rust_ef::provider::DbValue::Bool(true)],
+                #ef::query::BoolExpr::Filter(
+                    #ef::query::FilterCondition::with_values(
+                        #column, "=", vec![#ef::provider::DbValue::Bool(true)],
                     )
                 )
             })
         }
-        _ => compile_bool_comparison(ctx, expr),
+        _ => compile_bool_comparison(ctx, expr, ef),
     }
 }
 
-pub(crate) fn compile_bool_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Result<TokenStream2> {
+pub(crate) fn compile_bool_comparison(
+    ctx: &LinqCtx<'_>,
+    expr: &Expr,
+    ef: &TokenStream2,
+) -> syn::Result<TokenStream2> {
     let binary = match expr {
         Expr::Binary(b) => b,
         _ => {
@@ -92,10 +100,10 @@ pub(crate) fn compile_bool_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Re
     let value = extract_value(&binary.right)?;
 
     Ok(quote! {
-        rust_ef::query::BoolExpr::Filter(
-            rust_ef::query::FilterCondition::with_values(
+        #ef::query::BoolExpr::Filter(
+            #ef::query::FilterCondition::with_values(
                 #column, #op,
-                vec![rust_ef::provider::DbValue::from(#value)],
+                vec![#ef::provider::DbValue::from(#value)],
             )
         )
     })
@@ -105,16 +113,17 @@ pub(crate) fn compile_bool_comparison(ctx: &LinqCtx<'_>, expr: &Expr) -> syn::Re
 pub(crate) fn compile_bool_method(
     ctx: &LinqCtx<'_>,
     call: &ExprMethodCall,
+    ef: &TokenStream2,
 ) -> syn::Result<TokenStream2> {
     let method = call.method.to_string();
 
     // G5: Subquery methods — `b.posts.any(|p: Post| p.published)` etc.
     match method.as_str() {
-        "any" => return compile_subquery_bool(ctx, call, SubqueryKind::Any),
-        "none" => return compile_subquery_bool(ctx, call, SubqueryKind::None),
-        "all" => return compile_subquery_bool(ctx, call, SubqueryKind::All),
+        "any" => return compile_subquery_bool(ctx, call, SubqueryKind::Any, ef),
+        "none" => return compile_subquery_bool(ctx, call, SubqueryKind::None, ef),
+        "all" => return compile_subquery_bool(ctx, call, SubqueryKind::All, ef),
         // v1.1: IN (SELECT ...) subquery
-        "in_subquery" => return compile_in_subquery_bool(ctx, call, false),
+        "in_subquery" => return compile_in_subquery_bool(ctx, call, false, ef),
         _ => {}
     }
 
@@ -122,13 +131,13 @@ pub(crate) fn compile_bool_method(
 
     match method.as_str() {
         "is_null" if call.args.is_empty() => Ok(quote! {
-            rust_ef::query::BoolExpr::Filter(
-                rust_ef::query::FilterCondition::new(#column, "IS NULL", 0)
+            #ef::query::BoolExpr::Filter(
+                #ef::query::FilterCondition::new(#column, "IS NULL", 0)
             )
         }),
         "is_not_null" if call.args.is_empty() => Ok(quote! {
-            rust_ef::query::BoolExpr::Filter(
-                rust_ef::query::FilterCondition::new(#column, "IS NOT NULL", 0)
+            #ef::query::BoolExpr::Filter(
+                #ef::query::FilterCondition::new(#column, "IS NOT NULL", 0)
             )
         }),
         "contains" => {
@@ -143,11 +152,11 @@ pub(crate) fn compile_bool_method(
                 let column = extract_field(ctx, arg)?;
                 let values = extract_value(&call.receiver)?;
                 Ok(quote! {
-                    rust_ef::query::BoolExpr::Filter(
-                        rust_ef::query::FilterCondition::with_values(
+                    #ef::query::BoolExpr::Filter(
+                        #ef::query::FilterCondition::with_values(
                             #column, "IN",
                             (#values).into_iter()
-                                .map(rust_ef::provider::DbValue::from)
+                                .map(#ef::provider::DbValue::from)
                                 .collect::<Vec<_>>(),
                         )
                     )
@@ -155,11 +164,11 @@ pub(crate) fn compile_bool_method(
             } else {
                 let value = extract_value(arg)?;
                 Ok(quote! {
-                    rust_ef::query::BoolExpr::Filter(
-                        rust_ef::query::FilterCondition::with_values(
+                    #ef::query::BoolExpr::Filter(
+                        #ef::query::FilterCondition::with_values(
                             #column, "LIKE",
-                            vec![rust_ef::provider::DbValue::from(
-                                rust_ef::query::like_contains(#value)
+                            vec![#ef::provider::DbValue::from(
+                                #ef::query::like_contains(#value)
                             )],
                         )
                     )
@@ -172,11 +181,11 @@ pub(crate) fn compile_bool_method(
             })?;
             let value = extract_value(arg)?;
             Ok(quote! {
-                rust_ef::query::BoolExpr::Filter(
-                    rust_ef::query::FilterCondition::with_values(
+                #ef::query::BoolExpr::Filter(
+                    #ef::query::FilterCondition::with_values(
                         #column, "LIKE",
-                        vec![rust_ef::provider::DbValue::from(
-                            rust_ef::query::like_starts_with(#value)
+                        vec![#ef::provider::DbValue::from(
+                            #ef::query::like_starts_with(#value)
                         )],
                     )
                 )
@@ -188,11 +197,11 @@ pub(crate) fn compile_bool_method(
             })?;
             let value = extract_value(arg)?;
             Ok(quote! {
-                rust_ef::query::BoolExpr::Filter(
-                    rust_ef::query::FilterCondition::with_values(
+                #ef::query::BoolExpr::Filter(
+                    #ef::query::FilterCondition::with_values(
                         #column, "LIKE",
-                        vec![rust_ef::provider::DbValue::from(
-                            rust_ef::query::like_ends_with(#value)
+                        vec![#ef::provider::DbValue::from(
+                            #ef::query::like_ends_with(#value)
                         )],
                     )
                 )
@@ -208,12 +217,12 @@ pub(crate) fn compile_bool_method(
             let lo = extract_value(low)?;
             let hi = extract_value(high)?;
             Ok(quote! {
-                rust_ef::query::BoolExpr::Filter(
-                    rust_ef::query::FilterCondition::with_values(
+                #ef::query::BoolExpr::Filter(
+                    #ef::query::FilterCondition::with_values(
                         #column, "BETWEEN",
                         vec![
-                            rust_ef::provider::DbValue::from(#lo),
-                            rust_ef::provider::DbValue::from(#hi),
+                            #ef::provider::DbValue::from(#lo),
+                            #ef::provider::DbValue::from(#hi),
                         ],
                     )
                 )

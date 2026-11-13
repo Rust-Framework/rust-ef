@@ -25,6 +25,7 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields, LitStr};
 pub fn expand_db_enum(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let enum_ident = input.ident.clone();
+    let ef = crate::crate_path::ef_crate_path();
 
     let Data::Enum(data) = &input.data else {
         return syn::Error::new_spanned(&input.ident, "DbEnum can only be derived for enums")
@@ -57,7 +58,7 @@ pub fn expand_db_enum(input: TokenStream) -> TokenStream {
 
         let path = quote! { #enum_ident::#variant_ident };
         from_arms.push(quote! {
-            #path => rust_ef::provider::DbValue::String(#value.to_string()),
+            #path => #ef::provider::DbValue::String(#value.to_string()),
         });
         try_arms.push(quote! {
             #value => ::core::result::Result::Ok(#path),
@@ -72,7 +73,7 @@ pub fn expand_db_enum(input: TokenStream) -> TokenStream {
 
     let enum_name = enum_ident.to_string();
     let expanded = quote! {
-        impl ::core::convert::From<#enum_ident> for rust_ef::provider::DbValue {
+        impl ::core::convert::From<#enum_ident> for #ef::provider::DbValue {
             fn from(value: #enum_ident) -> Self {
                 match value {
                     #(#from_arms)*
@@ -80,24 +81,24 @@ pub fn expand_db_enum(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl ::core::convert::TryFrom<rust_ef::provider::DbValue> for #enum_ident {
-            type Error = rust_ef::provider::DbValueConvertError;
+        impl ::core::convert::TryFrom<#ef::provider::DbValue> for #enum_ident {
+            type Error = #ef::provider::DbValueConvertError;
 
             fn try_from(
-                value: rust_ef::provider::DbValue,
+                value: #ef::provider::DbValue,
             ) -> ::core::result::Result<Self, Self::Error> {
                 match value {
-                    rust_ef::provider::DbValue::String(s) => match s.as_str() {
+                    #ef::provider::DbValue::String(s) => match s.as_str() {
                         #(#try_arms)*
                         _ => ::core::result::Result::Err(
-                            rust_ef::provider::DbValueConvertError {
-                                source: rust_ef::provider::DbValue::String(s),
+                            #ef::provider::DbValueConvertError {
+                                source: #ef::provider::DbValue::String(s),
                                 target_type: #enum_name,
                             },
                         ),
                     },
                     other => ::core::result::Result::Err(
-                        rust_ef::provider::DbValueConvertError {
+                        #ef::provider::DbValueConvertError {
                             source: other,
                             target_type: #enum_name,
                         },
