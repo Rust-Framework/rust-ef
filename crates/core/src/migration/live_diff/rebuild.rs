@@ -63,10 +63,7 @@ pub(crate) fn plan_rebuild(
         ));
     };
     let Some(live_table) = delta.live else {
-        return RebuildOutcome::Refused(refused(
-            &table,
-            "the live table definition is missing",
-        ));
+        return RebuildOutcome::Refused(refused(&table, "the live table definition is missing"));
     };
     if et.columns.is_empty() {
         return RebuildOutcome::Refused(refused(
@@ -80,9 +77,11 @@ pub(crate) fn plan_rebuild(
         .columns
         .iter()
         .filter(|live_column| {
-            !et.columns
-                .iter()
-                .any(|model_column| model_column.column_name.eq_ignore_ascii_case(&live_column.name))
+            !et.columns.iter().any(|model_column| {
+                model_column
+                    .column_name
+                    .eq_ignore_ascii_case(&live_column.name)
+            })
         })
         .map(|live_column| live_column.name.clone())
         .collect();
@@ -103,10 +102,7 @@ pub(crate) fn plan_rebuild(
     if let Some(copy) = copy_data_sql(engine, &temporary, &table, et, live_table) {
         statements.push(copy);
     }
-    statements.push(format!(
-        "DROP TABLE {}",
-        engine.dialect.quote(&table)
-    ));
+    statements.push(format!("DROP TABLE {}", engine.dialect.quote(&table)));
     statements.push(format!(
         "ALTER TABLE {} RENAME TO {}",
         engine.dialect.quote(&temporary),
@@ -128,9 +124,10 @@ pub(crate) fn plan_rebuild(
         .collect();
     for live_index in &live_table.indexes {
         if is_implicit_index(live_index, &live_primary_key)
-            || model_indexes
-                .iter()
-                .any(|index| index_matches(index, live_index) || index.name.eq_ignore_ascii_case(&live_index.name))
+            || model_indexes.iter().any(|index| {
+                index_matches(index, live_index)
+                    || index.name.eq_ignore_ascii_case(&live_index.name)
+            })
         {
             continue;
         }
@@ -161,18 +158,17 @@ pub(crate) fn plan_rebuild(
         }
     };
 
-    let columns_copied: Vec<String> = et
-        .columns
-        .iter()
-        .filter(|column| {
-            column.computed_sql.is_none()
-                && live_table
-                    .columns
-                    .iter()
-                    .any(|live_column| live_column.name.eq_ignore_ascii_case(&column.column_name))
-        })
-        .map(|column| column.column_name.clone())
-        .collect();
+    let columns_copied: Vec<String> =
+        et.columns
+            .iter()
+            .filter(|column| {
+                column.computed_sql.is_none()
+                    && live_table.columns.iter().any(|live_column| {
+                        live_column.name.eq_ignore_ascii_case(&column.column_name)
+                    })
+            })
+            .map(|column| column.column_name.clone())
+            .collect();
     let new_columns: Vec<String> = et
         .columns
         .iter()
@@ -295,7 +291,11 @@ fn create_table_sql(engine: &MigrationEngine, table: &str, et: &SnapshotEntityTy
         parts.push(engine.composite_fk_clause(foreign_key));
     }
 
-    format!("CREATE TABLE {} (\n    {}\n)", q(table), parts.join(",\n    "))
+    format!(
+        "CREATE TABLE {} (\n    {}\n)",
+        q(table),
+        parts.join(",\n    ")
+    )
 }
 
 /// `INSERT INTO shadow (common columns) SELECT common columns FROM old`.
@@ -307,18 +307,17 @@ fn copy_data_sql(
     live_table: &DbTable,
 ) -> Option<String> {
     let q = |identifier: &str| engine.dialect.quote(identifier);
-    let columns: Vec<String> = et
-        .columns
-        .iter()
-        .filter(|column| {
-            column.computed_sql.is_none()
-                && live_table
-                    .columns
-                    .iter()
-                    .any(|live_column| live_column.name.eq_ignore_ascii_case(&column.column_name))
-        })
-        .map(|column| q(&column.column_name))
-        .collect();
+    let columns: Vec<String> =
+        et.columns
+            .iter()
+            .filter(|column| {
+                column.computed_sql.is_none()
+                    && live_table.columns.iter().any(|live_column| {
+                        live_column.name.eq_ignore_ascii_case(&column.column_name)
+                    })
+            })
+            .map(|column| q(&column.column_name))
+            .collect();
     if columns.is_empty() {
         return None;
     }

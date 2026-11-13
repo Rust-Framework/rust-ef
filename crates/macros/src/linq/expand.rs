@@ -316,8 +316,7 @@ fn expand_clauses(
                 }
                 let col = extract_field(&ctx, field)?;
                 let val = extract_value(value)?;
-                set_clauses
-                    .push(quote! { .set_column(#col, #ef::provider::DbValue::from(#val)) });
+                set_clauses.push(quote! { .set_column(#col, #ef::provider::DbValue::from(#val)) });
             }
             LinqClause::ExecuteUpdate => {
                 if !in_update_mode {

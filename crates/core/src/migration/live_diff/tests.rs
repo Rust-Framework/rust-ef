@@ -1,15 +1,13 @@
-﻿//! Unit tests for runtime model diffing.
+//! Unit tests for runtime model diffing.
 
-use crate::schema::{
-    DbCheck, DbColumn, DbForeignKey, DbIndex, DbIndexColumn, DbTable,
-};
+use crate::schema::{DbCheck, DbColumn, DbForeignKey, DbIndex, DbIndexColumn, DbTable};
 
+use super::{MigrationDiff, MigrationEngine, WarningKind, WarningSeverity};
 use crate::migration::types::{
     ModelSnapshot, SnapshotCheck, SnapshotColumn, SnapshotEntityType, SnapshotForeignKey,
     SnapshotIndex, SnapshotIndexColumn,
 };
 use crate::migration::MigrationDialect;
-use super::{MigrationDiff, MigrationEngine, WarningKind, WarningSeverity};
 
 // ---------------------------------------------------------------------------
 // Builders
@@ -94,11 +92,7 @@ fn creates_missing_table_with_unique_index() {
     name.is_unique = true;
     items.columns.push(name);
 
-    let diff = diff(
-        MigrationDialect::Sqlite,
-        &model(vec![items]),
-        &[],
-    );
+    let diff = diff(MigrationDialect::Sqlite, &model(vec![items]), &[]);
 
     let sql = diff.up_sql();
     assert!(
@@ -113,7 +107,11 @@ fn creates_missing_table_with_unique_index() {
         !sql.contains("__ef_migrations_history"),
         "runtime diff must not write migration history:\n{sql}"
     );
-    assert!(diff.warnings.is_empty(), "unexpected warnings: {:?}", diff.warnings);
+    assert!(
+        diff.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        diff.warnings
+    );
     assert!(!diff.is_empty());
 }
 
@@ -160,15 +158,8 @@ fn adds_column_and_index_to_existing_table() {
     items.columns.push(stock);
     items.columns.push(column("note", "String"));
 
-    let live = vec![live_table(
-        "items",
-        vec![db_primary_key("id", "INTEGER")],
-    )];
-    let diff = diff(
-        MigrationDialect::Sqlite,
-        &model(vec![items]),
-        &live,
-    );
+    let live = vec![live_table("items", vec![db_primary_key("id", "INTEGER")])];
+    let diff = diff(MigrationDialect::Sqlite, &model(vec![items]), &live);
 
     let sql = diff.up_sql();
     assert!(
@@ -186,7 +177,10 @@ fn adds_column_and_index_to_existing_table() {
     // Columns are added before the index that covers them.
     let stock_position = sql.find("ADD COLUMN \"stock\"").unwrap();
     let index_position = sql.find("ix_items_stock").unwrap();
-    assert!(stock_position < index_position, "index must follow column:\n{sql}");
+    assert!(
+        stock_position < index_position,
+        "index must follow column:\n{sql}"
+    );
     assert!(
         !has_warning(&diff, WarningKind::NotNullColumnWithoutDefault),
         "column has a default, no warning expected: {:?}",
@@ -316,7 +310,10 @@ fn sqlite_check_constraint_rebuilds_existing_table() {
         ),
         "missing data copy:\n{sql}"
     );
-    assert!(sql.contains("DROP TABLE \"widgets\""), "missing drop:\n{sql}");
+    assert!(
+        sql.contains("DROP TABLE \"widgets\""),
+        "missing drop:\n{sql}"
+    );
     assert!(
         sql.contains("ALTER TABLE \"__ef_rebuild_widgets\" RENAME TO \"widgets\""),
         "missing rename:\n{sql}"
@@ -493,11 +490,7 @@ fn postgres_adds_check_only_when_checks_were_introspected() {
     // `checks: None` = the provider could not introspect CHECK constraints.
     let mut live = live_table("widgets", vec![db_primary_key("id", "integer")]);
     live.checks = None;
-    let diff = diff(
-        MigrationDialect::Postgres,
-        &model(vec![widgets]),
-        &[live],
-    );
+    let diff = diff(MigrationDialect::Postgres, &model(vec![widgets]), &[live]);
 
     assert!(
         has_warning(&diff, WarningKind::ConstraintNotIntrospected),
@@ -524,18 +517,18 @@ fn postgres_skips_check_already_present() {
         name: Some("ck_widgets_stock".to_string()),
         expression: "stock >= 0".to_string(),
     }]);
-    let diff = diff(
-        MigrationDialect::Postgres,
-        &model(vec![widgets]),
-        &[live],
-    );
+    let diff = diff(MigrationDialect::Postgres, &model(vec![widgets]), &[live]);
 
     assert!(
         diff.is_empty(),
         "already-present check must not be re-added:\n{}",
         diff.up_sql()
     );
-    assert!(diff.warnings.is_empty(), "unexpected warnings: {:?}", diff.warnings);
+    assert!(
+        diff.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        diff.warnings
+    );
 }
 
 #[test]
@@ -587,7 +580,11 @@ fn extra_live_objects_are_reported_not_dropped() {
 
     let diff = diff(MigrationDialect::Sqlite, &model(vec![posts]), &live);
 
-    assert!(diff.is_empty(), "no statements expected:\n{}", diff.up_sql());
+    assert!(
+        diff.is_empty(),
+        "no statements expected:\n{}",
+        diff.up_sql()
+    );
     let skipped = diff
         .warnings
         .iter()
@@ -625,7 +622,11 @@ fn matching_schema_is_a_no_op() {
     let diff = diff(MigrationDialect::Sqlite, &model(vec![items]), &[live_items]);
 
     assert!(diff.is_empty(), "unexpected statements:\n{}", diff.up_sql());
-    assert!(diff.warnings.is_empty(), "unexpected warnings: {:?}", diff.warnings);
+    assert!(
+        diff.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        diff.warnings
+    );
 }
 
 #[test]
@@ -677,11 +678,7 @@ fn implicit_primary_key_index_is_not_reported_as_extra() {
         is_unique: true,
         ..DbIndex::default()
     });
-    let diff = diff(
-        MigrationDialect::Sqlite,
-        &model(vec![posts]),
-        &[live_posts],
-    );
+    let diff = diff(MigrationDialect::Sqlite, &model(vec![posts]), &[live_posts]);
 
     assert!(
         diff.warnings.is_empty(),

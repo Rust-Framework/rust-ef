@@ -7,6 +7,7 @@
 
 use crate::schema::{DbCheck, DbColumn, DbIndex, DbTable};
 
+use super::{DiffWarning, WarningKind};
 use crate::migration::dialect::MigrationDialect;
 use crate::migration::diff::fk_target;
 use crate::migration::engine::MigrationEngine;
@@ -15,7 +16,6 @@ use crate::migration::types::{
     ModelSnapshot, SnapshotCheck, SnapshotColumn, SnapshotEntityType, SnapshotForeignKey,
     SnapshotIndex, SnapshotIndexColumn,
 };
-use super::{DiffWarning, WarningKind};
 
 /// Detected work for one model table.
 pub(crate) struct TableDelta<'a> {
@@ -48,26 +48,26 @@ pub(crate) fn detect<'a>(
 
     for et in model.entity_types.iter().filter(|et| !et.is_view) {
         match find_table_ci(live, &et.table_name) {
-        None => {
-            // Unsupported index definitions are reported even for tables that
-            // are created from scratch, so the operator sees them in the plan
-            // instead of only as a comment inside the generated SQL.
-            for index in &et.indexes {
-                match index_support(dialect, &et.table_name, index) {
-                    IndexSupport::IgnoredInclude(warning) | IndexSupport::Skipped(warning) => {
-                        warnings.push(warning)
+            None => {
+                // Unsupported index definitions are reported even for tables that
+                // are created from scratch, so the operator sees them in the plan
+                // instead of only as a comment inside the generated SQL.
+                for index in &et.indexes {
+                    match index_support(dialect, &et.table_name, index) {
+                        IndexSupport::IgnoredInclude(warning) | IndexSupport::Skipped(warning) => {
+                            warnings.push(warning)
+                        }
+                        IndexSupport::Supported => {}
                     }
-                    IndexSupport::Supported => {}
                 }
+                deltas.push(TableDelta {
+                    table: et.table_name.clone(),
+                    model: Some(et),
+                    live: None,
+                    changes: Vec::new(),
+                    rebuild_reasons: Vec::new(),
+                })
             }
-            deltas.push(TableDelta {
-                table: et.table_name.clone(),
-                model: Some(et),
-                live: None,
-                changes: Vec::new(),
-                rebuild_reasons: Vec::new(),
-            })
-        }
             Some(live_table) => {
                 let delta = compare_table(et, live_table, dialect, &mut warnings);
                 deltas.push(delta);
@@ -110,7 +110,8 @@ fn is_framework_table(name: &str) -> bool {
 }
 
 fn find_table_ci<'a>(live: &'a [DbTable], name: &str) -> Option<&'a DbTable> {
-    live.iter().find(|table| table.name.eq_ignore_ascii_case(name))
+    live.iter()
+        .find(|table| table.name.eq_ignore_ascii_case(name))
 }
 
 fn compare_table<'a>(
@@ -257,7 +258,8 @@ fn compare_columns(
     }
 
     for live_column in &live.columns {
-        if et.columns
+        if et
+            .columns
             .iter()
             .any(|c| c.column_name.eq_ignore_ascii_case(&live_column.name))
         {
@@ -313,7 +315,11 @@ fn describe_column_difference(
     if model_not_null != live.is_not_null() {
         parts.push(format!(
             "nullability {} -> {}",
-            if live.is_not_null() { "NOT NULL" } else { "NULL" },
+            if live.is_not_null() {
+                "NOT NULL"
+            } else {
+                "NULL"
+            },
             if model_not_null { "NOT NULL" } else { "NULL" }
         ));
     }
@@ -455,11 +461,7 @@ fn append_length(type_name: &str, max_length: Option<usize>) -> String {
     }
 }
 
-fn append_numeric_precision(
-    type_name: &str,
-    precision: Option<u32>,
-    scale: Option<u32>,
-) -> String {
+fn append_numeric_precision(type_name: &str, precision: Option<u32>, scale: Option<u32>) -> String {
     if type_name.contains('(') || (precision.is_none() && scale.is_none()) {
         return type_name.to_string();
     }
@@ -528,11 +530,7 @@ enum IndexSupport {
     Skipped(DiffWarning),
 }
 
-fn index_support(
-    dialect: MigrationDialect,
-    table: &str,
-    index: &SnapshotIndex,
-) -> IndexSupport {
+fn index_support(dialect: MigrationDialect, table: &str, index: &SnapshotIndex) -> IndexSupport {
     if dialect == MigrationDialect::MySql && index.filter.is_some() && !index.is_unique {
         return IndexSupport::Skipped(DiffWarning::warning(
             WarningKind::UnsupportedChange,
@@ -685,7 +683,11 @@ fn normalize_index_part(value: &str, is_expression: bool) -> String {
 /// Primary-key / automatic unique indexes are part of the table definition, not
 /// standalone indexes the model has to declare.
 pub(crate) fn is_implicit_index(index: &DbIndex, live_pk: &[String]) -> bool {
-    if index.name.to_ascii_lowercase().starts_with("sqlite_autoindex_") {
+    if index
+        .name
+        .to_ascii_lowercase()
+        .starts_with("sqlite_autoindex_")
+    {
         return true;
     }
     if index.name.eq_ignore_ascii_case("primary") {
@@ -876,7 +878,8 @@ fn fk_status(
     on_delete: Option<&str>,
 ) -> FkStatus {
     let Some((position, live_fk)) = live.foreign_keys.iter().enumerate().find(|(_, fk)| {
-        eq_ci_slices(&fk.columns, columns) && fk.referenced_table.eq_ignore_ascii_case(referenced_table)
+        eq_ci_slices(&fk.columns, columns)
+            && fk.referenced_table.eq_ignore_ascii_case(referenced_table)
     }) else {
         return FkStatus::Missing;
     };

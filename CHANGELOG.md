@@ -9,6 +9,167 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.0] — 2026-11-13 — 运行时升级闭环、安装可脚本化、错误与查询模型化
+
+> **English** · **简体中文**
+>
+> Additive release for the 2.2 public API. Two behavior changes to note:
+> EF-12 now infers `NOT NULL` from the Rust field type (`Option<T>` is nullable,
+> everything else is required) unless explicitly overridden; EF-10 changes the
+> *order* of statements in generated scripts (same semantics, dependency-safe).
+
+#### Compatibility notes (read first)
+
+- `EFError` is **not** `#[non_exhaustive]`; the new `UniqueViolation` variant makes an exhaustive
+  `match` on `EFError` a compile error — add a `_ => ...` arm when upgrading (same shape as the
+  `ConcurrencyConflict` variant added in 2.2).
+- The canonical schema DTO is now `rust_ef::schema::DbTable` (table + columns/indexes/foreign
+  keys/checks/triggers). `rust_ef_mysql::DbTable` and `rust_ef_postgres::DbTable` are kept as
+  re-exports for source compatibility, but a struct literal written against the old 2-field
+  `DbTable { name, columns }` must move to the new type.
+- `Migration` keeps its fields (struct-literal construction is not broken); runtime differences
+  use the new `MigrationDiff`, and `into_migration()` bridges it into the history-based flow.
+- `IDatabaseProvider::introspect()` is additive with a default implementation returning a typed
+  error, so third-party providers keep compiling.
+
+### English
+
+#### Added — runtime model diff and upgrades (EF-9)
+
+- **`MigrationEngine::diff` / `diff_metas`** compares the model snapshot with the
+  live schema introspected by the provider and returns
+  `MigrationDiff { statements, warnings, rebuilds }`. `apply_diff` executes it.
+- **SQLite table rebuild**: constraints SQLite cannot `ALTER` in place (composite
+  FK, CHECK, changed nullability) are applied through a shadow-table rebuild
+  (`__ef_rebuild_<table>` → copy common columns → rename → recreate
+  indexes/triggers) inside one transaction, with `PRAGMA foreign_keys` disabled
+  outside the transaction, a `foreign_key_check` before commit, and a typed
+  pre-check for new `NOT NULL` columns without defaults. A failed plan rolls back
+  completely (no half-applied schema, no leftover shadow table).
+- `rebuilds` reports the copied columns, the new columns and the triggers kept,
+  so an installer can show an upgrade report instead of guessing.
+
+#### Added — install/bootstrap without migration history (EF-8, EF-11)
+
+- **`MigrationEngine::bootstrap`** creates the full schema (tables, indexes,
+  constraints) on an empty database without creating or writing
+  `__ef_migrations_history`; `UpScriptMode` selects the script variant.
+- **Model-declared seed data**: `SeedData` + `bootstrap_with_seed` +
+  `DbContext::bootstrap()` give one install path (`bootstrap → seed`) instead of
+  the caller assembling `EntitySnapshot`s by hand.
+
+#### Added — schema introspection on every provider (EF-5)
+
+- `IDatabaseProvider::introspect()` (default implementation returns a typed
+  error for third-party providers) returns `rust_ef::schema::DbTable`;
+  `DbContext::provider().introspect()` works directly. SQLite implements it with
+  `sqlite_master` + `PRAGMA table_info/index_list/index_info`; MySQL and
+  PostgreSQL reuse their existing introspection and now sit behind the same trait.
+
+#### Added — connection and provider primitives (EF-15)
+
+- `ConnectionString` (`parse`/`build`/`validate`, percent-encoded userinfo,
+  typed port/scheme errors, PG `sslmode` / MySQL `ssl-mode` allow-lists) and
+  `ProviderKind` (`sqlite`/`mysql`/`postgres`, URL schemes, default ports,
+  migration dialect).
+
+#### Added — typed uniqueness errors (EF-2)
+
+- `EFError::UniqueViolation { constraint, table }`; SQLite (2067/1555), MySQL
+  (1062) and PostgreSQL (23505) map driver errors to it, so callers branch on a
+  variant instead of sniffing messages.
+
+#### Added — save interceptor with mutable entities, audit filler (EF-7)
+
+- `ISaveChangesInterceptor::on_saving_mut(&mut MutableSaveChangesContext)` runs
+  before change detection inside the save transaction, so an interceptor can set
+  `updated_at`/`updated_by`/`version` and have them persisted in the same
+  transaction. The read-only interceptor API is unchanged.
+- `IAuditable` + `IClock`/`SystemClock` + `IAuditActor` + `AuditInterceptor`
+  (`.track::<T>()`) — the minimal framework-side filler Travel used to hand-code.
+
+#### Added — query and materialization (EF-1, EF-3, EF-6)
+
+- `linq!` compiles `.contains()` as `IN` before extracting the receiver, so the
+  IN receiver may be any collection expression (`ids`, `self.ids`,
+  `make_ids()`, `&ids[..]`), not only a field path (EF-1).
+- `ExecuteUpdateBuilder::set_column` is public and semver-covered; the old
+  `set_column_internal` stays as a deprecated alias for one release (EF-3).
+- `IFromRow::from_row_named(&[(name, DbValue)])` materializes by column name;
+  the derive emits it and `materialize_entities_named` uses it, so reordered
+  columns/views cannot silently shift values (EF-6).
+
+#### Added — provider smoke examples and CI (EF-14)
+
+- `examples/providers` runs `generate → apply → introspect` against SQLite,
+  MySQL and PostgreSQL with one command; a CI `provider-smoke` job starts MySQL
+  and PostgreSQL services; real-database parity tests are `#[ignore]`d for local
+  runs and documented in the example README.
+
+#### Changed
+
+- **EF-12**: `#[entity]` derives requiredness from the Rust field type
+  (`Option<T>` → nullable, other scalars → `NOT NULL`); explicit
+  `#[required]`/`.is_required()`/`.is_nullable()` still win. Existing installed
+  databases are unaffected, but a previously exported snapshot diffed against a
+  re-derived model will report nullable→NOT NULL; re-export the snapshot and
+  review the first migration (see `docs/.../auto-upgrade.md`).
+- **EF-10**: generated scripts are grouped by dependency
+  (`CREATE TABLE → CREATE INDEX → ADD CONSTRAINT`, plus drop/alter sections).
+  Semantics are unchanged; MySQL no longer fails when an FK references an index
+  created later in the script.
+- **EF-13**: a partial MySQL migration failure (`PartialMigrationFailure`) lists
+  executed/failed/not-executed statements in the error, making deterministic
+  cleanup possible. MySQL DDL is still non-transactional — that is now documented
+  instead of implied.
+- **EF-4**: `SqliteOptions::foreign_keys(true)` forces `PRAGMA foreign_keys=ON`
+  on every acquired connection (same init path as WAL/busy_timeout); bundled
+  SQLite may already default to ON, this makes it explicit and build-independent.
+- Macro-generated paths now resolve the crate's real dependency name
+  (`proc-macro-crate`), so `ef = { package = "rust-ef" }` works without
+  `extern crate ef as rust_ef;` (MACRO-1).
+
+#### Docs
+
+- `auto-upgrade.md` (runtime diff/bootstrap), `migrations-seed.md`
+  (model-declared seeds), and the provider example README (installer API map).
+
+### 简体中文
+
+#### 新增
+- **EF-9 运行时差量升级**：`MigrationEngine::diff/diff_metas`（模型 ↔ 活库 schema）→
+  `MigrationDiff{statements,warnings,rebuilds}`，`apply_diff` 执行；SQLite 用影子表重建
+  实现无法原地 ALTER 的约束（单事务、事务外 FK OFF、提交前 foreign_key_check、失败全回滚、
+  NOT NULL 无默认预检）；PG/MySQL 走原生 ALTER 并给出结构化 warnings/rebuilds。
+- **EF-8/EF-11 安装闭环**：`bootstrap` 空库建全量 schema 且不建/不写迁移历史表；
+  `SeedData` + `bootstrap_with_seed` + `DbContext::bootstrap()` 一条 `bootstrap→seed` 路径。
+- **EF-5 统一内省**：`IDatabaseProvider::introspect()`（第三方 provider 默认 typed error）
+  返回 `schema::DbTable`，`DbContext::provider().introspect()` 可直接用；SQLite 补齐实现。
+- **EF-15**：`ConnectionString`（parse/build/validate、百分号编码、typed 错误、SSL 白名单）
+  与 `ProviderKind`（URL scheme/default port/migration dialect）。
+- **EF-2**：`EFError::UniqueViolation{constraint,table}`，三方言错误码映射。
+- **EF-7 + 审计填充**：`on_saving_mut(&mut MutableSaveChangesContext)`（变更检测前、同事务）
+  + `IAuditable`/`IClock`/`IAuditActor`/`AuditInterceptor`，业务可删手写审计赋值。
+- **EF-1/EF-3/EF-6**：`contains` 的 IN 形态支持任意集合表达式；`set_column` 公开且 semver
+  覆盖（旧名 deprecated 别名保留一版）；`from_row_named` 按列名物化（防静默错位）。
+- **EF-14**：`examples/providers` 一命令跑三方言 + CI services 冒烟 + `#[ignore]` 真库测试。
+
+#### 变更（必读）
+- **EF-12 行为变更**：非 Option 标量推断为 NOT NULL；已装库不受影响，但旧快照对新模型 diff
+  会报「可空→NOT NULL」，请重导 `model_snapshot.json` 并 review 首个迁移。
+- **EF-10**：生成脚本按依赖分段（语义不变；MySQL FK 引用索引不再顺序失败）。
+- **EF-13**：MySQL 部分失败时 `PartialMigrationFailure` 逐条列出已执行/失败/未执行语句；
+  引擎级非原子语义改为文档固定。
+- **EF-4**：`SqliteOptions::foreign_keys(true)` 显式打开连接级 FK（与 WAL 同一 acquire 路径）。
+- **MACRO-1**：宏展开按真实依赖名解析，`ef = { package = "rust-ef" }` 改名后无需 extern 垫片。
+
+#### 兼容性说明
+- `EFError` 未加 `#[non_exhaustive]`，新增 `UniqueViolation` 变体对下游穷举 `match` 是
+  名义上的编译期破坏（与 2.2 的 `ConcurrencyConflict` 同型）；升级时补一个 `_ => ...` 分支即可。
+- `schema::DbTable/DbColumn` 为内省 DTO，新增字段对结构体字面量构造者是名义破坏；正常使用
+  introspection 的调用方不受影响。
+- `Migration` 结构体未加字段（避免破坏字面量构造）：差量结果使用新的 `MigrationDiff`。
+
 ## [2.2.0] — 2026-11-12 — 数据库级约束、EFCore 实体配置对齐与可组合条件
 
 > **English** · **简体中文**

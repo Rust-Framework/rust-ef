@@ -118,18 +118,14 @@ impl MigrationEngine {
         if foreign_keys_were_on {
             // Must happen outside the transaction: SQLite silently ignores
             // `PRAGMA foreign_keys` while a transaction is active.
-            connection
-                .execute("PRAGMA foreign_keys = OFF", &[])
-                .await?;
+            connection.execute("PRAGMA foreign_keys = OFF", &[]).await?;
         }
 
         let outcome = run_transaction(&mut *connection, diff, !diff.rebuilds.is_empty()).await;
 
         if foreign_keys_were_on {
             // Restore enforcement on the pooled connection before releasing it.
-            let _ = connection
-                .execute("PRAGMA foreign_keys = ON", &[])
-                .await;
+            let _ = connection.execute("PRAGMA foreign_keys = ON", &[]).await;
         }
         outcome
     }
@@ -179,9 +175,7 @@ async fn run_transaction(
 }
 
 async fn read_pragma_bool(connection: &mut dyn IAsyncConnection, pragma: &str) -> EFResult<bool> {
-    let rows = connection
-        .query(&format!("PRAGMA {pragma}"), &[])
-        .await?;
+    let rows = connection.query(&format!("PRAGMA {pragma}"), &[]).await?;
     let value = rows
         .first()
         .and_then(|row| row.first())

@@ -12,12 +12,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rust_ef::entity::IEntityType;
 use rust_ef::metadata::EntityTypeMeta;
-use rust_ef::migration::{
-    MigrationDiff, MigrationDialect, MigrationEngine,
-};
+use rust_ef::migration::{MigrationDialect, MigrationDiff, MigrationEngine};
 use rust_ef::model_builder::{EntityTypeBuilder, IEntityTypeConfiguration, ModelBuilder};
 use rust_ef::provider::{DbValue, IDatabaseProvider};
-use rust_ef::schema::{DbCheck, DbColumn, DbForeignKey, DbIndex, DbIndexColumn, DbTable, DbTrigger};
+use rust_ef::schema::{
+    DbCheck, DbColumn, DbForeignKey, DbIndex, DbIndexColumn, DbTable, DbTrigger,
+};
 use rust_ef::EntityType;
 use rust_ef_sqlite::SqliteProvider;
 
@@ -130,8 +130,10 @@ async fn read_sqlite_schema(provider: &dyn IDatabaseProvider) -> Vec<DbTable> {
             parts.sort_by_key(|part| part.0);
             let columns: Vec<String> = parts.iter().map(|part| part.1.clone()).collect();
             let referenced_table = parts[0].2.clone();
-            let referenced_columns: Vec<String> =
-                parts.iter().map(|part| part.3.clone().unwrap_or_default()).collect();
+            let referenced_columns: Vec<String> = parts
+                .iter()
+                .map(|part| part.3.clone().unwrap_or_default())
+                .collect();
             let on_delete = parts[0].4.clone();
             table.foreign_keys.push(DbForeignKey {
                 name: None,
@@ -193,7 +195,9 @@ fn parse_checks(create_sql: &str) -> Vec<DbCheck> {
         if !rest.starts_with('(') {
             continue;
         }
-        let open = create_sql[position..].find('(').map(|index| position + index);
+        let open = create_sql[position..]
+            .find('(')
+            .map(|index| position + index);
         let Some(open) = open else { continue };
         let mut depth = 0usize;
         let mut end = None;
@@ -332,7 +336,10 @@ async fn sqlite_upgrade_adds_column_and_index_preserving_data() {
     let initial = engine
         .generate("Initial", &[WidgetV1::entity_meta()], &None)
         .expect("generate initial");
-    engine.apply(&*provider, &initial).await.expect("apply initial");
+    engine
+        .apply(&*provider, &initial)
+        .await
+        .expect("apply initial");
 
     let mut connection = provider.get_connection().await.expect("connection");
     connection
@@ -538,7 +545,10 @@ async fn install_children_v1(provider: &dyn IDatabaseProvider) -> MigrationEngin
             &None,
         )
         .expect("generate initial");
-    engine.apply(provider, &initial).await.expect("apply initial");
+    engine
+        .apply(provider, &initial)
+        .await
+        .expect("apply initial");
     engine
 }
 
@@ -619,7 +629,9 @@ async fn sqlite_rebuild_applies_check_and_fk_preserving_data_and_triggers() {
     let children = live_children(&live);
     let checks = children.checks.as_ref().expect("checks introspected");
     assert!(
-        checks.iter().any(|check| check.expression.contains("amount >= 0")),
+        checks
+            .iter()
+            .any(|check| check.expression.contains("amount >= 0")),
         "missing CHECK: {checks:?}"
     );
     assert!(

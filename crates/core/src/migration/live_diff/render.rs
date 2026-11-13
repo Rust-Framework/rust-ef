@@ -1,4 +1,4 @@
-﻿//! Turns detected changes into an executable [`MigrationDiff`].
+//! Turns detected changes into an executable [`MigrationDiff`].
 //!
 //! Statements are rendered in a dependency-friendly order
 //! (`CREATE TABLE` → SQLite rebuilds → column changes → indexes → constraints)
@@ -12,12 +12,12 @@ use crate::schema::DbTable;
 
 use super::compare::detect;
 use super::rebuild::{plan_rebuild, RebuildOutcome};
-use crate::migration::schema_change::SchemaChange;
-use crate::migration::types::{ModelSnapshot, SnapshotEntityType};
 use super::{MigrationDiff, TableRebuild};
 use crate::migration::dialect::MigrationDialect;
 use crate::migration::engine::MigrationEngine;
 use crate::migration::history::split_sql_statements;
+use crate::migration::schema_change::SchemaChange;
+use crate::migration::types::{ModelSnapshot, SnapshotEntityType};
 
 pub(crate) fn plan(
     engine: &MigrationEngine,

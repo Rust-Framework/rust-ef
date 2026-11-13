@@ -263,11 +263,7 @@ impl MigrationDiff {
     /// which keeps the structured warnings/rebuild report. A runtime diff has no
     /// safe automatic rollback, so `down_sql` only contains an explanatory
     /// comment.
-    pub fn into_migration(
-        &self,
-        id: impl Into<String>,
-        dialect: MigrationDialect,
-    ) -> Migration {
+    pub fn into_migration(&self, id: impl Into<String>, dialect: MigrationDialect) -> Migration {
         let id = id.into();
         let mut up_sql = self.up_sql();
         up_sql.push_str(&format!(
@@ -305,11 +301,7 @@ impl MigrationEngine {
     ///
     /// Convenience wrapper over [`Self::diff`] for installers/upgrade flows
     /// that only have the registered metadata at hand.
-    pub fn diff_metas(
-        &self,
-        entity_types: &[EntityTypeMeta],
-        live: &[DbTable],
-    ) -> MigrationDiff {
+    pub fn diff_metas(&self, entity_types: &[EntityTypeMeta], live: &[DbTable]) -> MigrationDiff {
         let model = self.create_snapshot("__runtime_diff__", entity_types);
         self.diff(&model, live)
     }
