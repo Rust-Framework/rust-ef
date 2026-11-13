@@ -465,7 +465,7 @@ fn normalize_default(raw: &str) -> String {
 
 /// Indexes the model expects: column-level `has_index`/`is_unique` plus
 /// declarative indexes (composite / partial / expression / include).
-fn expected_indexes(et: &SnapshotEntityType) -> Vec<SnapshotIndex> {
+pub(crate) fn expected_indexes(et: &SnapshotEntityType) -> Vec<SnapshotIndex> {
     let mut indexes: Vec<SnapshotIndex> = Vec::new();
     for column in &et.columns {
         if !column.has_index && !column.is_unique {
@@ -559,7 +559,7 @@ fn compare_indexes(
     }
 }
 
-fn index_matches(expected: &SnapshotIndex, live: &DbIndex) -> bool {
+pub(crate) fn index_matches(expected: &SnapshotIndex, live: &DbIndex) -> bool {
     if expected.is_unique != live.is_unique {
         return false;
     }
@@ -606,7 +606,7 @@ fn normalize_index_part(value: &str, is_expression: bool) -> String {
 
 /// Primary-key / automatic unique indexes are part of the table definition, not
 /// standalone indexes the model has to declare.
-fn is_implicit_index(index: &DbIndex, live_pk: &[String]) -> bool {
+pub(crate) fn is_implicit_index(index: &DbIndex, live_pk: &[String]) -> bool {
     if index.name.to_ascii_lowercase().starts_with("sqlite_autoindex_") {
         return true;
     }

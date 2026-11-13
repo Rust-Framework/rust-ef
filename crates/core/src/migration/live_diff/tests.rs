@@ -268,7 +268,7 @@ fn postgres_adds_check_and_foreign_key_with_native_alter() {
 }
 
 #[test]
-fn sqlite_check_constraint_on_existing_table_reports_rebuild_required() {
+fn sqlite_check_constraint_rebuilds_existing_table() {
     let mut widgets = table("widgets", vec![primary_key("id", "i32")]);
     widgets.columns.push(column("stock", "i32"));
     widgets.checks.push(SnapshotCheck {
@@ -284,22 +284,197 @@ fn sqlite_check_constraint_on_existing_table_reports_rebuild_required() {
         ],
     );
     live_widgets.checks = Some(Vec::new());
+    live_widgets.triggers = Some(Vec::new());
+    let live = vec![live_widgets];
+    let diff = diff(MigrationDialect::Sqlite, &model(vec![widgets]), &live);
+
+    assert_eq!(diff.rebuild_count(), 1, "expected exactly one rebuild");
+    let rebuild = &diff.rebuilds[0];
+    assert_eq!(rebuild.table, "widgets");
+    assert!(rebuild.triggers_preserved);
+    assert_eq!(
+        rebuild.columns_copied,
+        vec!["id".to_string(), "stock".to_string()]
+    );
+    assert!(rebuild.new_columns.is_empty());
+
+    let sql = diff.up_sql();
+    assert!(
+        sql.contains("CREATE TABLE \"__ef_rebuild_widgets\" ("),
+        "missing shadow table:\n{sql}"
+    );
+    assert!(
+        sql.contains("CONSTRAINT \"ck_widgets_stock\" CHECK (stock >= 0)"),
+        "shadow table must carry the check:\n{sql}"
+    );
+    assert!(
+        sql.contains(
+            "INSERT INTO \"__ef_rebuild_widgets\" (\"id\", \"stock\") SELECT \"id\", \"stock\" FROM \"widgets\""
+        ),
+        "missing data copy:\n{sql}"
+    );
+    assert!(sql.contains("DROP TABLE \"widgets\""), "missing drop:\n{sql}");
+    assert!(
+        sql.contains("ALTER TABLE \"__ef_rebuild_widgets\" RENAME TO \"widgets\""),
+        "missing rename:\n{sql}"
+    );
+    assert!(
+        !sql.contains("ADD CONSTRAINT"),
+        "must not emit invalid SQLite SQL:\n{sql}"
+    );
+    assert!(
+        diff.warnings.is_empty(),
+        "no warnings expected: {:?}",
+        diff.warnings
+    );
+}
+
+#[test]
+fn sqlite_rebuild_refuses_to_drop_undeclared_live_columns() {
+    let mut widgets = table("widgets", vec![primary_key("id", "i32")]);
+    widgets.checks.push(SnapshotCheck {
+        name: "ck_widgets_id".to_string(),
+        expression: "id > 0".to_string(),
+    });
+
+    let mut live_widgets = live_table(
+        "widgets",
+        vec![
+            db_primary_key("id", "INTEGER"),
+            db_column("legacy_flag", "INTEGER", true),
+        ],
+    );
+    live_widgets.checks = Some(Vec::new());
+    live_widgets.triggers = Some(Vec::new());
     let live = vec![live_widgets];
     let diff = diff(MigrationDialect::Sqlite, &model(vec![widgets]), &live);
 
     assert!(
-        has_warning(&diff, WarningKind::UnsupportedChange),
-        "expected rebuild warning: {:?}",
-        diff.warnings
+        diff.is_empty(),
+        "refused rebuild must not emit statements:\n{}",
+        diff.up_sql()
     );
     assert!(
-        diff.up_sql().contains("rebuild") || diff.warnings.iter().any(|w| w.message.contains("rebuild")),
-        "warning must explain the rebuild: {:?}",
+        diff.warnings.iter().any(|warning| {
+            warning.kind == WarningKind::ManualAction && warning.message.contains("legacy_flag")
+        }),
+        "expected refusal naming the column: {:?}",
         diff.warnings
     );
+    assert_eq!(diff.rebuild_count(), 0);
+}
+
+#[test]
+fn sqlite_rebuild_recreates_triggers_and_preserves_live_indexes() {
+    let mut widgets = table("widgets", vec![primary_key("id", "i32")]);
+    widgets.checks.push(SnapshotCheck {
+        name: "ck_widgets_id".to_string(),
+        expression: "id > 0".to_string(),
+    });
+
+    let mut live_widgets = live_table("widgets", vec![db_primary_key("id", "INTEGER")]);
+    live_widgets.checks = Some(Vec::new());
+    live_widgets.indexes.push(DbIndex {
+        name: "ix_widgets_manual".to_string(),
+        columns: vec![DbIndexColumn {
+            value: "id".to_string(),
+            is_expression: false,
+        }],
+        ..DbIndex::default()
+    });
+    live_widgets.triggers = Some(vec![crate::schema::DbTrigger {
+        name: "trg_widgets".to_string(),
+        sql: "CREATE TRIGGER trg_widgets AFTER INSERT ON widgets BEGIN SELECT 1; END".to_string(),
+    }]);
+    let diff = diff(
+        MigrationDialect::Sqlite,
+        &model(vec![widgets]),
+        &[live_widgets],
+    );
+
+    assert_eq!(diff.rebuild_count(), 1);
+    assert!(diff.rebuilds[0].triggers_preserved);
+    let sql = diff.up_sql();
     assert!(
-        !diff.up_sql().contains("ADD CONSTRAINT"),
-        "must not emit invalid SQLite SQL:\n{}",
+        sql.contains("CREATE INDEX \"ix_widgets_manual\" ON \"widgets\" (\"id\")"),
+        "live-only index must be preserved:\n{sql}"
+    );
+    assert!(
+        sql.contains("CREATE TRIGGER trg_widgets"),
+        "trigger must be recreated:\n{sql}"
+    );
+    // The trigger must run after the table was renamed back.
+    let rename_position = sql.find("RENAME TO \"widgets\"").unwrap();
+    let trigger_position = sql.find("CREATE TRIGGER trg_widgets").unwrap();
+    assert!(rename_position < trigger_position, "order:\n{sql}");
+}
+
+#[test]
+fn sqlite_rebuild_warns_when_triggers_are_not_introspectable() {
+    let mut widgets = table("widgets", vec![primary_key("id", "i32")]);
+    widgets.checks.push(SnapshotCheck {
+        name: "ck_widgets_id".to_string(),
+        expression: "id > 0".to_string(),
+    });
+
+    let mut live_widgets = live_table("widgets", vec![db_primary_key("id", "INTEGER")]);
+    live_widgets.checks = Some(Vec::new());
+    live_widgets.triggers = None;
+    let diff = diff(
+        MigrationDialect::Sqlite,
+        &model(vec![widgets]),
+        &[live_widgets],
+    );
+
+    assert_eq!(diff.rebuild_count(), 1);
+    assert!(!diff.rebuilds[0].triggers_preserved);
+    assert!(
+        diff.warnings.iter().any(|warning| {
+            warning.kind == WarningKind::ManualAction && warning.message.contains("trigger")
+        }),
+        "expected trigger warning: {:?}",
+        diff.warnings
+    );
+}
+
+#[test]
+fn sqlite_rebuild_reports_new_not_null_column_without_default() {
+    let mut widgets = table("widgets", vec![primary_key("id", "i32")]);
+    widgets.columns.push(SnapshotColumn {
+        is_required: true,
+        ..column("stock", "i32")
+    });
+    widgets.checks.push(SnapshotCheck {
+        name: "ck_widgets_id".to_string(),
+        expression: "id > 0".to_string(),
+    });
+
+    let mut live_widgets = live_table("widgets", vec![db_primary_key("id", "INTEGER")]);
+    live_widgets.checks = Some(Vec::new());
+    live_widgets.triggers = Some(Vec::new());
+    let diff = diff(
+        MigrationDialect::Sqlite,
+        &model(vec![widgets]),
+        &[live_widgets],
+    );
+
+    assert_eq!(diff.rebuild_count(), 1);
+    assert_eq!(
+        diff.rebuilds[0].not_null_columns_without_default,
+        vec!["stock".to_string()]
+    );
+    assert_eq!(diff.rebuilds[0].new_columns, vec!["stock".to_string()]);
+    assert!(
+        has_warning(&diff, WarningKind::NotNullColumnWithoutDefault),
+        "column warning expected: {:?}",
+        diff.warnings
+    );
+    // The new column is omitted from the data copy so its default is applied.
+    assert!(
+        !diff
+            .up_sql()
+            .contains("INSERT INTO \"__ef_rebuild_widgets\" (\"id\", \"stock\")"),
+        "new column must not be part of the copy:\n{}",
         diff.up_sql()
     );
 }
@@ -451,25 +626,38 @@ fn matching_schema_is_a_no_op() {
 }
 
 #[test]
-fn sqlite_column_default_change_reports_rebuild_required() {
+fn sqlite_column_default_change_rebuilds_table() {
     let mut widgets = table("widgets", vec![primary_key("id", "i32")]);
     let mut status = column("status", "String");
     status.default_value = Some("'active'".to_string());
     widgets.columns.push(status);
 
-    let live = vec![live_table(
+    let mut live_widgets = live_table(
         "widgets",
         vec![
             db_primary_key("id", "INTEGER"),
             db_column("status", "TEXT", true),
         ],
-    )];
-    let diff = diff(MigrationDialect::Sqlite, &model(vec![widgets]), &live);
+    );
+    live_widgets.checks = Some(Vec::new());
+    live_widgets.triggers = Some(Vec::new());
+    let diff = diff(
+        MigrationDialect::Sqlite,
+        &model(vec![widgets]),
+        &[live_widgets],
+    );
 
+    assert_eq!(diff.rebuild_count(), 1, "default change requires a rebuild");
+    let sql = diff.up_sql();
     assert!(
-        has_warning(&diff, WarningKind::UnsupportedChange),
-        "default change requires a rebuild: {:?}",
-        diff.warnings
+        sql.contains("\"status\" TEXT NULL DEFAULT 'active'"),
+        "shadow table must carry the new default:\n{sql}"
+    );
+    assert!(
+        sql.contains(
+            "INSERT INTO \"__ef_rebuild_widgets\" (\"id\", \"status\") SELECT \"id\", \"status\" FROM \"widgets\""
+        ),
+        "existing values must be copied:\n{sql}"
     );
 }
 
@@ -504,20 +692,33 @@ fn implicit_primary_key_index_is_not_reported_as_extra() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn report_lists_statements_and_warnings() {
+fn report_lists_rebuilds_and_warnings() {
     let mut widgets = table("widgets", vec![primary_key("id", "i32")]);
+    widgets.columns.push(SnapshotColumn {
+        is_required: true,
+        ..column("stock", "i32")
+    });
     widgets.checks.push(SnapshotCheck {
         name: "ck_widgets_stock".to_string(),
         expression: "stock >= 0".to_string(),
     });
     let mut live = vec![live_table("widgets", vec![db_primary_key("id", "INTEGER")])];
     live[0].checks = Some(Vec::new());
+    live[0].triggers = Some(Vec::new());
     let diff = diff(MigrationDialect::Sqlite, &model(vec![widgets]), &live);
 
     let report = diff.report();
     assert!(report.contains("rust-ef runtime schema diff"), "{report}");
-    assert!(report.contains("warnings: 1"), "{report}");
-    assert!(report.contains("unsupported_change"), "{report}");
+    assert!(report.contains("table rebuilds: 1"), "{report}");
+    assert!(report.contains("widgets: 1 column(s) copied"), "{report}");
+    assert!(
+        report.contains("NOT NULL without default: stock"),
+        "rebuild details must be printed: {report}"
+    );
+    assert!(
+        report.contains("not_null_column_without_default"),
+        "warnings must be printed: {report}"
+    );
 }
 
 #[test]

@@ -437,3 +437,369 @@ async fn apply_diff_noop_is_reported() {
     assert!(result.is_noop());
     assert_eq!(result.executed_statements, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Stage 3: SQLite table rebuild
+// ---------------------------------------------------------------------------
+
+use rust_ef::relations::DeleteBehavior;
+
+#[derive(Debug, Clone, EntityType)]
+#[table("ef_parents")]
+struct ParentV1 {
+    #[primary_key]
+    #[auto_increment]
+    pub id: i32,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, EntityType)]
+#[table("ef_children")]
+struct ChildV1 {
+    #[primary_key]
+    #[auto_increment]
+    pub id: i32,
+    pub parent_id: i32,
+    pub amount: i32,
+}
+
+#[derive(Debug, Clone, EntityType)]
+#[table("ef_children")]
+struct ChildV2 {
+    #[primary_key]
+    #[auto_increment]
+    pub id: i32,
+    pub parent_id: i32,
+    pub amount: i32,
+    pub note: Option<String>,
+}
+
+#[derive(Default)]
+struct ChildV2Config;
+
+impl IEntityTypeConfiguration<ChildV2> for ChildV2Config {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, ChildV2>) {
+        entity
+            .has_foreign_key(
+                &[ChildV2::COLUMN_PARENT_ID],
+                ParentV1::TABLE,
+                &[ParentV1::COLUMN_ID],
+            )
+            .on_delete(DeleteBehavior::Cascade);
+        entity.has_check("ck_children_amount", "amount >= 0");
+        entity.property_named("amount").has_index();
+        entity.property_named("note").has_default("'n/a'");
+    }
+}
+
+#[derive(Debug, Clone, EntityType)]
+#[table("ef_children")]
+struct ChildV3 {
+    #[primary_key]
+    #[auto_increment]
+    pub id: i32,
+    pub parent_id: i32,
+    pub amount: i32,
+    pub code: String,
+}
+
+#[derive(Default)]
+struct ChildV3Config;
+
+impl IEntityTypeConfiguration<ChildV3> for ChildV3Config {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, ChildV3>) {
+        entity.has_check("ck_children_code", "length(code) > 0");
+        entity.property_named("code").is_required();
+    }
+}
+
+fn child_v2_model() -> Vec<EntityTypeMeta> {
+    let mut builder = ModelBuilder::new();
+    builder.entity::<ParentV1>();
+    builder.apply_configuration::<ChildV2Config, ChildV2>();
+    builder.build()
+}
+
+fn child_v3_model() -> Vec<EntityTypeMeta> {
+    let mut builder = ModelBuilder::new();
+    builder.entity::<ParentV1>();
+    builder.apply_configuration::<ChildV3Config, ChildV3>();
+    builder.build()
+}
+
+async fn install_children_v1(provider: &dyn IDatabaseProvider) -> MigrationEngine {
+    let engine = MigrationEngine::new(MigrationDialect::Sqlite);
+    let initial = engine
+        .generate(
+            "Initial",
+            &[ParentV1::entity_meta(), ChildV1::entity_meta()],
+            &None,
+        )
+        .expect("generate initial");
+    engine.apply(provider, &initial).await.expect("apply initial");
+    engine
+}
+
+async fn insert_child(
+    provider: &dyn IDatabaseProvider,
+    parent_id: i32,
+    amount: i32,
+) -> Box<dyn rust_ef::provider::IAsyncConnection> {
+    let mut connection = provider.get_connection().await.expect("connection");
+    connection
+        .execute(
+            "INSERT INTO ef_children (parent_id, amount) VALUES (?, ?)",
+            &[DbValue::I32(parent_id), DbValue::I32(amount)],
+        )
+        .await
+        .expect("insert child");
+    connection
+}
+
+fn live_children(live: &[DbTable]) -> &DbTable {
+    live.iter()
+        .find(|table| table.name == "ef_children")
+        .expect("ef_children in live schema")
+}
+
+#[tokio::test]
+async fn sqlite_rebuild_applies_check_and_fk_preserving_data_and_triggers() {
+    let database = TempDb::new("rebuild_ok");
+    let provider = database.provider();
+    let engine = install_children_v1(&*provider).await;
+
+    let mut connection = provider.get_connection().await.expect("connection");
+    connection
+        .execute(
+            "INSERT INTO ef_parents (name) VALUES (?)",
+            &[DbValue::String("parent".to_string())],
+        )
+        .await
+        .expect("insert parent");
+    drop(insert_child(&*provider, 1, 5).await);
+    drop(connection);
+
+    provider
+        .execute_migration_command(
+            "CREATE TRIGGER trg_children_audit AFTER INSERT ON \"ef_children\" \
+             BEGIN UPDATE \"ef_children\" SET amount = amount WHERE id = NEW.id; END",
+        )
+        .await
+        .expect("create trigger");
+
+    let live = read_sqlite_schema(&*provider).await;
+    let diff = engine.diff_metas(&child_v2_model(), &live);
+    assert_eq!(diff.rebuild_count(), 1, "diff:\n{}", diff.report());
+    assert_eq!(diff.rebuilds[0].table, "ef_children");
+    assert_eq!(diff.rebuilds[0].new_columns, vec!["note".to_string()]);
+    assert!(diff.rebuilds[0].triggers_preserved);
+    assert!(diff.rebuilds[0].not_null_columns_without_default.is_empty());
+
+    let applied = engine
+        .apply_diff(&*provider, &diff)
+        .await
+        .expect("apply rebuild");
+    assert_eq!(applied.rebuilt_tables, vec!["ef_children".to_string()]);
+
+    // Data preserved, new column got its default.
+    let mut connection = provider.get_connection().await.expect("connection");
+    let rows = connection
+        .query("SELECT id, parent_id, amount, note FROM ef_children", &[])
+        .await
+        .expect("select children");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(i64::try_from(rows[0][1].clone()).unwrap(), 1);
+    assert_eq!(i64::try_from(rows[0][2].clone()).unwrap(), 5);
+    assert_eq!(string_value(&rows[0][3]), "n/a");
+
+    // Constraints, index and trigger are present after the rebuild.
+    let live = read_sqlite_schema(&*provider).await;
+    let children = live_children(&live);
+    let checks = children.checks.as_ref().expect("checks introspected");
+    assert!(
+        checks.iter().any(|check| check.expression.contains("amount >= 0")),
+        "missing CHECK: {checks:?}"
+    );
+    assert!(
+        children.foreign_keys.iter().any(|foreign_key| {
+            foreign_key.columns == vec!["parent_id".to_string()]
+                && foreign_key.referenced_table == "ef_parents"
+                && foreign_key.referenced_columns == vec!["id".to_string()]
+                && foreign_key.on_delete.as_deref() == Some("CASCADE")
+        }),
+        "missing FK: {:?}",
+        children.foreign_keys
+    );
+    assert!(
+        children
+            .indexes
+            .iter()
+            .any(|index| index.name == "ix_ef_children_amount"),
+        "missing index: {:?}",
+        children.indexes
+    );
+    assert!(
+        children
+            .triggers
+            .as_ref()
+            .expect("triggers introspected")
+            .iter()
+            .any(|trigger| trigger.name == "trg_children_audit"),
+        "missing trigger: {:?}",
+        children.triggers
+    );
+
+    // CHECK is enforced.
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO ef_children (parent_id, amount) VALUES (?, ?)",
+                &[DbValue::I32(1), DbValue::I32(-1)],
+            )
+            .await
+            .is_err(),
+        "new CHECK constraint must reject negative amounts"
+    );
+    // The FK is enforced when foreign keys are enabled (EF-4 hook).
+    connection
+        .execute("PRAGMA foreign_keys = ON", &[])
+        .await
+        .expect("enable foreign keys");
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO ef_children (parent_id, amount) VALUES (?, ?)",
+                &[DbValue::I32(999), DbValue::I32(1)],
+            )
+            .await
+            .is_err(),
+        "new FK must reject missing parents"
+    );
+
+    // Idempotent: a second introspection matches the model.
+    let live = read_sqlite_schema(&*provider).await;
+    let second = engine.diff_metas(&child_v2_model(), &live);
+    assert!(second.is_empty(), "second diff:\n{}", second.report());
+}
+
+#[tokio::test]
+async fn sqlite_rebuild_rolls_back_when_existing_rows_violate_new_check() {
+    let database = TempDb::new("rebuild_check_rollback");
+    let provider = database.provider();
+    let engine = install_children_v1(&*provider).await;
+
+    provider
+        .execute_migration_command("INSERT INTO ef_parents (id, name) VALUES (1, 'p')")
+        .await
+        .expect("insert parent");
+    drop(insert_child(&*provider, 1, -5).await);
+
+    let live = read_sqlite_schema(&*provider).await;
+    let diff = engine.diff_metas(&child_v2_model(), &live);
+    assert_eq!(diff.rebuild_count(), 1);
+
+    let error = engine
+        .apply_diff(&*provider, &diff)
+        .await
+        .expect_err("rows violating the new CHECK must abort the rebuild");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("check") || message.contains("constraint"),
+        "unexpected error: {error}"
+    );
+
+    // Nothing was applied: no shadow table, no CHECK/FK, data intact.
+    let mut connection = provider.get_connection().await.expect("connection");
+    let leftovers = connection
+        .query(
+            "SELECT name FROM sqlite_master WHERE name LIKE '__ef_rebuild_%'",
+            &[],
+        )
+        .await
+        .expect("check leftovers");
+    assert!(leftovers.is_empty(), "failed rebuild left {leftovers:?}");
+
+    let live = read_sqlite_schema(&*provider).await;
+    let children = live_children(&live);
+    assert!(
+        children.checks.as_ref().expect("checks").is_empty(),
+        "CHECK must not be applied: {:?}",
+        children.checks
+    );
+    assert!(children.foreign_keys.is_empty());
+    let rows = connection
+        .query("SELECT COUNT(*), MIN(amount) FROM ef_children", &[])
+        .await
+        .expect("select children");
+    assert_eq!(i64::try_from(rows[0][0].clone()).unwrap(), 1);
+    assert_eq!(i64::try_from(rows[0][1].clone()).unwrap(), -5);
+}
+
+#[tokio::test]
+async fn sqlite_rebuild_rolls_back_when_foreign_key_check_finds_orphans() {
+    let database = TempDb::new("rebuild_fk_rollback");
+    let provider = database.provider();
+    let engine = install_children_v1(&*provider).await;
+
+    // Orphan child: `parent_id = 999` does not exist (v1 has no FK yet).
+    drop(insert_child(&*provider, 999, 1).await);
+
+    let live = read_sqlite_schema(&*provider).await;
+    let diff = engine.diff_metas(&child_v2_model(), &live);
+    assert_eq!(diff.rebuild_count(), 1);
+
+    let error = engine
+        .apply_diff(&*provider, &diff)
+        .await
+        .expect_err("orphan rows must fail the foreign-key check");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("foreign-key") || message.contains("foreign key"),
+        "unexpected error: {error}"
+    );
+
+    // Rolled back: the FK is not applied and the orphan row is untouched.
+    let live = read_sqlite_schema(&*provider).await;
+    let children = live_children(&live);
+    assert!(children.foreign_keys.is_empty(), "FK must not be applied");
+    let mut connection = provider.get_connection().await.expect("connection");
+    let rows = connection
+        .query("SELECT COUNT(*) FROM ef_children", &[])
+        .await
+        .expect("select children");
+    assert_eq!(i64::try_from(rows[0][0].clone()).unwrap(), 1);
+}
+
+#[tokio::test]
+async fn apply_diff_rejects_rebuild_that_would_need_not_null_backfill() {
+    let database = TempDb::new("rebuild_not_null");
+    let provider = database.provider();
+    let engine = install_children_v1(&*provider).await;
+    drop(insert_child(&*provider, 1, 3).await);
+
+    let live = read_sqlite_schema(&*provider).await;
+    let diff = engine.diff_metas(&child_v3_model(), &live);
+    assert_eq!(diff.rebuild_count(), 1);
+    assert_eq!(
+        diff.rebuilds[0].not_null_columns_without_default,
+        vec!["code".to_string()]
+    );
+
+    let error = engine
+        .apply_diff(&*provider, &diff)
+        .await
+        .expect_err("NOT NULL column without default must be rejected up-front");
+    assert!(
+        error.to_string().contains("NOT NULL"),
+        "unexpected error: {error}"
+    );
+
+    // Rejected before touching the database.
+    let live = read_sqlite_schema(&*provider).await;
+    let children = live_children(&live);
+    assert!(
+        !children.columns.iter().any(|column| column.name == "code"),
+        "column must not be added"
+    );
+    assert!(children.checks.as_ref().expect("checks").is_empty());
+}

@@ -1,22 +1,23 @@
 ﻿//! Turns detected changes into an executable [`MigrationDiff`].
 //!
 //! Statements are rendered in a dependency-friendly order
-//! (`CREATE TABLE` → column changes → indexes → constraints) so a plan does not
-//! need to be re-sorted by the caller. The regular DDL generator is reused: the
-//! same `SchemaChange` → SQL pipeline used by `generate` produces the ALTER
-//! statements, which keeps dialect behavior (quoting, type mapping, MySQL
-//! auto-increment handling, PostgreSQL comments, …) in one place.
+//! (`CREATE TABLE` → SQLite rebuilds → column changes → indexes → constraints)
+//! so a plan does not need to be re-sorted by the caller. The regular DDL
+//! generator is reused: the same `SchemaChange` → SQL pipeline used by
+//! `generate` produces the ALTER statements, which keeps dialect behavior
+//! (quoting, type mapping, MySQL auto-increment handling, PostgreSQL comments,
+//! …) in one place.
 
 use crate::schema::DbTable;
 
-use super::compare::{detect, TableDelta};
-use crate::migration::dialect::MigrationDialect;
-use crate::migration::history::split_sql_statements;
+use super::compare::detect;
+use super::rebuild::{plan_rebuild, RebuildOutcome};
 use crate::migration::schema_change::SchemaChange;
 use crate::migration::types::{ModelSnapshot, SnapshotEntityType};
-use super::{DiffWarning, MigrationDiff, WarningKind};
-
+use super::{MigrationDiff, TableRebuild};
+use crate::migration::dialect::MigrationDialect;
 use crate::migration::engine::MigrationEngine;
+use crate::migration::history::split_sql_statements;
 
 pub(crate) fn plan(
     engine: &MigrationEngine,
@@ -25,6 +26,7 @@ pub(crate) fn plan(
 ) -> MigrationDiff {
     let (deltas, mut warnings) = detect(model, live, engine.dialect);
     let mut statements: Vec<String> = Vec::new();
+    let mut rebuilds: Vec<TableRebuild> = Vec::new();
 
     // 1. Tables that do not exist yet. Reuse the exact "fresh database" path so
     //    SQLite gets inline foreign keys and PostgreSQL gets its sequences.
@@ -50,7 +52,18 @@ pub(crate) fn plan(
 
     for delta in deltas.iter().filter(|delta| delta.live.is_some()) {
         if engine.dialect == MigrationDialect::Sqlite && !delta.rebuild_reasons.is_empty() {
-            render_rebuild_placeholder(delta, &mut warnings);
+            match plan_rebuild(engine, delta, live) {
+                RebuildOutcome::Planned {
+                    statements: rebuild_statements,
+                    rebuild,
+                    warnings: rebuild_warnings,
+                } => {
+                    statements.extend(rebuild_statements);
+                    rebuilds.push(rebuild);
+                    warnings.extend(rebuild_warnings);
+                }
+                RebuildOutcome::Refused(warning) => warnings.push(warning),
+            }
             continue;
         }
         for change in &delta.changes {
@@ -74,27 +87,8 @@ pub(crate) fn plan(
     MigrationDiff {
         statements,
         warnings,
-        rebuilds: Vec::new(),
+        rebuilds,
     }
-}
-
-/// Emits a structured warning for a SQLite table that would need a rebuild.
-///
-/// The rebuild itself is implemented by the `sqlite_rebuild` module; this
-/// placeholder keeps the intermediate stage honest: nothing is applied and the
-/// operator is told exactly why.
-fn render_rebuild_placeholder(delta: &TableDelta<'_>, warnings: &mut Vec<DiffWarning>) {
-    warnings.push(DiffWarning::warning(
-        WarningKind::UnsupportedChange,
-        Some(delta.table.clone()),
-        format!(
-            "SQLite cannot apply {count} change(s) to existing table '{table}' without rebuilding it: {reasons}. \
-             The table is left untouched; apply a versioned migration or rebuild it manually",
-            count = delta.rebuild_reasons.len(),
-            table = delta.table,
-            reasons = delta.rebuild_reasons.join("; ")
-        ),
-    ));
 }
 
 /// Renders logical changes through the regular DDL generator and splits the

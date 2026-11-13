@@ -38,6 +38,7 @@
 //!   are part of the returned plan so an installer can print an upgrade report.
 
 mod compare;
+mod rebuild;
 mod render;
 
 use crate::metadata::EntityTypeMeta;
