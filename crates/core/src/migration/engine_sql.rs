@@ -495,7 +495,16 @@ impl MigrationEngine {
         let q = |s: &str| self.dialect.quote(s);
         let create_kw = mode.create_table_keyword();
 
-        for change in changes {
+        // EF-10: order statements by dependency instead of relying on the
+        // change list order. A MySQL foreign key constraint requires the
+        // referenced index to exist first (error 1822), so indexes must be
+        // emitted before `ALTER TABLE ... ADD CONSTRAINT`, and every table must
+        // exist before anything references it. The sort is stable, preserving
+        // the relative order of statements within a phase.
+        let mut ordered: Vec<&SchemaChange> = changes.iter().collect();
+        ordered.sort_by_key(|change| up_phase(change));
+
+        for change in ordered {
             match change {
                 SchemaChange::CreateTable {
                     table,
@@ -998,6 +1007,38 @@ impl UpScriptMode {
             Self::Idempotent => "CREATE TABLE IF NOT EXISTS",
             Self::Migration | Self::Bootstrap => "CREATE TABLE",
         }
+    }
+}
+
+/// Emit phase of a `SchemaChange` inside an Up script (lower runs first).
+///
+/// Rules:
+/// - drop obsolete constraints/indexes first (they may block a rename/recreate);
+/// - then drop tables, then create tables;
+/// - then column changes;
+/// - then indexes — MySQL requires the referenced index to exist before a
+///   foreign key is added (error 1822), and a unique index is the FK target;
+/// - then foreign keys / CHECK constraints;
+/// - table options and comments last (the table must exist).
+///
+/// The Up script's history `INSERT` is appended after every phase.
+fn up_phase(change: &SchemaChange) -> u8 {
+    match change {
+        SchemaChange::DropForeignKey { .. }
+        | SchemaChange::DropCompositeForeignKey { .. }
+        | SchemaChange::DropIndex { .. }
+        | SchemaChange::DropDeclaredIndex { .. }
+        | SchemaChange::DropCheck { .. } => 0,
+        SchemaChange::DropTable { .. } => 1,
+        SchemaChange::CreateTable { .. } => 2,
+        SchemaChange::AddColumn { .. }
+        | SchemaChange::AlterColumn { .. }
+        | SchemaChange::DropColumn { .. } => 3,
+        SchemaChange::CreateIndex { .. } | SchemaChange::CreateDeclaredIndex { .. } => 4,
+        SchemaChange::AddForeignKey { .. }
+        | SchemaChange::AddCompositeForeignKey { .. }
+        | SchemaChange::AddCheck { .. } => 5,
+        SchemaChange::AlterTableOptions { .. } | SchemaChange::AlterTableComment { .. } => 6,
     }
 }
 
