@@ -128,6 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Macro-generated paths now resolve the crate's real dependency name
   (`proc-macro-crate`), so `ef = { package = "rust-ef" }` works without
   `extern crate ef as rust_ef;` (MACRO-1).
+- `rust-dix` requirement raised to `1.0` (macro crate-name resolution, trait-object
+  `instance<T: ?Sized>`, fallible typed factory resolution).
 
 #### Docs
 
