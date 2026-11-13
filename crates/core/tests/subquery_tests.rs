@@ -203,7 +203,7 @@ async fn test_execute_update_resolves_subquery_predicate() {
         .query()
         .filter(predicate)
         .execute_update()
-        .set_column_internal(SubBlog::COLUMN_URL, "https://updated.example");
+        .set_column(SubBlog::COLUMN_URL, "https://updated.example");
 
     let sql = builder.to_sql();
     assert!(sql.contains("sub_posts"), "unresolved subquery: {sql}");

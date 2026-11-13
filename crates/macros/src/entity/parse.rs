@@ -27,6 +27,9 @@ pub(super) struct EntityContext<'a> {
     pub(super) pk_column_names: Vec<String>,
     pub(super) fk_column_names: Vec<String>,
     pub(super) from_row_fields: Vec<(&'a syn::Ident, &'a syn::Type)>,
+    /// Database column names parallel to `from_row_fields`, used by the
+    /// generated `from_row_named` (name-based materialization).
+    pub(super) from_row_column_names: Vec<String>,
     pub(super) nav_field_names: Vec<&'a syn::Ident>,
     pub(super) lazy_init_arms: Vec<proc_macro2::TokenStream>,
     pub(super) pk_field_idents: Vec<&'a syn::Ident>,
@@ -61,6 +64,7 @@ pub(super) fn parse_fields<'a>(
         pk_column_names: Vec::new(),
         fk_column_names: Vec::new(),
         from_row_fields: Vec::new(),
+        from_row_column_names: Vec::new(),
         nav_field_names: Vec::new(),
         lazy_init_arms: Vec::new(),
         pk_field_idents: Vec::new(),
@@ -483,6 +487,7 @@ pub(super) fn parse_fields<'a>(
             });
             // Collect for FromRow generation
             ctx.from_row_fields.push((field_name, field_type));
+            ctx.from_row_column_names.push(column_name.clone());
             if is_foreign_key {
                 ctx.fk_column_names.push(column_name.clone());
                 if let Some(target) = extract_foreign_key_target(&field.attrs) {

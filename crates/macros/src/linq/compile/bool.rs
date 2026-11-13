@@ -115,6 +115,11 @@ pub(crate) fn compile_bool_method(
         "all" => return compile_subquery_bool(ctx, call, SubqueryKind::All),
         // v1.1: IN (SELECT ...) subquery
         "in_subquery" => return compile_in_subquery_bool(ctx, call, false),
+        // `contains` has two meanings and the receiver is only a column for
+        // LIKE. Decide which form it is *before* extracting the receiver as a
+        // field, otherwise `collection.contains(b.id)` (IN) fails to compile
+        // whenever the collection is any expression other than a field/path.
+        "contains" => return compile_contains(ctx, call),
         _ => {}
     }
 
@@ -131,41 +136,6 @@ pub(crate) fn compile_bool_method(
                 rust_ef::query::FilterCondition::new(#column, "IS NOT NULL", 0)
             )
         }),
-        "contains" => {
-            let arg = call.args.first().ok_or_else(|| {
-                syn::Error::new_spanned(call, "`.contains()` requires one argument")
-            })?;
-            // If the argument is a field reference, it's IN (LINQ style);
-            // otherwise it's a value, and `.contains()` means LIKE.
-            if is_field_expr(arg) {
-                // `ids.contains(b.id)`: the column is the argument, the values
-                // are the receiver.
-                let column = extract_field(ctx, arg)?;
-                let values = extract_value(&call.receiver)?;
-                Ok(quote! {
-                    rust_ef::query::BoolExpr::Filter(
-                        rust_ef::query::FilterCondition::with_values(
-                            #column, "IN",
-                            (#values).into_iter()
-                                .map(rust_ef::provider::DbValue::from)
-                                .collect::<Vec<_>>(),
-                        )
-                    )
-                })
-            } else {
-                let value = extract_value(arg)?;
-                Ok(quote! {
-                    rust_ef::query::BoolExpr::Filter(
-                        rust_ef::query::FilterCondition::with_values(
-                            #column, "LIKE",
-                            vec![rust_ef::provider::DbValue::from(
-                                rust_ef::query::like_contains(#value)
-                            )],
-                        )
-                    )
-                })
-            }
-        }
         "starts_with" => {
             let arg = call.args.first().ok_or_else(|| {
                 syn::Error::new_spanned(call, "`.starts_with()` requires one argument")
@@ -223,5 +193,53 @@ pub(crate) fn compile_bool_method(
             &call.method,
             "supported methods: contains, starts_with, ends_with, is_null, is_not_null, between",
         )),
+    }
+}
+
+/// Compiles `.contains(...)`, which has two LINQ meanings:
+///
+/// - `collection.contains(b.column)` — the argument is an entity field, so the
+///   condition is SQL `IN`: the **column** comes from the argument and the
+///   **values** from the receiver. The receiver is an arbitrary collection
+///   expression (`ids`, `self.ids`, `make_ids()`, `&ids[..]`, ...), never a
+///   column, so it must not be resolved as a field.
+/// - `b.column.contains(value)` — the argument is a value, so the receiver is
+///   the column and the condition is SQL `LIKE`.
+fn compile_contains(ctx: &LinqCtx<'_>, call: &ExprMethodCall) -> syn::Result<TokenStream2> {
+    let arg = call
+        .args
+        .first()
+        .ok_or_else(|| syn::Error::new_spanned(call, "`.contains()` requires one argument"))?;
+
+    if is_field_expr(arg) {
+        // `ids.contains(b.id)`: the column is the argument, the values are the
+        // receiver.
+        let column = extract_field(ctx, arg)?;
+        let values = extract_value(&call.receiver)?;
+        Ok(quote! {
+            rust_ef::query::BoolExpr::Filter(
+                rust_ef::query::FilterCondition::with_values(
+                    #column, "IN",
+                    (#values).into_iter()
+                        .map(rust_ef::provider::DbValue::from)
+                        .collect::<Vec<_>>(),
+                )
+            )
+        })
+    } else {
+        // `b.url.contains(q)`: the receiver is the column, the argument is a
+        // value, and `.contains()` means `LIKE %value%`.
+        let column = extract_field(ctx, &call.receiver)?;
+        let value = extract_value(arg)?;
+        Ok(quote! {
+            rust_ef::query::BoolExpr::Filter(
+                rust_ef::query::FilterCondition::with_values(
+                    #column, "LIKE",
+                    vec![rust_ef::provider::DbValue::from(
+                        rust_ef::query::like_contains(#value)
+                    )],
+                )
+            )
+        })
     }
 }
