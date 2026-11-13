@@ -42,6 +42,9 @@ mod rebuild;
 mod render;
 
 use crate::metadata::EntityTypeMeta;
+use crate::migration::dialect::MigrationDialect;
+use crate::migration::history::{MIGRATION_HISTORY_TABLE, PRODUCT_VERSION};
+use crate::migration::types::Migration;
 use crate::schema::DbTable;
 
 use super::engine::MigrationEngine;
@@ -246,6 +249,41 @@ impl MigrationDiff {
             ));
         }
         out
+    }
+
+    /// Converts the plan into a versioned [`Migration`].
+    ///
+    /// For teams that want the `__ef_migrations_history` row and the existing
+    /// `apply` flow, the returned migration embeds the plan statements plus the
+    /// history `INSERT`; apply it with
+    /// [`MigrationEngine::apply`](super::engine::MigrationEngine::apply).
+    ///
+    /// Runtime upgrades should normally use
+    /// [`MigrationEngine::apply_diff`](super::engine::MigrationEngine::apply_diff),
+    /// which keeps the structured warnings/rebuild report. A runtime diff has no
+    /// safe automatic rollback, so `down_sql` only contains an explanatory
+    /// comment.
+    pub fn into_migration(
+        &self,
+        id: impl Into<String>,
+        dialect: MigrationDialect,
+    ) -> Migration {
+        let id = id.into();
+        let mut up_sql = self.up_sql();
+        up_sql.push_str(&format!(
+            "INSERT INTO {}(migration_id, product_version) VALUES ('{}', '{}');\n",
+            dialect.quote(MIGRATION_HISTORY_TABLE),
+            id.replace('\'', "''"),
+            PRODUCT_VERSION
+        ));
+        Migration {
+            id: id.clone(),
+            description: id,
+            up_sql,
+            down_sql: "-- Runtime schema diff: no automatic down migration. \
+                       Restore from a backup or write a versioned migration.\n"
+                .to_string(),
+        }
     }
 }
 

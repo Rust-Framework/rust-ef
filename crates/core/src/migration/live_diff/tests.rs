@@ -1,10 +1,13 @@
-//! Unit tests for runtime model diffing.
+﻿//! Unit tests for runtime model diffing.
 
 use crate::schema::{
     DbCheck, DbColumn, DbForeignKey, DbIndex, DbIndexColumn, DbTable,
 };
 
-use crate::migration::types::{ModelSnapshot, SnapshotCheck, SnapshotColumn, SnapshotEntityType};
+use crate::migration::types::{
+    ModelSnapshot, SnapshotCheck, SnapshotColumn, SnapshotEntityType, SnapshotForeignKey,
+    SnapshotIndex, SnapshotIndexColumn,
+};
 use crate::migration::MigrationDialect;
 use super::{MigrationDiff, MigrationEngine, WarningKind, WarningSeverity};
 
@@ -780,4 +783,315 @@ fn existing_foreign_key_is_not_added_twice() {
         "existing FK must not be added twice:\n{}",
         diff.up_sql()
     );
+}
+
+// ---------------------------------------------------------------------------
+// Stage 4: PostgreSQL / MySQL native ALTER + dialect gaps
+// ---------------------------------------------------------------------------
+
+fn declared_index(name: &str, columns: &[&str], unique: bool) -> SnapshotIndex {
+    SnapshotIndex {
+        name: name.to_string(),
+        columns: columns
+            .iter()
+            .map(|column| SnapshotIndexColumn {
+                value: (*column).to_string(),
+                is_expression: false,
+            })
+            .collect(),
+        is_unique: unique,
+        filter: None,
+        include: Vec::new(),
+    }
+}
+
+#[test]
+fn postgres_nullability_change_generates_native_alter() {
+    let mut items = table("items", vec![primary_key("id", "i32")]);
+    items.columns.push(SnapshotColumn {
+        is_required: true,
+        ..column("code", "String")
+    });
+
+    let live = vec![live_table(
+        "items",
+        vec![
+            db_primary_key("id", "integer"),
+            db_column("code", "text", true),
+        ],
+    )];
+    let diff = diff(MigrationDialect::Postgres, &model(vec![items]), &live);
+
+    let sql = diff.up_sql();
+    assert!(
+        sql.contains("ALTER TABLE \"items\" ALTER COLUMN \"code\" SET NOT NULL"),
+        "missing SET NOT NULL:\n{sql}"
+    );
+    assert!(
+        sql.contains("ALTER TABLE \"items\" ALTER COLUMN \"code\" TYPE TEXT"),
+        "missing ALTER TYPE:\n{sql}"
+    );
+    assert_eq!(diff.rebuild_count(), 0, "PG uses native ALTER");
+}
+
+#[test]
+fn mysql_type_change_generates_modify_column() {
+    let mut items = table("items", vec![primary_key("id", "i32")]);
+    items.columns.push(column("amount", "i64"));
+
+    let live = vec![live_table(
+        "items",
+        vec![
+            db_primary_key("id", "int"),
+            db_column("amount", "int", true),
+        ],
+    )];
+    let diff = diff(MigrationDialect::MySql, &model(vec![items]), &live);
+
+    let sql = diff.up_sql();
+    assert!(
+        sql.contains("ALTER TABLE `items` MODIFY COLUMN `amount` BIGINT NULL"),
+        "missing MODIFY COLUMN:\n{sql}"
+    );
+}
+
+#[test]
+fn postgres_generated_column_change_requires_manual_action() {
+    let mut items = table("items", vec![primary_key("id", "i32")]);
+    items.columns.push(SnapshotColumn {
+        computed_sql: Some("id * 2".to_string()),
+        ..column("total", "i32")
+    });
+
+    let live = vec![live_table(
+        "items",
+        vec![
+            db_primary_key("id", "integer"),
+            db_column("total", "bigint", true),
+        ],
+    )];
+    let diff = diff(MigrationDialect::Postgres, &model(vec![items]), &live);
+
+    assert!(
+        diff.warnings.iter().any(|warning| {
+            warning.kind == WarningKind::ManualAction
+                && warning.message.contains("generated column")
+        }),
+        "expected manual-action warning: {:?}",
+        diff.warnings
+    );
+    assert!(
+        diff.is_empty(),
+        "must not emit a broken ALTER:\n{}",
+        diff.up_sql()
+    );
+}
+
+#[test]
+fn mysql_skips_partial_non_unique_index_with_warning() {
+    let mut items = table("items", vec![primary_key("id", "i32")]);
+    items.columns.push(column("status", "String"));
+    let mut index = declared_index("ix_items_status", &["status"], false);
+    index.filter = Some("status = 'active'".to_string());
+    items.indexes.push(index);
+
+    let mut live = live_table(
+        "items",
+        vec![
+            db_primary_key("id", "int"),
+            db_column("status", "text", true),
+        ],
+    );
+    live.checks = Some(Vec::new());
+    let diff = diff(MigrationDialect::MySql, &model(vec![items]), &[live]);
+
+    assert!(
+        diff.warnings.iter().any(|warning| {
+            warning.kind == WarningKind::UnsupportedChange && warning.message.contains("partial")
+        }),
+        "expected partial-index warning: {:?}",
+        diff.warnings
+    );
+    assert!(
+        !diff.up_sql().contains("CREATE INDEX"),
+        "MySQL partial non-unique index cannot be created:\n{}",
+        diff.up_sql()
+    );
+}
+
+#[test]
+fn sqlite_include_index_warns_and_creates_index_without_include() {
+    let mut items = table("items", vec![primary_key("id", "i32")]);
+    items.columns.push(column("name", "String"));
+    let mut index = declared_index("ix_items_name", &["name"], false);
+    index.include = vec!["id".to_string()];
+    items.indexes.push(index);
+
+    let mut live = live_table(
+        "items",
+        vec![
+            db_primary_key("id", "INTEGER"),
+            db_column("name", "TEXT", true),
+        ],
+    );
+    live.checks = Some(Vec::new());
+    live.triggers = Some(Vec::new());
+    let diff = diff(MigrationDialect::Sqlite, &model(vec![items]), &[live]);
+
+    assert!(
+        diff.warnings.iter().any(|warning| {
+            warning.kind == WarningKind::UnsupportedChange && warning.message.contains("INCLUDE")
+        }),
+        "expected INCLUDE warning: {:?}",
+        diff.warnings
+    );
+    let sql = diff.up_sql();
+    assert!(
+        sql.contains("CREATE INDEX \"ix_items_name\" ON \"items\" (\"name\")"),
+        "index must still be created:\n{sql}"
+    );
+    assert!(!sql.contains("INCLUDE"), "SQLite has no INCLUDE:\n{sql}");
+}
+
+#[test]
+fn postgres_composite_foreign_key_uses_native_alter() {
+    let mut parents = table(
+        "parents",
+        vec![
+            SnapshotColumn {
+                is_primary_key: true,
+                ..column("tenant_id", "i32")
+            },
+            SnapshotColumn {
+                is_primary_key: true,
+                ..column("id", "i32")
+            },
+        ],
+    );
+    parents.table_name = "parents".to_string();
+
+    let mut children = table("children", vec![primary_key("id", "i32")]);
+    children.columns.push(column("tenant_id", "i32"));
+    children.columns.push(column("parent_id", "i32"));
+    children.foreign_keys.push(SnapshotForeignKey {
+        name: "fk_children_parent".to_string(),
+        columns: vec!["tenant_id".to_string(), "parent_id".to_string()],
+        referenced_table: "parents".to_string(),
+        referenced_columns: vec!["tenant_id".to_string(), "id".to_string()],
+        on_delete: Some("CASCADE".to_string()),
+    });
+
+    let live = vec![
+        live_table(
+            "parents",
+            vec![
+                DbColumn {
+                    is_primary_key: true,
+                    ..db_column("tenant_id", "integer", false)
+                },
+                DbColumn {
+                    is_primary_key: true,
+                    ..db_column("id", "integer", false)
+                },
+            ],
+        ),
+        live_table(
+            "children",
+            vec![
+                db_primary_key("id", "integer"),
+                db_column("tenant_id", "integer", true),
+                db_column("parent_id", "integer", true),
+            ],
+        ),
+    ];
+    let diff = diff(
+        MigrationDialect::Postgres,
+        &model(vec![parents, children]),
+        &live,
+    );
+
+    let sql = diff.up_sql();
+    assert!(
+        sql.contains(
+            "ALTER TABLE \"children\" ADD CONSTRAINT \"fk_children_parent\" FOREIGN KEY (\"tenant_id\", \"parent_id\") REFERENCES \"parents\" (\"tenant_id\", \"id\") ON DELETE CASCADE"
+        ),
+        "missing composite FK ALTER:\n{sql}"
+    );
+}
+
+#[test]
+fn mysql_new_tables_get_foreign_keys_via_alter() {
+    let parents = table("parents", vec![primary_key("id", "i32")]);
+    let mut children = table("children", vec![primary_key("id", "i32")]);
+    let mut parent_id = column("parent_id", "i32");
+    parent_id.is_foreign_key = true;
+    parent_id.fk_referenced_table = Some("parents".to_string());
+    parent_id.fk_referenced_column = Some("id".to_string());
+    parent_id.fk_on_delete = Some("CASCADE".to_string());
+    children.columns.push(parent_id);
+
+    let diff = diff(
+        MigrationDialect::MySql,
+        &model(vec![parents, children]),
+        &[],
+    );
+    let sql = diff.up_sql();
+    assert!(sql.contains("CREATE TABLE `parents`"), "{sql}");
+    assert!(sql.contains("CREATE TABLE `children`"), "{sql}");
+    assert!(
+        sql.contains(
+            "ALTER TABLE `children` ADD CONSTRAINT `fk_children_parent_id_parents` FOREIGN KEY (`parent_id`) REFERENCES `parents` (`id`) ON DELETE CASCADE"
+        ),
+        "MySQL must add FKs with ALTER after both tables exist:\n{sql}"
+    );
+    let create_parents = sql.find("CREATE TABLE `parents`").unwrap();
+    let add_fk = sql.find("ADD CONSTRAINT").unwrap();
+    assert!(create_parents < add_fk, "{sql}");
+}
+
+#[test]
+fn postgres_new_sequence_column_creates_sequence() {
+    let items = table(
+        "items",
+        vec![SnapshotColumn {
+            is_sequence: true,
+            sequence_name: Some("items_id_seq".to_string()),
+            is_required: true,
+            ..column("id", "i32")
+        }],
+    );
+
+    let diff = diff(MigrationDialect::Postgres, &model(vec![items]), &[]);
+    let sql = diff.up_sql();
+    assert!(
+        sql.contains("CREATE SEQUENCE IF NOT EXISTS \"items_id_seq\""),
+        "missing sequence:\n{sql}"
+    );
+    assert!(
+        sql.contains("DEFAULT nextval('items_id_seq')"),
+        "missing nextval default:\n{sql}"
+    );
+}
+
+#[test]
+fn into_migration_embeds_history_insert() {
+    let items = table("items", vec![primary_key("id", "i32")]);
+    let diff = diff(MigrationDialect::Sqlite, &model(vec![items]), &[]);
+
+    let migration = diff.into_migration("Upgrade_2026", MigrationDialect::Sqlite);
+    assert_eq!(migration.id, "Upgrade_2026");
+    assert!(
+        migration.up_sql.contains("CREATE TABLE \"items\""),
+        "plan statements missing:\n{}",
+        migration.up_sql
+    );
+    assert!(
+        migration
+            .up_sql
+            .contains("INSERT INTO \"__ef_migrations_history\""),
+        "history insert missing:\n{}",
+        migration.up_sql
+    );
+    assert!(migration.up_sql.contains("'Upgrade_2026'"));
+    assert!(migration.down_sql.contains("no automatic down migration"));
 }

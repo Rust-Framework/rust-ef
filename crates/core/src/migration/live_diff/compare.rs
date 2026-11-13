@@ -48,13 +48,26 @@ pub(crate) fn detect<'a>(
 
     for et in model.entity_types.iter().filter(|et| !et.is_view) {
         match find_table_ci(live, &et.table_name) {
-            None => deltas.push(TableDelta {
+        None => {
+            // Unsupported index definitions are reported even for tables that
+            // are created from scratch, so the operator sees them in the plan
+            // instead of only as a comment inside the generated SQL.
+            for index in &et.indexes {
+                match index_support(dialect, &et.table_name, index) {
+                    IndexSupport::IgnoredInclude(warning) | IndexSupport::Skipped(warning) => {
+                        warnings.push(warning)
+                    }
+                    IndexSupport::Supported => {}
+                }
+            }
+            deltas.push(TableDelta {
                 table: et.table_name.clone(),
                 model: Some(et),
                 live: None,
                 changes: Vec::new(),
                 rebuild_reasons: Vec::new(),
-            }),
+            })
+        }
             Some(live_table) => {
                 let delta = compare_table(et, live_table, dialect, &mut warnings);
                 deltas.push(delta);
@@ -116,7 +129,7 @@ fn compare_table<'a>(
 
     compare_primary_key(&mut delta, et, live, dialect, warnings);
     compare_columns(&mut delta, et, live, dialect, warnings);
-    compare_indexes(&mut delta, et, live, warnings);
+    compare_indexes(&mut delta, et, live, dialect, warnings);
     compare_foreign_keys(&mut delta, et, live, warnings);
     compare_checks(&mut delta, et, live, warnings);
 
@@ -215,6 +228,21 @@ fn compare_columns(
             }
             Some(live_column) => {
                 if !column_matches(dialect, column, live_column) {
+                    // PostgreSQL cannot change a generated-column expression;
+                    // the DDL generator only emits a warning comment, which the
+                    // runtime plan must surface as a structured warning.
+                    if dialect == MigrationDialect::Postgres && column.computed_sql.is_some() {
+                        warnings.push(DiffWarning::warning(
+                            WarningKind::ManualAction,
+                            Some(table.clone()),
+                            format!(
+                                "PostgreSQL cannot alter a generated column expression; \
+                                 drop and re-add column '{}.{}' manually",
+                                table, column.column_name
+                            ),
+                        ));
+                        continue;
+                    }
                     let reason = describe_column_difference(dialect, column, live_column);
                     delta.rebuild_reasons.push(reason);
                     delta.changes.push(SchemaChange::AlterColumn {
@@ -491,10 +519,50 @@ pub(crate) fn expected_indexes(et: &SnapshotEntityType) -> Vec<SnapshotIndex> {
     indexes
 }
 
+/// How well a dialect can represent an expected index.
+enum IndexSupport {
+    Supported,
+    /// Created without the unsupported part (`INCLUDE`), with a warning.
+    IgnoredInclude(DiffWarning),
+    /// Not created at all (MySQL has no partial non-unique indexes).
+    Skipped(DiffWarning),
+}
+
+fn index_support(
+    dialect: MigrationDialect,
+    table: &str,
+    index: &SnapshotIndex,
+) -> IndexSupport {
+    if dialect == MigrationDialect::MySql && index.filter.is_some() && !index.is_unique {
+        return IndexSupport::Skipped(DiffWarning::warning(
+            WarningKind::UnsupportedChange,
+            Some(table.to_string()),
+            format!(
+                "index '{}' on '{}' is a partial non-unique index; MySQL has no partial indexes, \
+                 so the index is skipped (make it unique or remove the filter)",
+                index.name, table
+            ),
+        ));
+    }
+    if dialect != MigrationDialect::Postgres && !index.include.is_empty() {
+        return IndexSupport::IgnoredInclude(DiffWarning::warning(
+            WarningKind::UnsupportedChange,
+            Some(table.to_string()),
+            format!(
+                "index '{}' on '{}' declares INCLUDE columns; only PostgreSQL supports INCLUDE, \
+                 so the columns are ignored for this dialect",
+                index.name, table
+            ),
+        ));
+    }
+    IndexSupport::Supported
+}
+
 fn compare_indexes(
     delta: &mut TableDelta<'_>,
     et: &SnapshotEntityType,
     live: &DbTable,
+    dialect: MigrationDialect,
     warnings: &mut Vec<DiffWarning>,
 ) {
     let table = delta.table.clone();
@@ -531,10 +599,20 @@ fn compare_indexes(
             matched_live[position] = true;
             continue;
         }
-        delta.changes.push(SchemaChange::CreateDeclaredIndex {
-            table: table.clone(),
-            index: index.clone(),
-        });
+        match index_support(dialect, &table, index) {
+            IndexSupport::Supported => delta.changes.push(SchemaChange::CreateDeclaredIndex {
+                table: table.clone(),
+                index: index.clone(),
+            }),
+            IndexSupport::IgnoredInclude(warning) => {
+                warnings.push(warning);
+                delta.changes.push(SchemaChange::CreateDeclaredIndex {
+                    table: table.clone(),
+                    index: index.clone(),
+                });
+            }
+            IndexSupport::Skipped(warning) => warnings.push(warning),
+        }
     }
 
     let live_pk: Vec<String> = live
