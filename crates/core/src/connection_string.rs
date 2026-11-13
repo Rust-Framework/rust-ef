@@ -32,8 +32,14 @@ use crate::migration::MigrationDialect;
 use std::fmt;
 
 /// PostgreSQL TLS modes accepted by libpq / sqlx.
-pub const POSTGRES_SSL_MODES: &[&str] =
-    &["disable", "allow", "prefer", "require", "verify-ca", "verify-full"];
+pub const POSTGRES_SSL_MODES: &[&str] = &[
+    "disable",
+    "allow",
+    "prefer",
+    "require",
+    "verify-ca",
+    "verify-full",
+];
 
 /// MySQL TLS modes accepted by sqlx's MySQL connector.
 pub const MYSQL_SSL_MODES: &[&str] = &[
@@ -206,7 +212,8 @@ impl ProviderKind {
 
     /// Default TCP port for network providers; `None` for SQLite.
     pub fn default_port(self) -> Option<u16> {
-        self.network_protocol().map(ConnectionProtocol::default_port)
+        self.network_protocol()
+            .map(ConnectionProtocol::default_port)
     }
 
     /// Migration dialect matching this provider.
@@ -280,9 +287,10 @@ impl ConnectionString {
         };
         let (username, password) = match userinfo {
             Some(userinfo) => match userinfo.split_once(':') {
-                Some((username, password)) => {
-                    (Some(percent_decode(username)?), Some(percent_decode(password)?))
-                }
+                Some((username, password)) => (
+                    Some(percent_decode(username)?),
+                    Some(percent_decode(password)?),
+                ),
                 None => (Some(percent_decode(userinfo)?), None),
             },
             None => (None, None),
@@ -359,7 +367,10 @@ impl ConnectionString {
             } else {
                 continue;
             };
-            if !whitelist.iter().any(|mode| mode.eq_ignore_ascii_case(value)) {
+            if !whitelist
+                .iter()
+                .any(|mode| mode.eq_ignore_ascii_case(value))
+            {
                 return Err(ConnectionStringError::InvalidSslMode(
                     parameter,
                     value.clone(),
@@ -443,7 +454,9 @@ impl std::str::FromStr for ConnectionString {
 // URL primitives
 // ---------------------------------------------------------------------------
 
-fn parse_host_and_port(host_port: &str) -> Result<(Option<String>, Option<u16>), ConnectionStringError> {
+fn parse_host_and_port(
+    host_port: &str,
+) -> Result<(Option<String>, Option<u16>), ConnectionStringError> {
     if let Some(rest) = host_port.strip_prefix('[') {
         let (host, after) = rest.split_once(']').ok_or_else(|| {
             ConnectionStringError::Malformed("unterminated bracketed IPv6 host".into())

@@ -101,7 +101,8 @@ fn postgres_sslmode_is_whitelisted() {
         assert_eq!(cs.option("sslmode"), Some(*mode));
     }
 
-    let err = ConnectionString::parse("postgres://u:p@db:5432/travel?sslmode=disabled").unwrap_err();
+    let err =
+        ConnectionString::parse("postgres://u:p@db:5432/travel?sslmode=disabled").unwrap_err();
     assert!(
         matches!(
             err,
@@ -185,8 +186,8 @@ fn a_password_without_a_username_is_rejected() {
 
 #[test]
 fn connection_string_errors_convert_to_typed_ef_errors() {
-    let err: rust_ef::error::EFError = ConnectionStringError::UnsupportedProtocol("oracle".into())
-        .into();
+    let err: rust_ef::error::EFError =
+        ConnectionStringError::UnsupportedProtocol("oracle".into()).into();
     assert!(err.message().contains("oracle"));
     // The typed cause stays reachable through the error chain.
     let source = std::error::Error::source(&err).expect("source");
@@ -200,8 +201,14 @@ fn provider_kind_maps_names_schemes_and_dialects() {
         ProviderKind::parse("POSTGRESQL").unwrap(),
         ProviderKind::Postgres
     );
-    assert_eq!(ProviderKind::parse("mariadb").unwrap().canonical_name(), "MYSQL");
-    assert_eq!(ProviderKind::parse("postgresql").unwrap().canonical_name(), "POSTGRESQL");
+    assert_eq!(
+        ProviderKind::parse("mariadb").unwrap().canonical_name(),
+        "MYSQL"
+    );
+    assert_eq!(
+        ProviderKind::parse("postgresql").unwrap().canonical_name(),
+        "POSTGRESQL"
+    );
     assert_eq!(
         ProviderKind::Postgres.url_scheme(),
         Some(ConnectionProtocol::Postgres.scheme())

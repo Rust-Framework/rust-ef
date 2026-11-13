@@ -50,12 +50,18 @@ async fn bootstrap_creates_all_tables_without_creating_history() {
     let engine = MigrationEngine::new(MigrationDialect::Sqlite);
 
     engine
-        .bootstrap(&*provider, &[BootUser::entity_meta(), BootOrder::entity_meta()])
+        .bootstrap(
+            &*provider,
+            &[BootUser::entity_meta(), BootOrder::entity_meta()],
+        )
         .await
         .expect("bootstrap an empty database");
 
     let tables = table_names(&*provider).await;
-    assert!(tables.iter().any(|t| t == "boot_users"), "tables: {tables:?}");
+    assert!(
+        tables.iter().any(|t| t == "boot_users"),
+        "tables: {tables:?}"
+    );
     assert!(
         tables.iter().any(|t| t == "boot_orders"),
         "tables: {tables:?}"
@@ -97,7 +103,10 @@ async fn bootstrap_does_not_record_a_migration_or_need_history() {
         .get_applied_migrations(&*provider)
         .await
         .expect("history lookup on a bootstrapped database");
-    assert!(applied.is_empty(), "bootstrap is not a migration: {applied:?}");
+    assert!(
+        applied.is_empty(),
+        "bootstrap is not a migration: {applied:?}"
+    );
 }
 
 #[tokio::test]
@@ -123,10 +132,7 @@ struct BootRole {
     pub name: String,
 }
 
-fn role_seeds<'a>(
-    builder: &'a ModelBuilder,
-    metas: &'a [EntityTypeMeta],
-) -> Vec<SeedData<'a>> {
+fn role_seeds<'a>(builder: &'a ModelBuilder, metas: &'a [EntityTypeMeta]) -> Vec<SeedData<'a>> {
     metas
         .iter()
         .filter(|meta| !meta.is_view)
@@ -203,4 +209,3 @@ async fn dbcontext_bootstrap_runs_bootstrap_then_seed_in_one_call() {
         "tables: {tables:?}"
     );
 }
-

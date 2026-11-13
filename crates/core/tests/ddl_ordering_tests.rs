@@ -74,9 +74,9 @@ fn referenced_index_is_created_before_the_foreign_key() {
         let foreign_key = format!(
             "ALTER TABLE {q}ord_children{q} ADD CONSTRAINT {q}fk_ord_children_parent_code_ord_parents{q}"
         );
-        let index_pos = sql
-            .find(&index)
-            .unwrap_or_else(|| panic!("{dialect:?} script is missing the referenced index:\n{sql}"));
+        let index_pos = sql.find(&index).unwrap_or_else(|| {
+            panic!("{dialect:?} script is missing the referenced index:\n{sql}")
+        });
         let fk_pos = sql
             .find(&foreign_key)
             .unwrap_or_else(|| panic!("{dialect:?} script is missing the FK constraint:\n{sql}"));
@@ -137,6 +137,12 @@ async fn sqlite_executes_the_generated_script_without_reordering() {
         .iter()
         .map(|row| String::try_from(row[0].clone()).unwrap())
         .collect();
-    assert!(names.iter().any(|n| n == "ord_parents"), "tables: {names:?}");
-    assert!(names.iter().any(|n| n == "ord_children"), "tables: {names:?}");
+    assert!(
+        names.iter().any(|n| n == "ord_parents"),
+        "tables: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "ord_children"),
+        "tables: {names:?}"
+    );
 }

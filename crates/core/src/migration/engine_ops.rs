@@ -158,8 +158,7 @@ impl MigrationEngine {
             if seed.meta.is_view || seed.rows.is_empty() {
                 continue;
             }
-            self.apply_seed_data(provider, seed.meta, seed.rows)
-                .await?;
+            self.apply_seed_data(provider, seed.meta, seed.rows).await?;
         }
         Ok(())
     }
@@ -187,8 +186,9 @@ impl MigrationEngine {
                             not_executed: statements[index + 1..].to_vec(),
                             cause: err.to_string(),
                         };
-                        return Err(EFError::migration(failure.to_string())
-                            .with_source(Box::new(failure)));
+                        return Err(
+                            EFError::migration(failure.to_string()).with_source(Box::new(failure))
+                        );
                     }
                 }
             }
