@@ -348,8 +348,10 @@ async fn sqlite_upgrade_adds_column_and_index_preserving_data() {
     let diff = engine.diff_metas(&widget_v2_model(), &live);
 
     let sql = diff.up_sql();
+    // EF-12 infers NOT NULL for non-Option fields, so `stock: i32` is rendered
+    // NOT NULL; the configured default backfills existing rows.
     assert!(
-        sql.contains("ALTER TABLE \"widgets\" ADD COLUMN \"stock\" INTEGER NULL DEFAULT 0"),
+        sql.contains("ALTER TABLE \"widgets\" ADD COLUMN \"stock\" INTEGER NOT NULL DEFAULT 0"),
         "expected ADD COLUMN:\n{sql}"
     );
     assert!(
