@@ -345,4 +345,77 @@ mod linq_tests {
             .unwrap();
         assert_eq!(rows.len(), 1);
     }
+
+    // ── EF-1: local-collection `IN` and value `LIKE` ──
+
+    /// Travel hot paths: bulk-ID lookups with `Vec<i64>` and `Vec<String>`
+    /// receivers must both compile to `IN`.
+    #[test]
+    fn test_linq_local_collections_i64_and_string_in_sql() {
+        let mut ctx = make_ctx();
+        ctx.set::<LinqBlog>();
+
+        let ids: Vec<i64> = vec![8, 2];
+        let sql = ctx
+            .set::<LinqBlog>()
+            .filter(linq!(|b: LinqBlog| ids.contains(b.rating)))
+            .to_sql();
+        assert!(sql.contains("rating IN (?, ?)"), "Vec<i64>: {sql}");
+
+        let urls: Vec<String> = vec!["a.example".into(), "b.example".into()];
+        let sql = ctx
+            .set::<LinqBlog>()
+            .filter(linq!(|b: LinqBlog| urls.contains(b.url)))
+            .to_sql();
+        assert!(sql.contains("url IN (?, ?)"), "Vec<String>: {sql}");
+    }
+
+    /// EF-1 acceptance: a local collection on the receiver side compiles to
+    /// SQL `IN`, not to `COLUMN_<RECEIVER>`.
+    #[test]
+    fn test_linq_local_collection_in_sql() {
+        let mut ctx = make_ctx();
+        ctx.set::<LinqBlog>();
+
+        let ids: Vec<i32> = vec![8, 2];
+        let sql = ctx
+            .set::<LinqBlog>()
+            .filter(linq!(|b: LinqBlog| ids.contains(b.rating)))
+            .to_sql();
+        assert!(sql.contains("rating IN (?, ?)"), "expected IN, got: {sql}");
+    }
+
+    /// EF-1: the IN receiver is a collection expression, not a column — it may
+    /// be anything iterable (`Vec`, field, function call, `&ids[..]`).
+    #[test]
+    fn test_linq_in_receiver_accepts_collection_expression() {
+        fn ids_for_in() -> Vec<i32> {
+            vec![8, 2]
+        }
+
+        let mut ctx = make_ctx();
+        ctx.set::<LinqBlog>();
+
+        let sql = ctx
+            .set::<LinqBlog>()
+            .filter(linq!(|b: LinqBlog| ids_for_in().contains(b.rating)))
+            .to_sql();
+        assert!(sql.contains("rating IN (?, ?)"), "expected IN, got: {sql}");
+    }
+
+    /// EF-1 acceptance: `b.name.contains(value)` must keep compiling to LIKE
+    /// (the receiver really is a column in this spelling).
+    #[test]
+    fn test_linq_contains_value_still_like_sql() {
+        let mut ctx = make_ctx();
+        ctx.set::<LinqBlog>();
+
+        let needle = "dotnet";
+        let sql = ctx
+            .set::<LinqBlog>()
+            .filter(linq!(|b: LinqBlog| b.url.contains(needle)))
+            .to_sql();
+        assert!(sql.contains("url LIKE ?"), "expected LIKE, got: {sql}");
+        assert!(!sql.contains(" IN "), "must not become IN: {sql}");
+    }
 }
