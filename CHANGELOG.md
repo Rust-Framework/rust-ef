@@ -9,6 +9,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.4.0] — 2026-11-13 — 依赖图外键边、聚合空集中性值、运行时 diff 反向计划
+
+> **English** · **简体中文**
+>
+> Additive release for the 2.3 public API: no signature removed or changed, and
+> `MigrationDiff` keeps its fields (struct literals stay compatible). Two behaviour fixes
+> (EF-16 insertion order, EF-17 empty-set aggregates) and one new optional feature
+> (`webx`, zero cost unless enabled).
+
+#### English
+
+**Fixed**
+
+- **EF-16 — save order for single-sided relationships.** `DependencyGraph::build` now
+  derives type-level dependencies from three metadata sources: `HasMany`/`ManyToMany`
+  (existing), `BelongsTo` navigations (new — the declaring entity is the dependent, so the
+  edge is reversed relative to `HasMany`), and foreign-key metadata (new: scalar
+  `#[foreign_key(Target)]` and `has_foreign_key` composite keys, reverse-looked-up from the
+  referenced table name, excluding views/keyless entities). A child that declares the
+  relationship twice gets one deduplicated edge. `tx.add(User) + tx.add(Member)` with only
+  `#[foreign_key(User)]`/`BelongsTo<User>` (no `HasMany<Member>` on the parent) now inserts
+  the parent first in one `save_changes()`. Self references/cycles keep the existing
+  ignore/fallback strategy; `HasOne` does not add an edge (its FK lives on the other side).
+- **EF-17 — aggregates over empty input.** `linq!(…; sum col)` / `avg` now normalise the SQL
+  `NULL` cell of an empty result set (or an all-`NULL` column) to the neutral value `0.0`
+  instead of failing with `EFError::TypeConversion("SUM result is not f64")`. Non-empty
+  results, SQL text, signatures and error text are unchanged; `min`/`max` still return
+  `None` and `count` is untouched.
+
+**Added**
+
+- **EF-9 supplement — `MigrationDiff::reverse(dialect)`.** Purely additive runtime diffs
+  can render a reverse plan (`CREATE TABLE`→`DROP TABLE`, `ADD COLUMN`→`DROP COLUMN`,
+  `CREATE INDEX`→`DROP INDEX`, `ADD CONSTRAINT`→the matching drop, `CREATE SEQUENCE`→
+  `DROP SEQUENCE`, in reverse order). Diffs with drops, column changes, table rebuilds,
+  `manual_action` warnings or comment changes on pre-existing objects return a typed
+  `EFError::Migration` that lists the irreversible items.
+- **`MigrationDiff::irreversible_items()`**; `report()` now ends with an `irreversible
+  items` section so an upgrade report states what cannot be rolled back automatically.
+- **Optional `webx` feature (XR-1)**: `impl From<EFError> for rust_webx_core::error::Error`
+  plus `rust_ef::webx::map_ef_error`, so a web handler can `?`-propagate an `EFError` into
+  `ActionResult<T>`. Default off (no dependency in the default build); enable with
+  `rust-ef = { version = "2.4", features = ["webx"] }`. Mapping: `NotFound` 404,
+  `ModelValidation`/`Query`/`TypeConversion` 400, `ConcurrencyConflict`/`UniqueViolation`
+  409 (driver constraint/table metadata is never exposed), `Connection`/`Transaction` 503,
+  `Migration`/`Configuration`/`Provider`/`ChangeTracking`/`Other` 500 with `public_detail()`
+  `None`. The `From` impl cannot live in a separate crate (orphan rule E0117); a future
+  shared cross-framework crate belongs in a `rust-core` crate under the Rust-Framework
+  organisation.
+
+**Compatibility**
+
+- `EFError` stays **not** `#[non_exhaustive]` in 2.4 (adding it is a breaking change for
+  exhaustive downstream matches); it is scheduled for 3.0. The `webx` mapping matches all
+  13 variants exhaustively, so a future variant fails compilation instead of being
+  silently mis-mapped.
+- Docs: relationship save order (EF-16), aggregate empty-set semantics (EF-17), runtime
+  reverse plans/irreversible items (EF-9) and the `webx` feature.
+
+#### 简体中文
+
+**修复**
+
+- **EF-16 — 单侧关系声明的同批保存顺序**：`DependencyGraph::build` 现在从三类元数据推导
+  类型级依赖：`HasMany`/`ManyToMany`（原有）、`BelongsTo` 导航（新增，方向与 `HasMany` 相反）、
+  外键元数据（新增：标量 `#[foreign_key(Target)]` 与 `has_foreign_key` 复合键，按被引用表名
+  反查 principal，排除 view/keyless）。同一对类型重复声明只保留一条去重边。仅子侧声明
+  `#[foreign_key(User)]`/`BelongsTo<User>`（父侧无 `HasMany<Member>`）时，单次
+  `save_changes()` 也会先插父行。自引用/环沿用既有忽略/降级；`HasOne` 不加边。
+- **EF-17 — 空集聚合**：`sum`/`avg` 对空结果集（或全 `NULL` 列）的 SQL `NULL` 单元格在结果层
+  归一为中性值 `0.0`，不再报 `EFError::TypeConversion("SUM result is not f64")`；非空结果、
+  SQL 文本、签名、错误文案均不变；`min`/`max` 仍 `None`，`count` 不受影响。
+
+**新增**
+
+- **EF-9 附加 — `MigrationDiff::reverse(dialect)`**：纯加性运行时 diff 可生成逆序反向计划；
+  含删除/改列/表重建/`manual_action`/已有对象注释变更时返回 typed `EFError::Migration`
+  并列出不可逆项。
+- **`MigrationDiff::irreversible_items()`**；`report()` 末尾新增 `irreversible items` 段。
+- **可选 `webx` feature（XR-1）**：`impl From<EFError> for rust_webx_core::Error` +
+  `rust_ef::webx::map_ef_error`，Web Handler 里 `?` 可直接把 `EFError` 传播进
+  `ActionResult<T>`；默认关闭、零依赖。映射：404/400/409/503/500（唯一冲突不泄露
+  constraint/table，5xx 走 `public_detail() = None`）。`From` 不能放在独立 crate
+  （孤儿规则 E0117）；未来如需跨框架公共库，另立 `rust-core` 归 Rust-Framework 组织。
+
+**兼容性**
+
+- `EFError` 在 2.4 仍**不是** `#[non_exhaustive]`（对下游穷举 match 属破坏性变更），推迟到
+  3.0；`webx` 映射穷举 13 个变体，未来新增变体会编译失败而不是被静默误映射。
+
 ## [2.3.0] — 2026-11-13 — 运行时升级闭环、安装可脚本化、错误与查询模型化
 
 > **English** · **简体中文**
