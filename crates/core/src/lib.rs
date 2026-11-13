@@ -46,6 +46,7 @@ pub mod provider;
 pub mod query;
 pub mod registration;
 pub mod relations;
+pub mod schema;
 pub(crate) mod session;
 pub mod tracking;
 pub mod transaction;
