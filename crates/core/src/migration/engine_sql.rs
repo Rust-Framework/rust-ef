@@ -1,4 +1,4 @@
-//! `MigrationEngine` SQL generation — Up/Down DDL from `SchemaChange` lists.
+﻿//! `MigrationEngine` SQL generation 鈥?Up/Down DDL from `SchemaChange` lists.
 
 use super::ddl_expr::quote_string;
 use super::dialect::MigrationDialect;
@@ -45,7 +45,7 @@ impl MigrationEngine {
     /// Renders a full column definition for CREATE TABLE / ADD COLUMN / MySQL
     /// MODIFY COLUMN, including generated columns, collation, default and
     /// (MySQL) inline comment.
-    fn render_column_definition(&self, col: &SnapshotColumn) -> String {
+    pub(super) fn render_column_definition(&self, col: &SnapshotColumn) -> String {
         let q = |s: &str| self.dialect.quote(s);
         let (col_type, mysql_auto_increment) = self.column_type(col);
 
@@ -296,7 +296,7 @@ impl MigrationEngine {
         }
     }
 
-    fn composite_fk_clause(&self, fk: &SnapshotForeignKey) -> String {
+    pub(super) fn composite_fk_clause(&self, fk: &SnapshotForeignKey) -> String {
         let q = |s: &str| self.dialect.quote(s);
         let cols: Vec<String> = fk.columns.iter().map(|c| q(c)).collect();
         let ref_cols: Vec<String> = fk.referenced_columns.iter().map(|c| q(c)).collect();
