@@ -2,6 +2,8 @@
 
 结论：**可空列 / 带默认值的列可以全自动生成并应用**；完整链路需要三步（导出当前快照 → 生成迁移 → 应用迁移）。框架负责 diff 与 DDL，业务不再手写 `ALTER TABLE`。
 
+> 2.3.0 的其它新入口（`ConnectionString` / `ProviderKind` / `introspect` / `bootstrap` 等）与兼容点见 [v2.3 迁移指南](../../v2.3-migration-guide.md)，逐条破坏性说明见仓库根 CHANGELOG。
+
 ## 1. 应用内导出当前快照
 
 Rust 没有运行时反射，独立 CLI 看不到应用通过 `inventory` 注册的实体，所以**快照必须由应用自己导出**。加一个很小的子命令或 `src/bin/snapshot.rs`：
@@ -100,7 +102,7 @@ let live = provider.introspect().await?;         // 框架内省（EF-5，返回
 let diff = engine.diff_metas(&model, &live);     // 或 engine.diff(&snapshot, &live)
 if !diff.is_empty() {
     tracing::info!(report = %diff.report(), "runtime schema upgrade"); // 升级报告（含重建表清单/warnings）
-    engine.apply_diff(&provider, &diff).await?;  // 原子应用
+    engine.apply_diff(&provider, &diff).await?;  // SQLite/PG 单事务；MySQL 逐条执行（DDL 隐式提交，非原子）
 }
 ```
 

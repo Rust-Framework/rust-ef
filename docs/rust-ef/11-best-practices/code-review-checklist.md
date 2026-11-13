@@ -4,7 +4,7 @@
 
 - [ ] 所有实体是否派生了 `Clone` 和 `Debug`？
 - [ ] 主键是否标注了 `#[primary_key]`？
-- [ ] 字符串必填列是否加了 `#[required]`？
+- [ ] 非 `Option` 字段默认 `NOT NULL`（2.3.0 类型推断）；确实需要可空的字段是否用了 `Option<T>` 或显式 `.is_nullable()`？
 - [ ] 导航属性是否加了 `#[navigation]`？
 - [ ] 外键是否标注了 `#[foreign_key(Entity)]`？
 

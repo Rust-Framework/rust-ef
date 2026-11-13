@@ -42,11 +42,27 @@ ctx.save_changes().await?;
 
 ## 必填约束
 
-| 类型 | 默认可空性 | 加 `#[required]` 后 |
-|------|-----------|-------------------|
-| `String` | 可空 | `NOT NULL` |
-| `i32` / `f64` | 非空（值类型） | 无变化 |
-| `Option<T>` | 可空 | 冲突，不建议同时使用 |
+自 2.3.0 起，必填性默认**按 Rust 类型推断**（EF-12）；`#[required]` 只用于把 `Option<T>` 提升为 `NOT NULL`：
+
+| 类型 | 默认可空性 | 加 `#[required]` 后 | 显式覆盖 |
+|------|-----------|-------------------|----------|
+| `String` | `NOT NULL`（非 `Option`） | 无变化 | `.is_nullable()` 改为可空 |
+| `i32` / `f64` 等标量 | `NOT NULL` | 无变化 | `.is_nullable()` 改为可空 |
+| `Option<T>` | 可空 | `NOT NULL`（冲突写法，不建议） | `.is_required()` 同义 |
+
+Fluent 覆盖写在 `IEntityTypeConfiguration` 中：
+
+```rust
+#[derive(Default)]
+pub struct BlogConfig;
+
+#[entity(Blog)]
+impl IEntityTypeConfiguration<Blog> for BlogConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, Blog>) {
+        entity.property_named("summary").is_nullable(); // 非 Option 字段改为可空
+    }
+}
+```
 
 ## 外键（标量与复合）
 

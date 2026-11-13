@@ -57,7 +57,37 @@ pub struct Product {
 
 ### `#[required]`
 
-标记列非空。对 `String` 等类型尤其重要，否则默认为可空。
+2.3.0 起**必填性默认由 Rust 类型推断**：`Option<T>` → 可空，其它标量（`String` / `i32` / `bool` …）→ `NOT NULL`。
+`#[required]` 只用于把 `Option<T>` 提升为 `NOT NULL`（对非 `Option` 类型没有额外效果）。
+需要把非 `Option` 字段显式改为可空时，用 Fluent `.is_nullable()` / `.is_optional()`（见下）。
+
+### 必填 / 可空推断与覆盖
+
+| 字段写法 | 生成的列 |
+|---|---|
+| `pub email: String` | `NOT NULL`（类型推断） |
+| `pub nickname: Option<String>` | `NULL` |
+| `#[required] pub tenant_id: Option<i32>` | `NOT NULL`（属性覆盖） |
+| `pub score: i64` + `property_named("score").is_nullable()` | `NULL`（Fluent 覆盖） |
+
+Fluent 覆盖写在 `IEntityTypeConfiguration` 里（与 EFCore 的 `IsRequired()` / `IsNullable()` 对齐）：
+
+```rust
+#[derive(Default)]
+pub struct OrderConfig;
+
+#[entity(Order)]
+impl IEntityTypeConfiguration<Order> for OrderConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, Order>) {
+        // 非 Option 字段要可空：显式覆盖类型推断
+        entity.property_named("note").is_nullable();
+        // 等价别名：.is_optional()；反向提升：.is_required()
+    }
+}
+```
+
+> **升级提示（2.2 → 2.3）**：已装库不受影响，但旧快照对新模型做 diff 会把原先"可空"的非 `Option`
+> 列报告为 `NULL → NOT NULL`；请重新导出 `model_snapshot.json` 并 review 首个迁移（见 CHANGELOG 2.3.0）。
 
 ### `#[max_length(n)]`
 
@@ -124,7 +154,7 @@ pub struct Product {
 }
 ```
 
-对应 Fluent API：`property_named(...).has_column_type(...)`、`.has_precision(p, s)`、`.is_fixed_length()`、`.has_collation(...)`、`.has_comment(...)`、`.has_default(...)`、`.has_computed_column_sql(...).is_stored()`、`.is_concurrency_token()`、`.is_optional()`。
+对应 Fluent API：`property_named(...).has_column_type(...)`、`.has_precision(p, s)`、`.is_fixed_length()`、`.has_collation(...)`、`.has_comment(...)`、`.has_default(...)`、`.has_computed_column_sql(...).is_stored()`、`.is_concurrency_token()`、`.is_required()` / `.is_nullable()`（别名 `.is_optional()`）。
 
 计算列会从 `INSERT/UPDATE` 中自动排除（数据库负责计算）。
 
