@@ -27,6 +27,7 @@ docs/
 
 ## 阅读
 
+- **在线站点**：<https://rust-framework.github.io/rust-ef/>（mdBook，由 `.github/workflows/docs.yml` 自动构建部署；本地预览：`mdbook serve docs/rust-ef`）
 - [前言](rust-ef/FOREWORD.md) — 了解本书定位、读者画像与阅读路径
 - [全书目录](rust-ef/INDEX.md)
 

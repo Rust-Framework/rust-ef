@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Rust Entity Framework - An EFCore-inspired ORM for Rust"
 keywords = ["orm", "efcore", "entity-framework", "database", "postgresql"]
 categories = ["database"]
