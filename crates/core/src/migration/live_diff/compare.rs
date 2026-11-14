@@ -132,7 +132,7 @@ fn compare_table<'a>(
     compare_columns(&mut delta, et, live, dialect, warnings);
     compare_indexes(&mut delta, et, live, dialect, warnings);
     compare_foreign_keys(&mut delta, et, live, warnings);
-    compare_checks(&mut delta, et, live, warnings);
+    compare_checks(&mut delta, et, live, dialect, warnings);
 
     delta
 }
@@ -289,13 +289,22 @@ fn column_matches(dialect: MigrationDialect, model: &SnapshotColumn, live: &DbCo
     if !column_types_match(dialect, model, live) {
         return false;
     }
+    // Sequence/identity columns get a server-generated default (`nextval(...)`
+    // on PostgreSQL) that the model does not repeat. Comparing it would emit a
+    // spurious `ALTER COLUMN` for every primary key.
+    if model.is_auto_increment || live.is_auto_increment {
+        return true;
+    }
     match (&model.default_value, &live.default_value) {
         (None, None) => true,
         // A missing default is a real difference on every dialect.
         (Some(_), None) => false,
-        // Server-generated implicit defaults (e.g. PostgreSQL `nextval`) are not
-        // part of the model; do not flag them.
-        (None, Some(_)) => dialect == MigrationDialect::Sqlite,
+        // On PostgreSQL/MySQL the server may attach an implicit default
+        // (`CURRENT_TIMESTAMP`, generated expressions, ...) that the model does
+        // not describe; it cannot be verified reliably, so it is not drift.
+        // SQLite reports the original DDL literal verbatim, where a live-only
+        // default is a real difference.
+        (None, Some(_)) => dialect != MigrationDialect::Sqlite,
         // Default text is normalized by the server on PostgreSQL/MySQL; only
         // SQLite reports the original literal verbatim (`PRAGMA table_info`).
         (Some(model_default), Some(live_default)) => {
@@ -439,19 +448,48 @@ fn pg_live_type(live: &DbColumn) -> String {
 }
 
 /// Canonical MySQL type name (information_schema `COLUMN_TYPE` spelling).
+///
+/// The provider reports `COLUMN_TYPE` (`varchar(64)`, `tinyint(1)`,
+/// `decimal(10,2)`, `bigint unsigned`), so the comparison can be exact. The
+/// remaining normalizations cover synonyms and MySQL-version differences:
+/// integer display widths (`int(11)`, removed in 8.0.19) and signedness
+/// (`BIGINT UNSIGNED`), which the generator never emits and must not "fix" with
+/// a destructive `MODIFY`.
 fn mysql_type(value: &str) -> String {
     let normalized = normalize_ws(value);
     let normalized = normalized
         .strip_suffix(" auto_increment")
         .unwrap_or(&normalized)
         .trim()
-        .to_string();
-    normalized
-        .replace(" integer", " int")
-        .replace("integer", "int")
         .replace("double precision", "double")
+        .replace(' ', "");
+    let normalized = normalized
         .replace("boolean", "tinyint(1)")
         .replace("bool", "tinyint(1)")
+        .replace("integer", "int");
+    let normalized = strip_integer_display_width(&normalized);
+    normalized
+        .strip_suffix("unsigned")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+/// Removes the deprecated integer display width (`int(11)` → `int`) while
+/// keeping `tinyint(1)`, which MySQL uses for `BOOLEAN`.
+fn strip_integer_display_width(value: &str) -> String {
+    for prefix in ["tinyint", "smallint", "mediumint", "bigint", "int"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            if let Some(inner) = rest.strip_prefix('(') {
+                if let Some((width, tail)) = inner.split_once(')') {
+                    if prefix == "tinyint" && width == "1" {
+                        return value.to_string();
+                    }
+                    return format!("{prefix}{tail}");
+                }
+            }
+        }
+    }
+    value.to_string()
 }
 
 fn append_length(type_name: &str, max_length: Option<usize>) -> String {
@@ -676,7 +714,11 @@ fn normalize_index_part(value: &str, is_expression: bool) -> String {
     if is_expression {
         normalize_expression(value)
     } else {
-        value.trim().to_ascii_lowercase()
+        value
+            .trim()
+            .trim_matches('"')
+            .trim_matches('`')
+            .to_ascii_lowercase()
     }
 }
 
@@ -907,6 +949,7 @@ fn compare_checks(
     delta: &mut TableDelta<'_>,
     et: &SnapshotEntityType,
     live: &DbTable,
+    dialect: MigrationDialect,
     warnings: &mut Vec<DiffWarning>,
 ) {
     let table = delta.table.clone();
@@ -930,33 +973,41 @@ fn compare_checks(
     for check in &et.checks {
         match check_status(check, live_checks) {
             CheckStatus::Exact(position) => matched_live[position] = true,
-            CheckStatus::Renamed(position) => {
+            CheckStatus::Renamed(position) | CheckStatus::Replaced(position) => {
                 matched_live[position] = true;
-                delta.changes.push(SchemaChange::DropCheck {
-                    table: table.clone(),
-                    check: snapshot_check_from_live(&live_checks[position]),
-                });
-                delta.changes.push(SchemaChange::AddCheck {
-                    table: table.clone(),
-                    check: check.clone(),
-                });
-                delta
-                    .rebuild_reasons
-                    .push(format!("CHECK constraint '{}' renamed", check.name));
-            }
-            CheckStatus::Replaced(position) => {
-                matched_live[position] = true;
-                delta.changes.push(SchemaChange::DropCheck {
-                    table: table.clone(),
-                    check: snapshot_check_from_live(&live_checks[position]),
-                });
-                delta.changes.push(SchemaChange::AddCheck {
-                    table: table.clone(),
-                    check: check.clone(),
-                });
-                delta
-                    .rebuild_reasons
-                    .push(format!("CHECK constraint '{}' redefined", check.name));
+                if dialect == MigrationDialect::Sqlite {
+                    // SQLite rebuilds the table anyway; the rebuild uses the
+                    // model definition, so the constraint is applied exactly.
+                    delta.changes.push(SchemaChange::DropCheck {
+                        table: table.clone(),
+                        check: snapshot_check_from_live(&live_checks[position]),
+                    });
+                    delta.changes.push(SchemaChange::AddCheck {
+                        table: table.clone(),
+                        check: check.clone(),
+                    });
+                    delta
+                        .rebuild_reasons
+                        .push(format!("CHECK constraint '{}' redefined", check.name));
+                } else {
+                    // EF-DIFF-01: PostgreSQL/MySQL canonicalize the expression
+                    // (casts, `ANY(ARRAY[...])`, backticks, `_utf8mb4`
+                    // introducers), so a textual mismatch is not proof that the
+                    // constraint changed. Runtime diffing is additive-only:
+                    // never DROP a constraint on a network database. Report it
+                    // for the operator to apply through a versioned migration.
+                    warnings.push(DiffWarning::info(
+                        WarningKind::ConstraintNotIntrospected,
+                        Some(table.clone()),
+                        format!(
+                            "CHECK constraint '{}' on '{}' exists but its server-canonicalized \
+                             expression could not be verified against the model; runtime diff \
+                             does not drop or recreate CHECK constraints (use a versioned migration \
+                             to change it)",
+                            check.name, table
+                        ),
+                    ));
+                }
             }
             CheckStatus::Missing => {
                 delta.changes.push(SchemaChange::AddCheck {
@@ -1037,12 +1088,123 @@ fn snapshot_check_from_live(live: &DbCheck) -> SnapshotCheck {
     }
 }
 
+/// Canonical comparison form for a CHECK predicate / index expression.
+///
+/// The model writes portable SQL, while each server stores its own
+/// canonicalization: PostgreSQL adds casts (`''::text`) and parentheses, MySQL
+/// adds backticks and `_utf8mb4` introducers. Normalization removes those
+/// differences plus insignificant whitespace and redundant outer parentheses,
+/// so a constraint created from the model compares equal after introspection.
+/// Semantic rewrites (e.g. PostgreSQL turning `IN (...)` into
+/// `= ANY (ARRAY[...])`) still differ; callers must treat an unverifiable
+/// network constraint as informational, never as a reason to DROP it
+/// (EF-DIFF-01).
 fn normalize_expression(expression: &str) -> String {
-    expression
+    let without_quotes: String = expression
+        .chars()
+        .filter(|c| *c != '`' && *c != '"')
+        .collect();
+    let without_introducers = strip_charset_introducers(&without_quotes);
+    let without_casts = strip_pg_casts(&without_introducers);
+    let compact: String = without_casts
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect::<String>()
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+    strip_redundant_outer_parens(compact)
+}
+
+/// Removes MySQL's character-set introducers (`_utf8mb4'...'`, `_latin1'...'`).
+fn strip_charset_introducers(value: &str) -> String {
+    let mut stripped = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(position) = rest.find('_') {
+        stripped.push_str(&rest[..position]);
+        let candidate = &rest[position..];
+        // Only strip a real introducer: it must be followed by a string
+        // literal, so an identifier such as `my_utf8_column` is untouched.
+        let introducer = ["_utf8mb4", "_utf8mb3", "_utf8", "_latin1"]
+            .into_iter()
+            .find(|name| candidate.starts_with(name) && candidate[name.len()..].starts_with('\''));
+        match introducer {
+            Some(name) => rest = &candidate[name.len()..],
+            None => {
+                stripped.push('_');
+                rest = &candidate[1..];
+            }
+        }
+    }
+    stripped.push_str(rest);
+    stripped
+}
+
+/// Removes PostgreSQL's `::type` casts (`''::text`, `1::bigint`).
+fn strip_pg_casts(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == ':' && chars.get(index + 1) == Some(&':') {
+            index += 2;
+            // A cast type is an identifier (possibly schema-qualified); type
+            // names with spaces are not produced for scalar casts.
+            while index < chars.len()
+                && (chars[index].is_ascii_alphanumeric()
+                    || chars[index] == '_'
+                    || chars[index] == '.')
+            {
+                index += 1;
+            }
+        } else {
+            out.push(chars[index]);
+            index += 1;
+        }
+    }
+    out
+}
+
+/// Removes balanced outer parentheses (`((a > 0))` → `a > 0`).
+///
+/// Parentheses inside single-quoted strings are ignored.
+fn strip_redundant_outer_parens(mut value: String) -> String {
+    loop {
+        if value.len() < 2 || !value.starts_with('(') || !value.ends_with(')') {
+            return value;
+        }
+        let inner = &value[1..value.len() - 1];
+        if !parens_balanced(inner) {
+            return value;
+        }
+        value = inner.to_string();
+    }
+}
+
+/// Whether every `(` in `value` has a matching `)` outside quoted strings.
+fn parens_balanced(value: &str) -> bool {
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut previous = '\0';
+    for c in value.chars() {
+        if in_string {
+            if c == '\'' && previous != '\\' {
+                in_string = false;
+            }
+        } else {
+            match c {
+                '\'' => in_string = true,
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        previous = c;
+    }
+    depth == 0
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,4 +1221,87 @@ fn eq_ci_slices<S: AsRef<str>>(left: &[S], right: &[S]) -> bool {
             .iter()
             .zip(right.iter())
             .all(|(left, right)| eq_ci(left.as_ref(), right.as_ref()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mysql_type_comparison_handles_server_spellings() {
+        assert_eq!(mysql_type("INTEGER"), "int");
+        assert_eq!(mysql_type("int(11)"), "int");
+        assert_eq!(mysql_type("tinyint(1)"), "tinyint(1)");
+        assert_eq!(mysql_type("BOOLEAN"), "tinyint(1)");
+        assert_eq!(mysql_type("BIGINT UNSIGNED"), "bigint");
+        assert_eq!(mysql_type("DECIMAL(10, 2)"), "decimal(10,2)");
+        assert_eq!(mysql_type("DOUBLE PRECISION"), "double");
+        assert_eq!(mysql_type("VARCHAR(64)"), "varchar(64)");
+        assert_eq!(mysql_type("DATETIME(6)"), "datetime(6)");
+    }
+
+    #[test]
+    fn expressions_normalize_server_canonicalization() {
+        // PostgreSQL adds a cast to non-literal string constants.
+        assert_eq!(
+            normalize_expression("COALESCE(channel_id, ''::text)"),
+            "coalesce(channel_id,'')"
+        );
+        // MySQL adds backticks and charset introducers.
+        assert_eq!(
+            normalize_expression("(`status` = _utf8mb4'PENDING')"),
+            "status='pending'"
+        );
+        // Redundant outer parentheses are ignored.
+        assert_eq!(normalize_expression("((amount > 0))"), "amount>0");
+        // Parentheses inside strings are not stripped.
+        assert_eq!(normalize_expression("note = '(x)'"), "note='(x)'");
+        // An identifier containing the introducer prefix is not altered.
+        assert_eq!(
+            normalize_expression("my_utf8_column = 'x'"),
+            "my_utf8_column='x'"
+        );
+    }
+
+    #[test]
+    fn auto_increment_defaults_are_not_drift() {
+        let model = SnapshotColumn {
+            column_name: "id".into(),
+            type_name: "i64".into(),
+            is_primary_key: true,
+            is_required: true,
+            is_auto_increment: true,
+            ..SnapshotColumn::default()
+        };
+        let live = DbColumn {
+            name: "id".into(),
+            data_type: "bigint".into(),
+            is_primary_key: true,
+            is_auto_increment: true,
+            default_value: Some("nextval('items_id_seq'::regclass)".into()),
+            ..DbColumn::default()
+        };
+        assert!(column_matches(MigrationDialect::Postgres, &model, &live));
+    }
+
+    #[test]
+    fn live_only_implicit_default_is_not_drift_on_network_databases() {
+        let model = SnapshotColumn {
+            column_name: "created_at".into(),
+            type_name: "chrono::DateTime<chrono::Utc>".into(),
+            is_required: true,
+            ..SnapshotColumn::default()
+        };
+        let live = DbColumn {
+            name: "created_at".into(),
+            data_type: "timestamp with time zone".into(),
+            is_nullable: false,
+            default_value: Some("now()".into()),
+            ..DbColumn::default()
+        };
+        assert!(column_matches(MigrationDialect::Postgres, &model, &live));
+        // SQLite reports the DDL literal verbatim, so an extra live default is
+        // still a real difference there.
+        assert!(!column_matches(MigrationDialect::Sqlite, &model, &live));
+    }
 }

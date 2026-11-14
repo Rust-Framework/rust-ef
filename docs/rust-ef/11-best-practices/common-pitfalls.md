@@ -127,6 +127,35 @@ let blog = ctx.set::<Blog>().query().find(1).await?;
 let total: f64 = linq!(ctx.set::<Blog>(); sum b.views).await?;
 ```
 
+## 10. 只看到 `db error`，定位不到失败语句（2.5.0）
+
+2.5.0 之前驱动错误被压成 `EFError::Query("Execution error: db error")`，丢失 SQLSTATE、表/列/约束和 SQL。
+现在 PostgreSQL/MySQL/SQLite 的驱动错误映射为 `EFError::Database(DatabaseErrorInfo)`：
+
+```rust
+match err {
+    EFError::UniqueViolation { constraint, table } => { /* 唯一冲突：typed，元数据不外泄 */ }
+    EFError::Database(info, _) => {
+        // 结构化：info.sqlstate / code / message / detail / hint /
+        //         table / column / constraint / sql（≤512 字符）
+        tracing::error!(
+            sqlstate = ?info.sqlstate,
+            code = ?info.code,
+            table = ?info.table,
+            column = ?info.column,
+            constraint = ?info.constraint,
+            sql = ?info.sql,
+            "statement failed"
+        );
+    }
+    _ => {}
+}
+```
+
+- 客户端仍看不到这些细节：`webx` 映射把 `Database` 归为 500 + `public_detail() = None`，只进日志。
+- 唯一/主键冲突仍优先走 `UniqueViolation`，不要改成字符串嗅探。
+- 事务/BEGIN/SAVEPOINT 失败也走同一映射，`Display` 与 `source()` 链都保留。
+
 ## 排查流程
 
 ```
@@ -135,6 +164,6 @@ let total: f64 = linq!(ctx.set::<Blog>(); sum b.views).await?;
 
 ## 小结
 
-90% 的问题集中在：忘记 `update()`、`linq!` 类型标注、`set` 与 `ensure_created` 顺序、导航未 `include`、使用字符串 API。掌握这 9 条可避免大部分陷阱。
+90% 的问题集中在：忘记 `update()`、`linq!` 类型标注、`set` 与 `ensure_created` 顺序、导航未 `include`、使用字符串 API、只读 `db error`。掌握这 10 条可避免大部分陷阱。
 
 下一节：[性能优化技巧](performance-tips.md)

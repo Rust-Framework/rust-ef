@@ -113,6 +113,46 @@ entity.has_check(
 - PostgreSQL / MySQL 8.0.16+ 在建表时内联 `CONSTRAINT ... CHECK (...)`；MySQL 8.0.16 之前只解析不执行。
 - SQLite 建表时内联；对既有表增删 CHECK 需要重建表，迁移引擎会输出 `-- WARNING` 注释而不是非法 SQL。
 
+### 可移植 CHECK：`CheckExpr`（2.5.0）
+
+`has_check` 接受任意 SQL，方言差异由调用方承担。2.5.0 起对常见形态提供**可移植**构造器，统一用
+`CASE WHEN ... THEN 1 ELSE 0 END` 算术与转义后的字面量，三方言通用（EF-DDL-02）：
+
+```rust
+use rust_ef::check_expr::CheckExpr;
+
+// 二选一（tenant/channel 恰好一个非 NULL）：PG/MySQL/SQLite 都合法
+entity.has_check_expr(
+    "CK_channel_scope",
+    CheckExpr::exactly_one_of(&["tenant_id", "channel_id"]),
+);
+
+// 枚举白名单：字面量自动转义
+entity.has_check_expr(
+    "CK_order_status",
+    CheckExpr::in_list("status", travel_contracts::enums::OrderStatus::ALL),
+);
+
+// 组合与区间
+entity.has_check_expr(
+    "CK_order_amount",
+    CheckExpr::all_of([
+        CheckExpr::non_negative("unit_sale_amount"),
+        CheckExpr::between("quantity", 1, 999),
+    ]),
+);
+```
+
+- 可用构造器：`in_list` / `not_in_list` / `exactly_one_of` / `at_most_one_of` /
+  `at_least_one_of` / `all_not_null` / `between` / `non_negative` / `positive` /
+  `all_of` / `any_of` / `raw`。
+- 列级：`property_named(...).has_check_expr(CheckExpr::non_negative("amount"))`。
+- **生成期方言校验**：即使仍写 raw `has_check`，`MigrationEngine::validate_check_expression` 与生成的
+  DDL 也会对已知方言陷阱给出 `-- WARNING`（例如 PostgreSQL 的
+  `(a IS NOT NULL) + (b IS NOT NULL) = 1`、MySQL/SQLite 的 `ILIKE` / `::` 转换）。
+- PostgreSQL/MySQL 的运行时 diff 只读 CHECK：服务器会改写表达式（cast、`ANY(ARRAY[...])`），逐字不同
+  不会触发 `DROP CONSTRAINT`，见 [自动升级 §7.5](../09-transactions-migrations/auto-upgrade.md)。
+
 ## 备用键、视图与无键实体
 
 ```rust

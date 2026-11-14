@@ -2,7 +2,7 @@
 
 结论：**可空列 / 带默认值的列可以全自动生成并应用**；完整链路需要三步（导出当前快照 → 生成迁移 → 应用迁移）。框架负责 diff 与 DDL，业务不再手写 `ALTER TABLE`。
 
-> 2.3.0 的其它新入口（`ConnectionString` / `ProviderKind` / `introspect` / `bootstrap` 等）与兼容点见 [v2.3 迁移指南](../../v2.3-migration-guide.md)，逐条破坏性说明见仓库根 CHANGELOG。
+> 2.3.0 的其它新入口（`ConnectionString` / `ProviderKind` / `introspect` / `bootstrap` 等）与兼容点见 [v2.3 迁移指南](../../v2.3-migration-guide.md)；2.5.0 的网络方言 diff 保真、只读 drift 与 CHECK 安全策略见 [v2.5 迁移指南](../../v2.5-migration-guide.md)，逐条破坏性说明见仓库根 CHANGELOG。
 
 ## 1. 应用内导出当前快照
 
@@ -115,7 +115,7 @@ if !diff.is_empty() {
 | `rebuilds: Vec<TableRebuild>` | SQLite 将重建的表：拷贝列、新列、无默认值的 NOT NULL 新列、触发器是否保留 |
 
 辅助方法：`is_empty()`、`up_sql()`、`report()`（人类可读升级报告）、`rebuild_count()`、
-`irreversible_items()`（不可逆项清单，报告里同样会列出）、`reverse(dialect)`（纯加性 diff 的反向计划，见 §7.5）、
+`irreversible_items()`（不可逆项清单，报告里同样会列出）、`reverse(dialect)`（纯加性 diff 的反向计划，见 §7.6）、
 `into_migration(id, dialect)`（转成带 `__ef_migrations_history` 记录的版本化 `Migration`，供已有 `apply` 流程使用；
 **运行时 diff 没有自动 down**，对产物调用 `revert()` 会返回 typed error，需从备份恢复或另写带 down 的版本化迁移）。
 
@@ -128,7 +128,7 @@ if !diff.is_empty() {
 | kind | 含义 | 业务动作 |
 |---|---|---|
 | `skipped_removal` | 库里有、模型里没有的表/列/索引/约束，**不会被删除** | 记录；确需删除时写版本化迁移 |
-| `constraint_not_introspected` | provider 无法内省 CHECK 约束（`DbTable.checks == None`） | 升级报告提示；不要假定约束已一致 |
+| `constraint_not_introspected` | provider 无法内省 CHECK 约束（`DbTable.checks == None`），或服务器规范化后的 CHECK 表达式无法与模型逐字比对（2.5 起 PG/MySQL 都走这条安全路径） | 升级报告提示；不要假定约束已一致；确需改 CHECK 时写版本化迁移（运行时 diff **绝不** DROP CHECK） |
 | `not_null_column_without_default` | 新增 NOT NULL 无默认列 | 加 `has_default` 或先回填 |
 | `index_definition_mismatch` | 同名索引定义不同 | 版本化迁移 drop + create |
 | `unsupported_change` | 方言不支持（MySQL 部分非唯一索引、SQLite 以外的 INCLUDE 等） | 按提示调整模型或改用支持的方言 |
@@ -159,7 +159,39 @@ if !diff.is_empty() {
 
 > 运行时差分不写 `__ef_migrations_history`；`apply_diff` 重复执行需要重新 diff（天然幂等：diff 为空即无操作）。
 
-### 7.5 反向计划：`reverse(dialect)`（2.4.0，EF-9 附加）
+### 7.5 网络方言的 diff 保真与 drift 可见性（2.5.0）
+
+2.5.0 修正了“正确的新建 MySQL/PG schema 被 diff 成大量 MODIFY / DROP CHECK”的上游缺陷，并补上只读 drift：
+
+- **MySQL 内省保真**：列类型改用 `information_schema.columns.COLUMN_TYPE`（`varchar(64)`、`tinyint(1)`、
+  `decimal(10,2)`、`datetime(6)` 等完整拼写），函数索引读取 `statistics.EXPRESSION`（MySQL 8.0.13+，
+  旧版本自动回退到列查询）。比较时归一化整数显示宽度（`int(11)`）、`BOOLEAN`/`tinyint(1)`、`UNSIGNED`
+  等版本差异，避免生成伪 `MODIFY`.
+- **隐式默认值不算 drift**：自增/序列列（PG `nextval(...)`）与网络库上的服务端隐式默认值不再触发表结构变更。
+- **CHECK 只读**：PG/MySQL 的 CHECK 表达式会被服务器改写（cast、`ANY(ARRAY[...])`、反引号、`_utf8mb4`），
+  逐字不同**不等于**约束变了。运行时 diff 对网络方言只报 `constraint_not_introspected` info，
+  不再生成 `DROP CONSTRAINT` / `DROP CHECK`；确需修改请走版本化迁移。
+- **只读 drift 接入健康检查**（EF-DIFF-02）：
+
+  ```rust
+  let diff = engine.diff_metas(&model, &provider.introspect().await?);
+  let summary = diff.summary();
+  // summary.has_drift: statements 非空，或存在 severity=Warning 的“需处理”项
+  // （info 级 skipped_removal / 表达式无法逐字验证不算 drift，避免健康检查长期红）
+  // summary.tables: 涉及的 table（best-effort，来自 warnings/rebuilds）
+  // summary.requires_manual_action: 是否有人工跟进项
+  if summary.has_drift {
+      tracing::warn!(report = %diff.report(), "schema drift detected");
+  }
+  // 只读：不调用 apply_diff，可直接挂到 /health/ready 或指标
+  ```
+
+  `diff` 本身不连库、不执行 DDL；先 `introspect()` 再 `diff`，把 `has_drift()`/`summary()` 导出到
+  `/health/ready` 即可在模型变更后立刻看到“网络库静默落后”，而不是等业务查询失败。
+  空结果验收：`bootstrap` 后立即 `introspect + diff_metas` 应没有 statements（仅可能有 info 级
+  “表达式索引无法逐字比对”提示）。
+
+### 7.6 反向计划：`reverse(dialect)`（2.4.0，EF-9 附加）
 
 运行时 diff 的**反向计划仅在「纯加性」时存在**：删除表/列、改列（ALTER COLUMN / MODIFY COLUMN）、
 SQLite 重建表都会丢失计划无法还原的信息（旧定义、旧数据），因此不会伪造 down 脚本。

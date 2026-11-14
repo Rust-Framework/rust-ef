@@ -5,6 +5,7 @@
 //! configurations, and produces the final metadata model used by
 //! the migration engine and query builder.
 
+use crate::check_expr::CheckExpr;
 use crate::entity::{IEntitySnapshot, IEntityType};
 use crate::entity_snapshot::EntitySnapshot;
 use crate::metadata::{
@@ -623,8 +624,16 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         self.push_index(parts)
     }
 
-    /// Declares an index over raw SQL expressions, e.g.
-    /// `has_index_expression(&["coalesce(channel_id, '')"])`.
+    /// Declares a mixed index over column names and raw SQL expressions, e.g.
+    /// `has_index_expression(&["tenant_id", "coalesce(channel_id, '')"])`.
+    ///
+    /// A bare identifier (`tenant_id`) is classified as a column and emitted
+    /// quoted; anything containing an operator, function call or quoting is an
+    /// expression and emitted verbatim in parentheses. This distinction is not
+    /// cosmetic: MySQL 8 rejects a functional key part that is just a column
+    /// (error 3762 `Functional index on a column is not supported`), so
+    /// treating every element as an expression produced
+    /// `((tenant_id), (coalesce(...)))` and failed (EF-MYSQL-02).
     ///
     /// Expressions are emitted verbatim, so write portable SQL (lower-case
     /// identifiers work unquoted on PostgreSQL, SQLite and MySQL).
@@ -634,7 +643,13 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     ) -> IndexBuilder<'_, T> {
         let parts = expressions
             .iter()
-            .map(|e| IndexColumn::Expression(Cow::Borrowed(*e)))
+            .map(|e| {
+                if is_bare_identifier(e) {
+                    IndexColumn::Column(Cow::Borrowed(*e))
+                } else {
+                    IndexColumn::Expression(Cow::Borrowed(*e))
+                }
+            })
             .collect();
         self.push_index(parts)
     }
@@ -699,6 +714,11 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     }
 
     /// Declares a table-level `CHECK` constraint.
+    ///
+    /// The expression is raw SQL and therefore the caller's responsibility for
+    /// dialect portability. Prefer [`Self::has_check_expr`] for the common
+    /// shapes (enum lists, exactly-one-of, ranges): it renders portable SQL and
+    /// escapes literals (EF-DDL-02).
     pub fn has_check(&mut self, name: &str, expression: &str) -> &mut Self {
         let config = self.model.configs.entry(self.type_id).or_default();
         config.checks.push(CheckMeta {
@@ -707,6 +727,18 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         });
         self.model.invalidate_cache();
         self
+    }
+
+    /// Declares a table-level `CHECK` from a portable [`CheckExpr`].
+    ///
+    /// ```ignore
+    /// builder.has_check_expr(
+    ///     "ck_member_role_scope",
+    ///     CheckExpr::exactly_one_of(&["tenant_id", "channel_id"]),
+    /// );
+    /// ```
+    pub fn has_check_expr(&mut self, name: &str, expression: CheckExpr) -> &mut Self {
+        self.has_check(name, expression.sql())
     }
 
     /// Sets the MySQL storage engine (e.g. `InnoDB`). Ignored on other dialects.
@@ -744,6 +776,21 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         self.model.invalidate_cache();
         self
     }
+}
+
+/// Whether `value` is a single unquoted SQL identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+///
+/// Used by [`EntityTypeBuilder::has_index_expression`] to tell a column name
+/// from a real expression. Dotted names are treated as expressions because the
+/// index renderer quotes a column as a single identifier.
+fn is_bare_identifier(value: &str) -> bool {
+    let value = value.trim();
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 // ---------------------------------------------------------------------------
@@ -979,6 +1026,11 @@ impl<'a, T, V> PropertyBuilder<'a, T, V> {
         self.override_entry().check = Some(expression.to_string());
         self
     }
+
+    /// Adds a column-level CHECK from a portable [`CheckExpr`].
+    pub fn has_check_expr(self, expression: CheckExpr) -> Self {
+        self.has_check(expression.sql())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -987,4 +1039,22 @@ impl<'a, T, V> PropertyBuilder<'a, T, V> {
 
 pub trait IEntityTypeConfiguration<T: IEntityType> {
     fn configure(&self, entity: &mut EntityTypeBuilder<'_, T>);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_bare_identifier;
+
+    #[test]
+    fn classifies_bare_identifiers_as_columns() {
+        assert!(is_bare_identifier("tenant_id"));
+        assert!(is_bare_identifier("_id"));
+        assert!(is_bare_identifier("Column1"));
+        assert!(!is_bare_identifier("coalesce(channel_id, '')"));
+        assert!(!is_bare_identifier("lower(name)"));
+        assert!(!is_bare_identifier("tenant.id"));
+        assert!(!is_bare_identifier("`tenant_id`"));
+        assert!(!is_bare_identifier(""));
+        assert!(!is_bare_identifier("1"));
+    }
 }

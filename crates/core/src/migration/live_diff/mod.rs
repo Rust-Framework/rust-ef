@@ -198,10 +198,85 @@ pub struct MigrationDiff {
     pub rebuilds: Vec<TableRebuild>,
 }
 
+/// Machine-readable summary of a [`MigrationDiff`], intended for readiness
+/// probes, metrics and upgrade dashboards (EF-DIFF-02).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiffSummary {
+    /// Executable statements the plan would run.
+    pub statements: usize,
+    /// SQLite tables the plan would rebuild.
+    pub rebuilds: usize,
+    /// Structured warnings (informational + attention).
+    pub warnings: usize,
+    /// Tables with at least one statement or warning, sorted and deduplicated.
+    pub tables: Vec<String>,
+    /// Whether the model is not fully applied (statements, or a warning that
+    /// the model and the live schema disagree).
+    pub has_drift: bool,
+    /// Whether at least one warning requires a manual follow-up.
+    pub requires_manual_action: bool,
+}
+
 impl MigrationDiff {
     /// Whether the database already matches the model.
     pub fn is_empty(&self) -> bool {
         self.statements.is_empty()
+    }
+
+    /// Whether the live schema has drifted from the model.
+    ///
+    /// True when the diff has executable statements, or when a warning is
+    /// actionable (`severity == Warning`: index definition mismatch, manual
+    /// follow-up, NOT NULL without default, unsupported change).
+    ///
+    /// Informational warnings are deliberately excluded: "the database has an
+    /// extra object" does not mean the model is behind, and "the server
+    /// canonicalized this CHECK expression so it cannot be compared verbatim"
+    /// is a verification limitation, not a change. Keeping the signal strict is
+    /// what makes it safe to wire into `/health/ready`: a green probe means
+    /// "no pending additive DDL and nothing manual to do" (EF-DIFF-02).
+    pub fn has_drift(&self) -> bool {
+        !self.statements.is_empty()
+            || self
+                .warnings
+                .iter()
+                .any(|warning| warning.severity == WarningSeverity::Warning)
+    }
+
+    /// Tables named by a warning or a SQLite rebuild, sorted and deduplicated.
+    ///
+    /// Statements are not parsed for table names (the plan is ordered SQL, not
+    /// a structured per-table list); add-column/index drift therefore shows
+    /// `has_drift()` and the statement count but may have no table here.
+    pub fn drift_tables(&self) -> Vec<String> {
+        let mut tables: Vec<String> = self
+            .warnings
+            .iter()
+            .filter_map(|warning| warning.table.clone())
+            .collect();
+        for rebuild in &self.rebuilds {
+            tables.push(rebuild.table.clone());
+        }
+        // Statements do not carry table metadata; a statement implies at least
+        // one table but its name is not parsed out of the SQL.
+        tables.sort();
+        tables.dedup();
+        tables
+    }
+
+    /// Structured summary for probes/metrics.
+    pub fn summary(&self) -> DiffSummary {
+        DiffSummary {
+            statements: self.statements.len(),
+            rebuilds: self.rebuilds.len(),
+            warnings: self.warnings.len(),
+            tables: self.drift_tables(),
+            has_drift: self.has_drift(),
+            requires_manual_action: self
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == WarningKind::ManualAction),
+        }
     }
 
     /// Number of tables the plan rebuilds.

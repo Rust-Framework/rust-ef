@@ -171,16 +171,15 @@ impl SqliteProviderInner {
         match self {
             SqliteProviderInner::Pooled(pool) => {
                 let conn = acquire_pooled(pool, timeout).await?;
-                conn.execute_batch(sql).map_err(|e| {
-                    EFError::migration(format!("Migration execution failed: {}", e))
-                })?;
+                conn.execute_batch(sql)
+                    .map_err(|e| crate::sync_ops::map_sqlite_error_with_sql(e, Some(sql)))?;
                 Ok(())
             }
             SqliteProviderInner::Single(conn) => {
                 let guard = conn.lock().await;
-                guard.execute_batch(sql).map_err(|e| {
-                    EFError::migration(format!("Migration execution failed: {}", e))
-                })?;
+                guard
+                    .execute_batch(sql)
+                    .map_err(|e| crate::sync_ops::map_sqlite_error_with_sql(e, Some(sql)))?;
                 Ok(())
             }
         }

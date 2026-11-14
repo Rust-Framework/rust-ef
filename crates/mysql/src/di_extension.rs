@@ -73,7 +73,9 @@ impl DbContextOptionsBuilderExt for rust_ef::db_context::DbContextOptionsBuilder
                     options.connection_string.parse().map_err(|e| {
                         rust_ef::error::EFError::connection(format!("MySQL URL parse: {}", e))
                     })?;
-                let connect_opts = connect_opts.ssl_mode(options.tls.into());
+                // Explicit `ssl-mode` in the URL wins; without one the provider
+                // enforces TLS instead of sqlx's permissive `Preferred` default.
+                let connect_opts = connect_opts.ssl_mode(options.resolved_tls_mode().into());
                 let mut pool_options = MySqlPoolOptions::new();
                 if let Some(max) = options.max_pool_size {
                     if max == 0 {

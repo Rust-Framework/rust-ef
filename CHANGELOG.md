@@ -9,6 +9,161 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.0] — 2026-11-14 — 上游真库缺陷修复：PG NULL、MySQL DDL、网络 diff、诊断、连接串
+
+> **English** · **简体中文**
+>
+> Defect-fix release driven by the 2026-11-14 Travel real-database verification
+> (MySQL 8.0.22, PostgreSQL 16, SQLite). Correctly-used MySQL/PostgreSQL paths no
+> longer need application-side workarounds: PostgreSQL binds NULL for every
+> nullable type, MySQL indexes enum/expression columns, network `bootstrap →
+> introspect → diff` no longer produces spurious `MODIFY`/`DROP CHECK`, driver
+> errors keep SQLSTATE/SQL, and connection-string/TLS construction is consistent.
+> Additive public API; the documented behaviour changes are listed under
+> Compatibility.
+
+#### English
+
+**Fixed**
+
+- **EF-PG-01 (P0) — typed NULL binding.** `DbValue::Null` is serialized as a real
+  untyped NULL (`IsNull::Yes`) instead of `None::<String>`, so `None` can be written to
+  nullable `BIGINT/INTEGER/SMALLINT/NUMERIC/BOOLEAN/DATE/TIMESTAMP/TIMESTAMPTZ/UUID/BYTEA`
+  columns. `error serializing parameter N` is gone; regression
+  `postgres_null_binding` (ignored, live PG) writes and reads back NULL for every type.
+- **NUMERIC read/write.** The PostgreSQL provider now binds `DbValue::Decimal` natively
+  and decodes non-NULL `NUMERIC` cells through `rust_decimal` (`db-tokio-postgres`), instead
+  of (a) binding a string that the binary protocol rejects for a NUMERIC slot and (b)
+  silently materializing non-NULL NUMERIC cells as `DbValue::Null` (indistinguishable from
+  a SQL NULL).
+- **EF-MYSQL-01 (P1) — indexable enum columns.** On MySQL, a custom/contract type with
+  `max_length(n)` (or an explicit `TEXT` + `max_length`) now renders `VARCHAR(n)`
+  (`CHAR(n)` for fixed-length) instead of unbounded `TEXT`, so ordinary/composite indexes
+  build without error 1170. PostgreSQL/SQLite keep `TEXT`.
+- **EF-MYSQL-02 (P1) — mixed expression indexes.** `has_index_expression` classifies bare
+  identifiers as columns and everything else as expressions: `(tenant_id, (coalesce(...)))`
+  instead of `((tenant_id), ...)` (MySQL 8 error 3762).
+- **EF-DDL-01 (P1) — portable identifier names.** All auto-derived index/foreign-key names
+  (including single-column `ix_<table>_<col>` and FK names) are sanitized to 63 bytes with a
+  deterministic 32-bit hash suffix; explicit `has_name` still wins. No MySQL 1059, no
+  PostgreSQL silent truncation, stable across runs.
+- **EF-DIFF-01 (P1) — network diff fidelity.** MySQL introspection reads
+  `COLUMN_TYPE` (full `varchar(64)`/`tinyint(1)`/`decimal(10,2)`/`datetime(6)` spelling) and
+  functional-index `EXPRESSION` (with a pre-8.0.13 fallback); comparison normalizes integer
+  display widths, BOOLEAN, UNSIGNED, server-canonicalized defaults, identifier quotes, casts,
+  charset introducers and redundant parentheses. Implicit defaults on auto-increment columns
+  and live-only server defaults are not drift. PostgreSQL/MySQL never emit
+  `DROP CHECK`/`DROP CONSTRAINT` from a textual expression mismatch — they report
+  `constraint_not_introspected` info instead. A freshly bootstrapped schema diffs to zero
+  statements.
+- **EF-ERR-01 (P2) — structured driver errors.** New boxed `EFError::Database(DatabaseErrorInfo)`
+  keeps SQLSTATE, vendor code, message/detail/hint, table/column/constraint and the failing
+  SQL (≤512 chars, `Display` includes them) for PostgreSQL, MySQL and SQLite. Unique
+  violations stay `EFError::UniqueViolation`. `webx` maps `Database` to 500 with
+  `public_detail() = None`.
+- **EF-PG-02 (P2) — TLS defaults/API consistency.** `use_postgres` / `PostgresProvider::new`
+  now honor `sslmode`: absent means TLS required, `disable`/`allow` select plaintext,
+  `verify-*` are handled by the provider instead of being rejected by `tokio_postgres`.
+  `use_mysql` / `MySqlProvider::new` likewise honor an explicit `ssl-mode` (new
+  `MySqlTlsMode::Preferred`) instead of always overriding it; absent means TLS required.
+
+**Added**
+
+- **EF-DIFF-02 (P2) — read-only drift reporting.** `MigrationDiff::has_drift()`,
+  `summary()` (`DiffSummary`), `drift_tables()`. Drift is strict: pending statements or
+  actionable (`Warning`) warnings; info-level “extra object” / “expression not comparable
+  verbatim” notes do not turn a readiness probe red. No DDL is executed.
+- **EF-CONN-01 (P2) — ADO.NET connection strings.**
+  `ConnectionString::parse_ado(input, protocol)` and `parse_auto(...)` support
+  `source/server/host/data source/address`, `uid/user/user id/username`, `pwd/password`,
+  `database/initial catalog`, quoted values, `;` in quoted values, trailing/doubled
+  semicolons, `host:port` / `[IPv6]:port`, `port=`, and `sslmode`/`ssl-mode` normalization.
+  ADO → `build()` → `parse()` round-trips.
+- **EF-DDL-02 (P2) — portable CHECK builder.** `rust_ef::check_expr::CheckExpr`
+  (`in_list`, `not_in_list`, `exactly_one_of`, `at_most_one_of`, `at_least_one_of`,
+  `all_not_null`, `between`, `non_negative`, `positive`, `all_of`, `any_of`, `raw`) plus
+  `EntityTypeBuilder::has_check_expr` / `PropertyBuilder::has_check_expr`. Raw `has_check`
+  expressions get generation-time dialect validation
+  (`MigrationEngine::validate_check_expression`) with `-- WARNING` comments in DDL.
+- **Provider capability matrix.** `rust_ef::migration::provider_capabilities(dialect)` /
+  `ProviderCapabilities` / `SupportLevel` describe enum columns, expression/partial/INCLUDE
+  indexes, CHECK, table options, comments, generated columns, composite FKs and ALTER COLUMN
+  per dialect.
+- **CLI dry run.** `rust-ef migration ddl --snapshot <file> [--dialect all|sqlite|postgres|mysql] [--out <file>]`
+  renders the code-first DDL, report and capability matrix without a database;
+  `rust-ef migration capabilities [--dialect ...]` prints the matrix.
+- **CI.** New optional `db-integration` job runs the ignored MySQL/PostgreSQL parity tests
+  and the PostgreSQL NULL-binding matrix against service containers.
+
+**Compatibility**
+
+- `EFError` gained a `Database(Box<DatabaseErrorInfo>, Option<BoxError>)` variant:
+  exhaustive `match EFError` needs a `_ => ...` arm (the enum is still not
+  `#[non_exhaustive]`). The payload is boxed so `EFError` stays small
+  (`clippy::result_large_err`).
+- Auto-derived names longer than 63 bytes now truncate + hash. Databases created with the
+  old longer names get an informational `skipped_removal` for the old index (never a DROP);
+  add an explicit `has_name` with the old name or write a versioned rename if strict parity
+  is required.
+- MySQL `DbColumn::data_type` is now `COLUMN_TYPE` (full spelling); dispatch on it by
+  containment (as scaffold does), not equality.
+- Runtime diff no longer drops CHECK constraints on PostgreSQL/MySQL; change them through a
+  versioned migration.
+- `MySqlTlsMode` gained `Preferred`; exhaustive matches need one more arm.
+- Application-side workarounds made obsolete: the enum `code_first_model_for` VARCHAR patch,
+  the mixed-expression-index `cast(concat_ws(...))` collapse, explicit long index names, and
+  “skip runtime diff on network providers”.
+
+#### 简体中文
+
+**修复**
+
+- **EF-PG-01（P0）**：`DbValue::Null` 以真正的无类型 NULL 绑定，`None` 可写入任意可空
+  `BIGINT/INTEGER/SMALLINT/NUMERIC/BOOLEAN/DATE/TIMESTAMP/TIMESTAMPTZ/UUID/BYTEA`；新增真库回归
+  `postgres_null_binding`。
+- **NUMERIC 读写**：PostgreSQL `DbValue::Decimal` 以原生 NUMERIC 绑定；非空 `NUMERIC`
+  通过 `rust_decimal` 解码为 `DbValue::Decimal`，不再因字符串参数被二进制协议拒绝，
+  也不再静默变成 `DbValue::Null`。
+- **EF-MYSQL-01（P1）**：自定义枚举/新类型 + `max_length(n)` 在 MySQL 生成 `VARCHAR(n)`
+  （定长 `CHAR(n)`），可建普通/复合索引；PG/SQLite 保持 `TEXT`。
+- **EF-MYSQL-02（P1）**：`has_index_expression` 裸标识符按列、其余按表达式，混合索引不再生成
+  `((tenant_id), ...)`（MySQL 3762）。
+- **EF-DDL-01（P1）**：自动索引/外键名统一 63 字节 + 稳定哈希截断，显式 `has_name` 优先。
+- **EF-DIFF-01（P1）**：MySQL 内省改用 `COLUMN_TYPE` 全拼写并读取函数索引 `EXPRESSION`
+  （旧版本回退）；列类型/默认值/CHECK/表达式索引按方言归一化；网络方言不再生成
+  `DROP CHECK`；`bootstrap` 后 `introspect + diff` 无语句。
+- **EF-ERR-01（P2）**：新增 boxed `EFError::Database(DatabaseErrorInfo)`，保留
+  SQLSTATE/厂商码/message/detail/hint/table/column/constraint/失败 SQL（≤512 字符）；
+  唯一冲突仍为 `UniqueViolation`；`webx` 映射为 500 且不泄露。
+- **EF-PG-02（P2）**：`use_postgres`/`PostgresProvider::new` 按 URL `sslmode` 决定 TLS：
+  缺省要求 TLS，`disable`/`allow` 明文，`verify-*` 由 provider 处理；`use_mysql` 同样尊重
+  URL `ssl-mode`（新增 `MySqlTlsMode::Preferred`），缺省要求 TLS。
+
+**新增**
+
+- **EF-DIFF-02（P2）**：`MigrationDiff::has_drift()` / `summary()` / `drift_tables()`，
+  只读 drift 可接 `/health/ready`；info 级“无法逐字验证”不算 drift。
+- **EF-CONN-01（P2）**：`ConnectionString::parse_ado` / `parse_auto` 支持 ADO.NET 键值串
+  （别名、引号值、引号内分号、尾随/重复分号、host:port、`[IPv6]:port`、TLS 归一），
+  ADO → `build()` → `parse()` 往返。
+- **EF-DDL-02（P2）**：`CheckExpr` 可移植 CHECK 构造器 + `has_check_expr`；
+  `validate_check_expression` 在生成期标记已知方言陷阱。
+- **能力矩阵**：`provider_capabilities(dialect)` / `ProviderCapabilities` / `SupportLevel`。
+- **CLI**：`migration ddl`（三方言 dry-run，不连库）与 `migration capabilities`。
+- **CI**：可选 `db-integration` job，跑 MySQL/PG ignored 真库用例与 PG NULL 矩阵。
+
+**兼容性**
+
+- `EFError` 新增 `Database` 变体（payload 已 box），下游穷举 `match` 补 `_ => ...`。
+- 超过 63 字节的自动名改为截断 + 哈希；旧库同名索引只会报 `skipped_removal` info，不会 DROP。
+- MySQL `DbColumn::data_type` 变为 `COLUMN_TYPE` 全拼写（按包含关系匹配）。
+- 运行时 diff 不再 DROP PG/MySQL CHECK（改 CHECK 走版本化迁移）。
+- `MySqlTlsMode` 新增 `Preferred`，穷举 match 补分支。
+- 应用侧规避可移除：枚举 `code_first_model_for` 补丁、表达式索引折叠、超长索引名 `has_name`、
+  网络 provider 跳过运行期 diff。
+
+---
+
 ## [2.4.0] — 2026-11-13 — 依赖图外键边、聚合空集中性值、运行时 diff 反向计划
 
 > **English** · **简体中文**

@@ -70,6 +70,30 @@ impl IEntityTypeConfiguration<Order> for OrderConfig {
 
 > 部分索引的谓词来自 `linq!(|x: T| ...)`，值在 DDL 中会渲染成字面量；只支持简单比较与 `AND`/`OR`/`NOT`（子查询在部分索引谓词中没有实用价值）。
 
+### 混合列 + 表达式索引（2.5.0）
+
+`has_index_expression` 的列表可以同时包含列名和表达式；**裸标识符按列处理**，含函数/运算符的按表达式处理：
+
+```rust
+entity
+    .has_index_expression(&[
+        "tenant_id",                  // → `tenant_id`（列）
+        "member_id",
+        "role_id",
+        "scope",
+        "coalesce(channel_id, '')",   // → (coalesce(...))（表达式）
+    ])
+    .is_unique();
+```
+
+生成 MySQL 时为 `CREATE UNIQUE INDEX ... (`tenant_id`, ..., (coalesce(channel_id, '')))`，
+不再把普通列包成 `(tenant_id)`（MySQL 8 会报 3762 `Functional index on a column is not supported`）。
+PostgreSQL/SQLite 同样保留“列不加括号、表达式加括号”的形状。
+
+自动索引名（`ix_<table>_<cols>`、`fk_<table>_<cols>_<target>`）统一按**可移植标识符上限 63 字节**
+截断并追加稳定哈希：PostgreSQL 会静默截断更长的名字，MySQL 直接报 1059；显式 `.has_name(...)` 优先。
+同一个模型重复生成的名字稳定，不会因截断碰撞。
+
 ## 表级存储选项（MySQL）
 
 ```rust

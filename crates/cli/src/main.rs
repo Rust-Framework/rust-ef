@@ -5,10 +5,11 @@ mod scaffold;
 use clap::{Parser, Subcommand};
 use rust_ef::error::{EFError, EFResult};
 use rust_ef::migration::{
-    parse_model_snapshot_json, MigrationDialect, MigrationEngine, MigrationStore, PRODUCT_VERSION,
+    parse_model_snapshot_json, provider_capabilities, MigrationDialect, MigrationEngine,
+    MigrationStore, ModelSnapshot, PRODUCT_VERSION,
 };
 use rust_ef::provider::IDatabaseProvider;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Parser)]
@@ -98,6 +99,21 @@ enum MigrationCommands {
         #[arg(long, default_value = "Migrations")]
         dir: PathBuf,
     },
+    /// Render code-first DDL for one or all dialects from a model snapshot (no database).
+    Ddl {
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long, value_enum, default_value = "all")]
+        dialect: DdlDialectArg,
+        /// Write the script to a file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Print the provider capability matrix.
+    Capabilities {
+        #[arg(long, value_enum, default_value = "all")]
+        dialect: DdlDialectArg,
+    },
 }
 
 #[derive(Subcommand)]
@@ -134,6 +150,35 @@ impl DialectArg {
             DialectArg::Sqlite => MigrationDialect::Sqlite,
             DialectArg::Postgres => MigrationDialect::Postgres,
             DialectArg::Mysql => MigrationDialect::MySql,
+        }
+    }
+}
+
+/// Dialect selector for the read-only `ddl` / `capabilities` commands.
+///
+/// `All` renders the three dialects in a stable order (sqlite, postgres, mysql);
+/// the single-dialect variants reuse [`DialectArg`]'s dialect mapping so the
+/// `--dialect` > [`MigrationDialect`] conversion has one source of truth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum DdlDialectArg {
+    All,
+    Sqlite,
+    Postgres,
+    Mysql,
+}
+
+impl DdlDialectArg {
+    /// Dialects this selector expands to, in rendering order.
+    fn selected(self) -> Vec<MigrationDialect> {
+        match self {
+            DdlDialectArg::All => vec![
+                DialectArg::Sqlite.to_migration_dialect(),
+                DialectArg::Postgres.to_migration_dialect(),
+                DialectArg::Mysql.to_migration_dialect(),
+            ],
+            DdlDialectArg::Sqlite => vec![DialectArg::Sqlite.to_migration_dialect()],
+            DdlDialectArg::Postgres => vec![DialectArg::Postgres.to_migration_dialect()],
+            DdlDialectArg::Mysql => vec![DialectArg::Mysql.to_migration_dialect()],
         }
     }
 }
@@ -175,6 +220,12 @@ async fn main() -> Result<(), EFError> {
                 to,
                 dir,
             } => cmd_script(name.as_deref(), from.as_deref(), to.as_deref(), &dir),
+            MigrationCommands::Ddl {
+                snapshot,
+                dialect,
+                out,
+            } => cmd_ddl(&snapshot, dialect, out.as_deref()),
+            MigrationCommands::Capabilities { dialect } => cmd_capabilities(dialect),
         },
         Commands::Scaffold { command } => match command {
             ScaffoldCommands::DbContext {
@@ -202,10 +253,7 @@ fn cmd_add(
     snapshot_path: &PathBuf,
     dialect: DialectArg,
 ) -> EFResult<()> {
-    let text =
-        std::fs::read_to_string(snapshot_path).map_err(|e| EFError::migration(e.to_string()))?;
-    let target_snapshot = parse_model_snapshot_json(&text)?
-        .ok_or_else(|| EFError::migration("snapshot must describe at least one entity type"))?;
+    let target_snapshot = load_snapshot(snapshot_path)?;
     let baseline = dir.join("model_snapshot.json");
     if snapshot_path == &baseline {
         return Err(EFError::migration(
@@ -352,6 +400,59 @@ fn cmd_script(
     Ok(())
 }
 
+/// Reads and parses a model snapshot file.
+///
+/// Shared by `migration add` and `migration ddl` so both commands accept the
+/// same snapshot format and report the same errors.
+fn load_snapshot(path: &Path) -> EFResult<ModelSnapshot> {
+    let text = std::fs::read_to_string(path).map_err(|e| EFError::migration(e.to_string()))?;
+    parse_model_snapshot_json(&text)?
+        .ok_or_else(|| EFError::migration("snapshot must describe at least one entity type"))
+}
+
+/// Renders code-first DDL for the selected dialects without touching a
+/// database: the diff is computed against an empty live schema, so every model
+/// table becomes a `CREATE TABLE` (the "fresh database" path, which does not
+/// emit `__ef_migrations_history`), followed by the diff report and the
+/// provider capability matrix.
+fn cmd_ddl(snapshot_path: &Path, dialect: DdlDialectArg, out: Option<&Path>) -> EFResult<()> {
+    let snapshot = load_snapshot(snapshot_path)?;
+
+    let mut rendered = String::new();
+    for selected in dialect.selected() {
+        let capabilities = provider_capabilities(selected);
+        let diff = MigrationEngine::new(selected).diff(&snapshot, &[]);
+
+        rendered.push_str(&format!("-- dialect: {}\n", capabilities.dialect_name()));
+        let sql = diff.up_sql();
+        if sql.trim().is_empty() {
+            rendered.push_str("-- no statements\n");
+        } else {
+            rendered.push_str(&sql);
+        }
+        rendered.push('\n');
+        rendered.push_str(&diff.report());
+        rendered.push('\n');
+        rendered.push_str(&capabilities.report());
+        rendered.push('\n');
+    }
+
+    match out {
+        Some(path) => std::fs::write(path, rendered)
+            .map_err(|e| EFError::migration(format!("cannot write {}: {e}", path.display())))?,
+        None => print!("{rendered}"),
+    }
+    Ok(())
+}
+
+/// Prints the provider capability matrix for the selected dialects.
+fn cmd_capabilities(dialect: DdlDialectArg) -> EFResult<()> {
+    for selected in dialect.selected() {
+        print!("{}", provider_capabilities(selected).report());
+    }
+    Ok(())
+}
+
 // Scaffolding still uses the legacy free introspection functions (they take a
 // connection string and configure TLS per call); the canonical entry point is
 // `IDatabaseProvider::introspect`. The allow documents the remaining call sites
@@ -461,5 +562,113 @@ fn detect_provider(connection: &str) -> ProviderArg {
         ProviderArg::Mysql
     } else {
         ProviderArg::Sqlite
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ddl_dialect_arg_all_selects_every_dialect_in_stable_order() {
+        assert!(matches!(
+            DdlDialectArg::All.selected().as_slice(),
+            [
+                MigrationDialect::Sqlite,
+                MigrationDialect::Postgres,
+                MigrationDialect::MySql
+            ]
+        ));
+    }
+
+    #[test]
+    fn ddl_dialect_arg_single_selects_exactly_that_dialect() {
+        assert!(matches!(
+            DdlDialectArg::Sqlite.selected().as_slice(),
+            [MigrationDialect::Sqlite]
+        ));
+        assert!(matches!(
+            DdlDialectArg::Postgres.selected().as_slice(),
+            [MigrationDialect::Postgres]
+        ));
+        assert!(matches!(
+            DdlDialectArg::Mysql.selected().as_slice(),
+            [MigrationDialect::MySql]
+        ));
+    }
+
+    #[test]
+    fn parses_ddl_command_with_default_dialect_and_stdout() {
+        let cli = Cli::try_parse_from(["rust-ef", "migration", "ddl", "--snapshot", "snap.json"])
+            .unwrap();
+        match cli.command {
+            Commands::Migration {
+                command:
+                    MigrationCommands::Ddl {
+                        snapshot,
+                        dialect,
+                        out,
+                    },
+            } => {
+                assert_eq!(snapshot, PathBuf::from("snap.json"));
+                assert_eq!(dialect, DdlDialectArg::All);
+                assert_eq!(out, None);
+            }
+            _ => panic!("expected `migration ddl`"),
+        }
+    }
+
+    #[test]
+    fn parses_ddl_command_with_dialect_and_out_file() {
+        let cli = Cli::try_parse_from([
+            "rust-ef",
+            "migration",
+            "ddl",
+            "--snapshot",
+            "snap.json",
+            "--dialect",
+            "mysql",
+            "--out",
+            "ddl.sql",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Migration {
+                command:
+                    MigrationCommands::Ddl {
+                        snapshot,
+                        dialect,
+                        out,
+                    },
+            } => {
+                assert_eq!(snapshot, PathBuf::from("snap.json"));
+                assert_eq!(dialect, DdlDialectArg::Mysql);
+                assert_eq!(out, Some(PathBuf::from("ddl.sql")));
+            }
+            _ => panic!("expected `migration ddl`"),
+        }
+    }
+
+    #[test]
+    fn ddl_requires_a_snapshot() {
+        assert!(Cli::try_parse_from(["rust-ef", "migration", "ddl"]).is_err());
+    }
+
+    #[test]
+    fn parses_capabilities_command() {
+        let cli = Cli::try_parse_from([
+            "rust-ef",
+            "migration",
+            "capabilities",
+            "--dialect",
+            "postgres",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Migration {
+                command: MigrationCommands::Capabilities { dialect },
+            } => assert_eq!(dialect, DdlDialectArg::Postgres),
+            _ => panic!("expected `migration capabilities`"),
+        }
     }
 }

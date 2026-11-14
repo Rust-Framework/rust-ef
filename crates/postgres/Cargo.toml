@@ -10,7 +10,7 @@ keywords = ["orm", "efcore", "entity-framework", "postgres", "database"]
 categories = ["database"]
 
 [dependencies]
-rust-ef = { version = "2.4.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
+rust-ef = { version = "2.5.0", path = "../core", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 bytes = "1"
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"] }
@@ -18,7 +18,9 @@ deadpool-postgres = "0.14"
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
-rust_decimal = "1"
+# `db-tokio-postgres` provides the `FromSql`/`ToSql` impls for NUMERIC so a
+# non-NULL numeric cell materializes as `DbValue::Decimal` (not SQL NULL).
+rust_decimal = { version = "1", features = ["db-tokio-postgres"] }
 # TLS support for PostgreSQL connections (v1.4+). Enables `PgTlsMode::Require`
 # via the system's native TLS implementation (SChannel on Windows, OpenSSL on
 # Linux, Secure Transport on macOS).

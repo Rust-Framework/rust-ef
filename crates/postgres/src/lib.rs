@@ -4,6 +4,7 @@
 
 pub mod connection;
 pub mod di_extension;
+mod error_map;
 pub mod introspection;
 pub mod provider;
 pub mod row_conversion;

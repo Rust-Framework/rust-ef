@@ -96,6 +96,23 @@ let mut ctx: DbContext = provider.get_owned().unwrap();
 - 同步 `build()` 遇到异步注册返回 `AsyncServiceRequiresBuildAsync`。
 - keyed 变体：`add_dbcontext_keyed_async(key, configure)`。
 
+### 网络 provider 的 TLS 默认（2.5.0）
+
+`use_postgres` / `use_mysql` 统一为 **secure by default + 连接串显式明文开关**（EF-PG-02）：
+
+| 连接串 | PostgreSQL | MySQL |
+|---|---|---|
+| 未写 TLS 参数 | 要求 TLS（平台根证书） | 要求 TLS |
+| `sslmode=disable` / `allow` | 明文 | — |
+| `ssl-mode=disabled` | — | 明文 |
+| `sslmode=prefer/require/verify-*` | 要求 TLS（`verify-*` 不再被驱动拒绝） | — |
+| `ssl-mode=preferred/required/verify_*` | — | 对应 sqlx 模式 |
+
+需要无视连接串强制覆盖时：`PostgresOptions::tls(PgTlsMode)` / `MySqlOptions::tls(MySqlTlsMode)`，
+或 `insecure()`（仅本地开发）。`MySqlTlsMode` 2.5 新增 `Preferred` 变体，对应 URL 的
+`ssl-mode=preferred`；默认仍是 `Required`。`ssl-mode` 在 URL 里出现即生效，不再需要应用额外调用
+`insecure()`。
+
 ## rust-dix 0.10 能力说明
 
 - **类型化 `ServiceKey` + 宏 key 表达式**：EF 用 `#[derive(DbContextKey)]` 同时生成

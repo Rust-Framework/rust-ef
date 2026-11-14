@@ -38,6 +38,7 @@
 //! | `Query`, `TypeConversion` | 400 | `Validation` | fixed text |
 //! | `UniqueViolation` | 409 | `Conflict` | fixed text |
 //! | `Connection`, `Transaction` | 503 | `Status(503, _)` | fixed text |
+//! | `Database` | 500 | `Internal` | none (`public_detail` is `None`) |
 //! | `Migration`, `Configuration`, `Provider`, `ChangeTracking`, `Other` | 500 | `Internal` | none (`public_detail` is `None`) |
 //!
 //! # Sanitization contract
@@ -106,6 +107,15 @@ pub fn map_ef_error(error: EFError) -> Error {
 
         // A unique-index race: driver metadata (constraint/table) is dropped.
         EFError::UniqueViolation { .. } => Error::Conflict(DETAIL_UNIQUE_VIOLATION.to_string()),
+
+        // A driver error with structured diagnostics: the message can name
+        // internal tables/columns/SQL, so only a fixed 500 goes to the client;
+        // the full detail reaches the operator log.
+        EFError::Database(info, source) => Error::Internal(operator_detail(
+            "database",
+            &info.to_string(),
+            source.as_ref(),
+        )),
 
         // Transient infrastructure failures: the client should retry. A fixed
         // detail replaces the driver text (connection strings may include
@@ -244,12 +254,22 @@ mod tests {
                 500,
             ),
             ("Other", EFError::other("unexpected driver failure"), 500),
+            (
+                "Database",
+                EFError::database(
+                    crate::error::DatabaseErrorInfo::new("db error")
+                        .with_sqlstate("23502")
+                        .with_table(SECRET_TABLE)
+                        .with_sql(SECRET_SQL),
+                ),
+                500,
+            ),
         ];
 
-        // 13 variants in rust-ef 2.x (`crates/core/src/error.rs`). The count is
+        // 14 variants in rust-ef 2.5 (`crates/core/src/error.rs`). The count is
         // asserted so a variant added upstream without updating this list fails
         // loudly instead of being silently untested.
-        assert_eq!(cases.len(), 13, "rust-ef 2.x EFError has 13 variants");
+        assert_eq!(cases.len(), 14, "rust-ef 2.5 EFError has 14 variants");
 
         for (name, error, expected_status) in cases {
             let mapped = map_ef_error(error);
@@ -323,6 +343,11 @@ mod tests {
             EFError::provider("unsupported column type"),
             EFError::change_tracking("snapshot is missing"),
             EFError::other("unexpected driver failure"),
+            EFError::database(
+                crate::error::DatabaseErrorInfo::new("db error")
+                    .with_sqlstate("23502")
+                    .with_sql(SECRET_SQL),
+            ),
         ];
         for error in cases {
             let mapped = map_ef_error(error);

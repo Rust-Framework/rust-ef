@@ -1,5 +1,5 @@
 use crate::sql_generator::PostgresSqlGenerator;
-use crate::tls::PgTlsMode;
+use crate::tls::{pg_tls_preference, without_ssl_mode_parameter, PgTlsMode};
 use async_trait::async_trait;
 use deadpool_postgres::{Config, Pool, Runtime};
 use rust_ef::error::{EFError, EFResult};
@@ -54,17 +54,24 @@ pub struct PostgresProvider {
 }
 
 impl PostgresProvider {
-    /// Creates a provider with TLS required (secure-by-default, v1.6+).
+    /// Creates a provider with TLS required unless the connection string opts
+    /// out explicitly (secure by default, consistent with MySQL).
     ///
-    /// Uses a `native_tls::TlsConnector` built from the platform's default
-    /// root certificate store. For plaintext connections (local dev only),
-    /// use [`PostgresProvider::new_insecure`]. For custom CA certificates,
-    /// use [`PostgresProvider::new_with_tls`].
+    /// `sslmode=disable` (or `allow`) in the URL selects plaintext — the same
+    /// explicit switch MySQL has — so a local/test database no longer needs a
+    /// separate `insecure()` call. An absent `sslmode`, or `prefer`/`require`/
+    /// `verify-*`, enforces TLS (`native_tls` with the platform trust store).
+    /// Use [`PostgresProvider::new_insecure`] for an explicit plaintext
+    /// override and [`PostgresProvider::new_with_tls`] for a custom connector.
     pub fn new(connection_string: &str, pool_size: usize) -> EFResult<Self> {
-        let connector = native_tls::TlsConnector::builder()
-            .build()
-            .map_err(|e| EFError::connection(format!("TLS connector init failed: {}", e)))?;
-        Self::new_with_tls(connection_string, pool_size, PgTlsMode::Require(connector))
+        if pg_tls_preference(connection_string).is_encrypted() {
+            let connector = native_tls::TlsConnector::builder()
+                .build()
+                .map_err(|e| EFError::connection(format!("TLS connector init failed: {}", e)))?;
+            Self::new_with_tls(connection_string, pool_size, PgTlsMode::Require(connector))
+        } else {
+            Self::new_with_tls(connection_string, pool_size, PgTlsMode::Disable)
+        }
     }
 
     /// Creates a provider with TLS disabled (plaintext, local dev only).
@@ -86,7 +93,11 @@ impl PostgresProvider {
         pool_size: usize,
         tls: PgTlsMode,
     ) -> EFResult<Self> {
-        let config: tokio_postgres::Config = connection_string
+        // `tokio_postgres::Config` rejects `sslmode=verify-ca/verify-full`;
+        // TLS is decided by `pg_tls_preference` and the `PgTlsMode`, so the
+        // parameter is removed before parsing (EF-PG-02).
+        let driver_url = without_ssl_mode_parameter(connection_string);
+        let config: tokio_postgres::Config = driver_url
             .parse()
             .map_err(|e| EFError::connection(format!("Invalid connection string: {}", e)))?;
         let mut cfg = Config::new();
@@ -157,7 +168,7 @@ impl IDatabaseProvider for PostgresProvider {
         client
             .batch_execute(sql)
             .await
-            .map_err(|e| EFError::migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| crate::error_map::map_pg_error(e, "Migration execution failed", sql))?;
         Ok(())
     }
 

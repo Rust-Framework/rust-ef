@@ -1,5 +1,5 @@
 use crate::sql_generator::MySqlSqlGenerator;
-use crate::tls::MySqlTlsMode;
+use crate::tls::{tls_mode_from_connection_string, MySqlTlsMode};
 use async_trait::async_trait;
 use rust_ef::error::{EFError, EFResult};
 #[cfg(feature = "tracing")]
@@ -17,7 +17,9 @@ use sqlx_mysql::{MySqlConnectOptions, MySqlPool};
 pub struct MySqlOptions {
     pub(crate) connection_string: String,
     pub(crate) max_pool_size: Option<u32>,
-    pub(crate) tls: MySqlTlsMode,
+    /// Explicit override; `None` means "the connection string decides, else
+    /// `Required`" (secure by default).
+    pub(crate) tls: Option<MySqlTlsMode>,
 }
 
 impl MySqlOptions {
@@ -25,7 +27,7 @@ impl MySqlOptions {
         Self {
             connection_string: connection_string.into(),
             max_pool_size: None,
-            tls: MySqlTlsMode::Required,
+            tls: None,
         }
     }
 
@@ -35,15 +37,24 @@ impl MySqlOptions {
         self
     }
 
-    /// Overrides the TLS mode.
+    /// Overrides the TLS mode (wins over `ssl-mode` in the connection string).
     pub fn tls(&mut self, tls: MySqlTlsMode) -> &mut Self {
-        self.tls = tls;
+        self.tls = Some(tls);
         self
     }
 
     /// Disables TLS (local development only).
     pub fn insecure(&mut self) -> &mut Self {
         self.tls(MySqlTlsMode::Disabled)
+    }
+
+    /// The TLS mode used when the caller did not override it: an explicit
+    /// `ssl-mode`/`sslmode` in the URL wins, otherwise `Required`.
+    pub(crate) fn resolved_tls_mode(&self) -> MySqlTlsMode {
+        self.tls.unwrap_or_else(|| {
+            tls_mode_from_connection_string(&self.connection_string)
+                .unwrap_or(MySqlTlsMode::Required)
+        })
     }
 }
 
@@ -54,12 +65,18 @@ pub struct MySqlProvider {
 }
 
 impl MySqlProvider {
-    /// Creates a provider with TLS required (secure-by-default, v1.6+).
+    /// Creates a provider with TLS required unless the connection string opts
+    /// out explicitly (secure by default).
     ///
-    /// Overrides any `ssl-mode` in the connection string. For plaintext
-    /// connections (local dev only), use [`MySqlProvider::new_insecure`].
+    /// An `ssl-mode`/`sslmode` in the URL is honored (`disabled`, `preferred`,
+    /// `required`, `verify_ca`, `verify_identity`); without one, TLS is
+    /// required. For a hard plaintext override, use
+    /// [`MySqlProvider::new_insecure`]; use [`MySqlProvider::new_with_tls`] to
+    /// force a mode regardless of the URL.
     pub async fn new(connection_string: &str) -> EFResult<Self> {
-        Self::new_with_tls(connection_string, MySqlTlsMode::Required).await
+        let tls =
+            tls_mode_from_connection_string(connection_string).unwrap_or(MySqlTlsMode::Required);
+        Self::new_with_tls(connection_string, tls).await
     }
 
     /// Creates a provider with TLS disabled (plaintext, local dev only).
@@ -75,9 +92,12 @@ impl MySqlProvider {
         }
     }
 
-    /// Creates a lazy provider with TLS required (secure-by-default, v1.6+).
+    /// Creates a lazy provider with TLS required unless the connection string
+    /// opts out explicitly (secure by default). See [`MySqlProvider::new`].
     pub fn new_lazy(connection_string: &str) -> EFResult<Self> {
-        Self::new_lazy_with_tls(connection_string, MySqlTlsMode::Required)
+        let tls =
+            tls_mode_from_connection_string(connection_string).unwrap_or(MySqlTlsMode::Required);
+        Self::new_lazy_with_tls(connection_string, tls)
     }
 
     /// Creates a lazy provider with TLS disabled (plaintext, local dev only).
@@ -160,7 +180,7 @@ impl IDatabaseProvider for MySqlProvider {
         raw_sql(sqlx_core::sql_str::AssertSqlSafe(sql))
             .execute(&self.pool)
             .await
-            .map_err(|e| EFError::migration(format!("Migration execution failed: {}", e)))?;
+            .map_err(|e| crate::error_map::map_sqlx_error(e, "Migration execution failed", sql))?;
         Ok(())
     }
 

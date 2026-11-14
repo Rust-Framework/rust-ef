@@ -15,6 +15,7 @@
 //! `crates/sqlite/tests/introspection_tests.rs`.
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
+use rust_ef::error::EFError;
 use rust_ef::migration::{MigrationDialect, MigrationEngine};
 use rust_ef::prelude::*;
 use rust_ef::schema::DbTable;
@@ -34,6 +35,16 @@ struct Category {
     pub slug: String,
 }
 
+/// Custom enum used to exercise the readable/text-mapped enum path:
+/// MySQL must render it as `VARCHAR(32)` so the `#[index]` below can be built
+/// (unbounded `TEXT` fails with error 1170), PostgreSQL keeps `TEXT`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, DbEnum)]
+enum ProductStatus {
+    #[default]
+    Active,
+    Retired,
+}
+
 #[derive(Debug, Clone, EntityType)]
 #[table("products")]
 struct Product {
@@ -51,6 +62,68 @@ struct Product {
     pub category_id: i32,
 
     pub price: i64,
+
+    #[required]
+    #[max_length(32)]
+    #[index]
+    pub status: ProductStatus,
+}
+
+/// Declarative indexes/CHECKs that reproduce the upstream defects on a real
+/// server: a mixed column + expression index (MySQL 3762), and a CHECK whose
+/// `IN (...)` list PostgreSQL canonicalizes to `= ANY (ARRAY[...])`.
+#[derive(Default)]
+struct ProductConfig;
+
+#[entity(Product)]
+impl IEntityTypeConfiguration<Product> for ProductConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, Product>) {
+        entity
+            .has_index_expression(&["sku", "coalesce(price, 0)"])
+            .has_name("ix_products_sku_price_expr");
+        entity.has_check("ck_products_sku_choice", "sku IN ('basic','pro')");
+    }
+}
+
+/// EF-DDL-01: a composite auto-name longer than 63 bytes must still create on
+/// both MySQL (limit 64) and PostgreSQL (silent truncation at 63).
+#[derive(Debug, Clone, EntityType)]
+#[table("ef_long_identifier_acceptance_table_name_for_release")]
+struct LongName {
+    #[primary_key]
+    #[auto_increment]
+    pub id: i32,
+
+    #[required]
+    #[max_length(32)]
+    pub ef_long_column_name_number_one: String,
+
+    #[required]
+    #[max_length(32)]
+    pub ef_long_column_name_number_two: String,
+
+    #[required]
+    #[max_length(32)]
+    pub ef_long_column_name_number_three: String,
+
+    #[required]
+    #[max_length(32)]
+    pub ef_long_column_name_number_four: String,
+}
+
+#[derive(Default)]
+struct LongNameConfig;
+
+#[entity(LongName)]
+impl IEntityTypeConfiguration<LongName> for LongNameConfig {
+    fn configure(&self, entity: &mut EntityTypeBuilder<'_, LongName>) {
+        entity.has_index(&[
+            LongName::COLUMN_EF_LONG_COLUMN_NAME_NUMBER_ONE,
+            LongName::COLUMN_EF_LONG_COLUMN_NAME_NUMBER_TWO,
+            LongName::COLUMN_EF_LONG_COLUMN_NAME_NUMBER_THREE,
+            LongName::COLUMN_EF_LONG_COLUMN_NAME_NUMBER_FOUR,
+        ]);
+    }
 }
 
 fn require_env(name: &str) -> String {
@@ -114,6 +187,147 @@ fn assert_model_schema(tables: &[DbTable], dialect: MigrationDialect) {
         products.checks.is_some(),
         "{dialect:?}: CHECK constraints must be introspected"
     );
+
+    let status = products.column("status").expect("products.status");
+    match dialect {
+        // EF-MYSQL-01: the custom enum must be a bounded VARCHAR, not TEXT,
+        // otherwise the index below cannot be created.
+        MigrationDialect::MySql => {
+            assert_eq!(
+                status.data_type.to_ascii_lowercase(),
+                "varchar(32)",
+                "MySQL enum column must be VARCHAR(32)"
+            );
+            assert_eq!(status.max_length, Some(32));
+        }
+        MigrationDialect::Postgres => {
+            assert_eq!(
+                status.data_type.to_ascii_lowercase(),
+                "text",
+                "PostgreSQL keeps TEXT for custom enums"
+            );
+        }
+        MigrationDialect::Sqlite => {}
+    }
+    assert!(
+        products
+            .indexes
+            .iter()
+            .any(|index| index.column_names() == vec!["status"]),
+        "{dialect:?}: index on the enum column missing: {:?}",
+        products.indexes
+    );
+
+    // EF-MYSQL-02: the mixed `(sku, coalesce(price, 0))` index must exist and
+    // its plain column must not be wrapped as an expression.
+    let expression_index = products
+        .indexes
+        .iter()
+        .find(|index| index.name == "ix_products_sku_price_expr")
+        .unwrap_or_else(|| {
+            panic!(
+                "{dialect:?}: mixed expression index missing: {:?}",
+                products.indexes
+            )
+        });
+    assert!(
+        expression_index
+            .columns
+            .iter()
+            .any(|part| !part.is_expression && part.value.eq_ignore_ascii_case("sku")),
+        "{dialect:?}: mixed index must keep `sku` as a plain column: {:?}",
+        expression_index.columns
+    );
+    assert!(
+        expression_index
+            .columns
+            .iter()
+            .any(|part| part.is_expression && part.value.contains("coalesce")),
+        "{dialect:?}: mixed index must keep the expression part: {:?}",
+        expression_index.columns
+    );
+
+    // EF-DDL-01: the long auto-derived name must be a valid identifier on both
+    // servers (no MySQL 1059, no PostgreSQL truncation surprise).
+    let long_table = tables
+        .iter()
+        .find(|table| table.name == "ef_long_identifier_acceptance_table_name_for_release")
+        .expect("long-name table must be introspected");
+    let long_index = long_table
+        .indexes
+        .iter()
+        .find(|index| index.columns.len() == 4)
+        .unwrap_or_else(|| {
+            panic!(
+                "{dialect:?}: long-name composite index missing: {:?}",
+                long_table.indexes
+            )
+        });
+    assert!(
+        long_index.name.len() <= 63,
+        "{dialect:?}: auto index name must be <= 63 bytes, got {} ({})",
+        long_index.name.len(),
+        long_index.name
+    );
+}
+
+/// EF-DIFF-01 acceptance: a schema created from the model must introspect and
+/// diff back to **zero statements** on the same connection.
+async fn assert_no_runtime_drift(
+    engine: &MigrationEngine,
+    metas: &[rust_ef::metadata::EntityTypeMeta],
+    tables: &[DbTable],
+    dialect: MigrationDialect,
+) {
+    let diff = engine.diff_metas(metas, tables);
+    assert!(
+        diff.statements.is_empty(),
+        "{dialect:?}: fresh schema must diff to no statements:\n{}",
+        diff.report()
+    );
+    assert!(
+        !diff.report().to_ascii_uppercase().contains("DROP CHECK"),
+        "{dialect:?}: runtime diff must never drop a CHECK:\n{}",
+        diff.report()
+    );
+    assert!(
+        !diff
+            .report()
+            .to_ascii_uppercase()
+            .contains("DROP CONSTRAINT"),
+        "{dialect:?}: runtime diff must never drop a constraint:\n{}",
+        diff.report()
+    );
+}
+
+/// EF-ERR-01 acceptance: a failed statement keeps SQLSTATE, driver message and
+/// the SQL in `EFError::Database`.
+async fn assert_structured_driver_error(provider: &dyn IDatabaseProvider, sql: &str) {
+    let mut connection = provider.get_connection().await.expect("connection");
+    let error = connection
+        .execute(sql, &[])
+        .await
+        .expect_err("a missing table must fail");
+    match error {
+        EFError::Database(info, _) => {
+            assert!(
+                info.sqlstate.is_some(),
+                "driver error must keep SQLSTATE: {info:?}"
+            );
+            assert!(
+                info.message
+                    .to_ascii_lowercase()
+                    .contains("__ef_missing_2_5__"),
+                "driver message must name the missing object: {info:?}"
+            );
+            assert_eq!(
+                info.sql.as_deref(),
+                Some(sql),
+                "driver error must keep the failing SQL"
+            );
+        }
+        other => panic!("expected EFError::Database, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -148,6 +362,8 @@ async fn mysql_introspection_matches_the_migrated_model() {
         .await
         .expect("introspect MySQL schema");
     assert_model_schema(&tables, MigrationDialect::MySql);
+    assert_no_runtime_drift(&engine, &metas, &tables, MigrationDialect::MySql).await;
+    assert_structured_driver_error(ctx.provider(), "DELETE FROM __ef_missing_2_5__").await;
 
     let products = tables
         .iter()
@@ -188,6 +404,8 @@ async fn postgres_introspection_matches_the_migrated_model() {
         .await
         .expect("introspect PostgreSQL schema");
     assert_model_schema(&tables, MigrationDialect::Postgres);
+    assert_no_runtime_drift(&engine, &metas, &tables, MigrationDialect::Postgres).await;
+    assert_structured_driver_error(ctx.provider(), "DELETE FROM __ef_missing_2_5__").await;
 
     let products = tables
         .iter()
@@ -198,3 +416,7 @@ async fn postgres_introspection_matches_the_migrated_model() {
         "PostgreSQL introspects triggers"
     );
 }
+
+// EF-PG-01: the `DbValue::Null` binding matrix against a real PostgreSQL server
+// lives in `tests/postgres_null_binding.rs`
+// (`RUST_EF_PG_URL=... cargo test -p rust-ef --test postgres_null_binding -- --ignored`).

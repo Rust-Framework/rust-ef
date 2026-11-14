@@ -67,6 +67,25 @@ rust-ef migration revert --connection "sqlite:app.db" --dir Migrations --target 
 rust-ef migration script --dir Migrations --from InitialCreate --to AddUserTable
 ```
 
+### 三方言 DDL dry-run 与能力矩阵（2.5.0）
+
+不连库、只看模型会生成什么（缺陷包 E）：
+
+```bash
+# 由同一份 snapshot 输出 sqlite/postgres/mysql 的建表 DDL、警告与能力矩阵
+rust-ef migration ddl --snapshot current_snapshot.json --dialect all
+
+# 只看某一个方言，或写到文件
+rust-ef migration ddl --snapshot current_snapshot.json --dialect mysql --out schema.mysql.sql
+
+# provider 能力矩阵（enum / 表达式索引 / 部分索引 / INCLUDE / CHECK / 表选项 / 注释 / 生成列 / 复合 FK / ALTER COLUMN）
+rust-ef migration capabilities --dialect all
+```
+
+- `ddl` 复用运行时差分同一条 DDL 生成路径（空 live 视为“全部表新建”），因此输出与首装/升级
+  的真实语句一致；不支持的能力以 `-- WARNING` / `report()` 明确列出，不静默丢弃。
+- 适合在 CI 对模型做“DDL 快照”评审、对比三方言差异，或在安装器里预检目标方言是否支持模型。
+
 ## 设计要点
 
 | 实践 | 说明 |

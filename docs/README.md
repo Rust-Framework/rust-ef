@@ -43,6 +43,7 @@ docs/
 - [v2.1 迁移指南（rust-dix 0.10 / 类型化 key / AnyKey / 异步）](v2.1-migration-guide.md)
 - [v2.2 迁移指南（数据库级约束 + EFCore 实体配置对齐 + 可组合谓词）](v2.2-migration-guide.md)
 - [v2.3 迁移指南（运行时升级 + 三方言内省 + ConnectionString + 必填推断）](v2.3-migration-guide.md)
+- [v2.5 迁移指南（PG NULL / MySQL DDL / 网络 diff / 驱动诊断 / ADO.NET 连接串）](v2.5-migration-guide.md)
 
 - [rust-dix 0.10 能力评估与采纳矩阵](rust-dix-0.10-adoption.md)
 

@@ -10,6 +10,7 @@
 //! [`MigrationEngine::diff`] against an introspected [`crate::schema::DbTable`]
 //! list and [`MigrationEngine::apply_diff`], see the `live_diff` module.
 
+mod capabilities;
 mod ddl_expr;
 mod dialect;
 mod diff;
@@ -24,6 +25,7 @@ mod snapshot;
 mod snapshot_io;
 mod types;
 
+pub use capabilities::{capabilities as provider_capabilities, ProviderCapabilities, SupportLevel};
 pub use dialect::MigrationDialect;
 pub use diff_apply::DiffApplyResult;
 pub use engine::MigrationEngine;
@@ -32,7 +34,9 @@ pub use history::{
     create_migration_history_table_sql, validate_migration_id, MigrationHistoryEntry,
     MigrationStore, MIGRATION_HISTORY_TABLE, PRODUCT_VERSION,
 };
-pub use live_diff::{DiffWarning, MigrationDiff, TableRebuild, WarningKind, WarningSeverity};
+pub use live_diff::{
+    DiffSummary, DiffWarning, MigrationDiff, TableRebuild, WarningKind, WarningSeverity,
+};
 pub use snapshot::{build_registered_snapshot, save_registered_snapshot, write_snapshot};
 pub use snapshot_io::parse_model_snapshot_json;
 pub use types::{

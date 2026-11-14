@@ -1,4 +1,4 @@
-use rust_ef::error::{EFError, EFResult};
+use rust_ef::error::{DatabaseErrorInfo, EFError, EFResult};
 use rust_ef::provider::DbValue;
 
 /// Maps a `rusqlite` error to a typed [`EFError`].
@@ -6,12 +6,28 @@ use rust_ef::provider::DbValue;
 /// Unique/primary-key violations are promoted to
 /// [`EFError::UniqueViolation`] so callers no longer need to sniff the driver
 /// message. SQLite reports the violated columns instead of a constraint name
-/// (`UNIQUE constraint failed: order_record.tenant_id, …`), so `constraint` is
-/// always `None`; `table` is parsed from the message when present.
-fn map_sqlite_error(e: rusqlite::Error) -> EFError {
-    if let rusqlite::Error::SqliteFailure(err, message) = &e {
-        let unique = err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
-            || err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY;
+/// (`UNIQUE constraint failed: order_record.tenant_id, ...`), so `constraint`
+/// is always `None`; `table` is parsed from the message when present.
+///
+/// Other failures keep the SQLite extended result code and driver message in
+/// [`EFError::Database`] (EF-ERR-01), so a failed statement is diagnosable
+/// instead of collapsing to a bare `db error`.
+pub(crate) fn map_sqlite_error(e: rusqlite::Error) -> EFError {
+    map_sqlite_error_with_sql(e, None)
+}
+
+/// Same as [`map_sqlite_error`], additionally attaching the failing SQL.
+pub(crate) fn map_sqlite_error_with_sql(e: rusqlite::Error, sql: Option<&str>) -> EFError {
+    let (code, message) = match &e {
+        rusqlite::Error::SqliteFailure(err, message) => {
+            (Some(err.extended_code.to_string()), message.clone())
+        }
+        _ => (None, None),
+    };
+    if let Some(code) = &code {
+        let extended = code.parse::<i32>().ok();
+        let unique = extended == Some(rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE)
+            || extended == Some(rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY);
         if unique {
             return EFError::UniqueViolation {
                 constraint: None,
@@ -19,7 +35,14 @@ fn map_sqlite_error(e: rusqlite::Error) -> EFError {
             };
         }
     }
-    EFError::query(format!("Execution error: {}", e))
+    let mut info = DatabaseErrorInfo::new(message.unwrap_or_else(|| e.to_string()));
+    if let Some(code) = code {
+        info = info.with_code(code);
+    }
+    if let Some(sql) = sql {
+        info = info.with_sql(sql);
+    }
+    EFError::database(info).with_source(Box::new(e))
 }
 
 /// Extracts the table name from a SQLite unique-constraint message.

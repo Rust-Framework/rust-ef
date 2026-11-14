@@ -1,24 +1,9 @@
 use async_trait::async_trait;
-use rust_ef::error::{EFError, EFResult};
+use rust_ef::error::EFResult;
 use rust_ef::provider::{DbValue, IAsyncConnection, IsolationLevel};
-use tokio_postgres::error::SqlState;
 use tokio_postgres::types::ToSql;
 
-/// Maps a `tokio_postgres` error to a typed [`EFError`].
-///
-/// SQLSTATE `23505` (unique violation) is promoted to
-/// [`EFError::UniqueViolation`], using PostgreSQL's structured
-/// `table`/`constraint` fields instead of parsing the message.
-fn map_pg_error(e: tokio_postgres::Error, context: &str) -> EFError {
-    if e.code() == Some(&SqlState::UNIQUE_VIOLATION) {
-        let db_error = e.as_db_error();
-        return EFError::UniqueViolation {
-            constraint: db_error.and_then(|d| d.constraint()).map(str::to_string),
-            table: db_error.and_then(|d| d.table()).map(str::to_string),
-        };
-    }
-    EFError::query(format!("{context}: {e}"))
-}
+use crate::error_map::map_pg_error;
 
 pub struct PostgresConnection {
     pub(crate) client: deadpool_postgres::Client,
@@ -59,7 +44,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .execute(sql, &refs)
             .await
-            .map_err(|e| map_pg_error(e, "Execution error"))
+            .map_err(|e| map_pg_error(e, "Execution error", sql))
     }
 
     async fn query(&mut self, sql: &str, params: &[DbValue]) -> EFResult<Vec<Vec<DbValue>>> {
@@ -73,7 +58,7 @@ impl IAsyncConnection for PostgresConnection {
             .client
             .query(sql, &refs)
             .await
-            .map_err(|e| map_pg_error(e, "Query error"))?;
+            .map_err(|e| map_pg_error(e, "Query error", sql))?;
         let columns: Vec<&tokio_postgres::Column> = if !rows.is_empty() {
             rows[0].columns().iter().collect()
         } else {
@@ -96,7 +81,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query("BEGIN")
             .await
-            .map_err(|e| EFError::transaction(format!("BEGIN failed: {}", e)))?;
+            .map_err(|e| map_pg_error(e, "BEGIN failed", "BEGIN"))?;
         Ok(())
     }
 
@@ -104,7 +89,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query("COMMIT")
             .await
-            .map_err(|e| EFError::transaction(format!("COMMIT failed: {}", e)))?;
+            .map_err(|e| map_pg_error(e, "COMMIT failed", "COMMIT"))?;
         Ok(())
     }
 
@@ -112,31 +97,34 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query("ROLLBACK")
             .await
-            .map_err(|e| EFError::transaction(format!("ROLLBACK failed: {}", e)))?;
+            .map_err(|e| map_pg_error(e, "ROLLBACK failed", "ROLLBACK"))?;
         Ok(())
     }
 
     async fn create_savepoint(&mut self, name: &str) -> EFResult<()> {
+        let sql = format!("SAVEPOINT {}", name);
         self.client
-            .simple_query(&format!("SAVEPOINT {}", name))
+            .simple_query(&sql)
             .await
-            .map_err(|e| EFError::transaction(format!("SAVEPOINT failed: {}", e)))?;
+            .map_err(|e| map_pg_error(e, "SAVEPOINT failed", &sql))?;
         Ok(())
     }
 
     async fn release_savepoint(&mut self, name: &str) -> EFResult<()> {
+        let sql = format!("RELEASE SAVEPOINT {}", name);
         self.client
-            .simple_query(&format!("RELEASE SAVEPOINT {}", name))
+            .simple_query(&sql)
             .await
-            .map_err(|e| EFError::transaction(format!("RELEASE failed: {}", e)))?;
+            .map_err(|e| map_pg_error(e, "RELEASE failed", &sql))?;
         Ok(())
     }
 
     async fn rollback_to_savepoint(&mut self, name: &str) -> EFResult<()> {
+        let sql = format!("ROLLBACK TO SAVEPOINT {}", name);
         self.client
-            .simple_query(&format!("ROLLBACK TO SAVEPOINT {}", name))
+            .simple_query(&sql)
             .await
-            .map_err(|e| EFError::transaction(format!("ROLLBACK TO failed: {}", e)))?;
+            .map_err(|e| map_pg_error(e, "ROLLBACK TO failed", &sql))?;
         Ok(())
     }
 
@@ -153,7 +141,7 @@ impl IAsyncConnection for PostgresConnection {
         self.client
             .simple_query(&sql)
             .await
-            .map_err(|e| EFError::transaction(format!("SET ISOLATION failed: {}", e)))?;
+            .map_err(|e| map_pg_error(e, "SET ISOLATION failed", &sql))?;
         Ok(())
     }
 
@@ -172,7 +160,7 @@ impl IAsyncConnection for PostgresConnection {
 
 #[cfg(test)]
 mod tests {
-    use super::SqlState;
+    use tokio_postgres::error::SqlState;
 
     #[test]
     fn unique_violation_sqlstate_is_23505() {

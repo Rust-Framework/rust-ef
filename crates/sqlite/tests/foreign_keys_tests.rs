@@ -101,8 +101,8 @@ async fn every_pooled_connection_enforces_foreign_keys() {
         .await
         .expect_err("orphan FK insert must be rejected");
     assert!(
-        matches!(err, EFError::Query(..)),
-        "expected a constraint error, got {err:?}"
+        matches!(err, EFError::Database(..)),
+        "expected a structured constraint error, got {err:?}"
     );
 
     drop(borrowed);
@@ -136,7 +136,7 @@ async fn in_memory_foreign_keys_option_applies() {
         .await
         .expect_err("orphan FK insert must be rejected");
     assert!(
-        matches!(err, EFError::Query(..)),
-        "expected a constraint error, got {err:?}"
+        matches!(err, EFError::Database(..)),
+        "expected a structured constraint error, got {err:?}"
     );
 }

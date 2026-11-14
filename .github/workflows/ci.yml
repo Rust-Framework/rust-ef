@@ -201,3 +201,47 @@ jobs:
           cargo test -p rust-ef --features chrono,uuid,decimal \
             --test provider_parity_tests -- --ignored --test-threads=1
 
+  # Real-database coverage that cannot run on SQLite. This job is deliberately
+  # separate from `lint`/`test`: a database or service-container problem must
+  # never fail the default gate. It runs on regular pushes and on non-draft PRs.
+  db-integration:
+    name: DB integration (ignored real-database tests)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ef_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ef_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ef_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      RUST_EF_MYSQL_URL: mysql://root:root@127.0.0.1:3306/ef_ci?ssl-mode=disabled
+      RUST_EF_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/ef_ci?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Provider parity (real MySQL + PostgreSQL)
+        run: cargo test -p rust-ef --test provider_parity_tests -- --ignored --nocapture
+      - name: PostgreSQL NULL binding (real PostgreSQL)
+        run: cargo test -p rust-ef --test postgres_null_binding -- --ignored --nocapture
+

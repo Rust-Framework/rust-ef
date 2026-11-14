@@ -21,6 +21,14 @@ pub(crate) fn cell_to_db_value(
         };
     }
 
+    // NUMERIC has no `FromSql` for String/i64/f64, so without an explicit arm a
+    // non-NULL numeric cell fell through every candidate and materialized as
+    // `DbValue::Null` — indistinguishable from SQL NULL. `rust_decimal`'s
+    // `db-tokio-postgres` feature supplies the binary NUMERIC decoder.
+    if matches!(*_pg_type, PgType::NUMERIC) {
+        try_value!(rust_decimal::Decimal, DbValue::Decimal);
+    }
+
     try_value!(bool, DbValue::Bool);
     try_value!(i16, DbValue::I16);
     try_value!(i32, DbValue::I32);

@@ -336,7 +336,9 @@ impl IndexMeta {
     /// Derives the default index name for `table` from its key parts.
     ///
     /// Format: `ix_<table>_<part1>_<part2>...`, sanitized to identifier-safe
-    /// characters and truncated to 64 characters (MySQL's identifier limit).
+    /// characters and truncated to the portable identifier limit (63 bytes —
+    /// PostgreSQL silently truncates longer names, MySQL rejects them with
+    /// error 1059).
     pub fn derive_name(&self, table: &str) -> String {
         let mut name = format!("ix_{table}");
         for col in &self.columns {
@@ -349,7 +351,7 @@ impl IndexMeta {
                     hash ^= *b as u64;
                     hash = hash.wrapping_mul(1099511628211);
                 }
-                name.push_str(&format!("_expr{hash:08x}"));
+                name.push_str(&format!("_expr{:08x}", hash as u32));
             } else {
                 name.push('_');
                 name.push_str(col.as_str());
@@ -359,7 +361,20 @@ impl IndexMeta {
     }
 }
 
-/// Sanitizes a derived index name to `[A-Za-z0-9_]`, max 64 chars.
+/// Portable maximum identifier length for generated names.
+///
+/// PostgreSQL truncates identifiers to 63 bytes (`NAMEDATALEN - 1`), MySQL
+/// rejects names longer than 64 characters (error 1059), SQLite has no limit.
+/// Deriving names at 63 bytes makes every dialect produce the same, valid
+/// identifier (EF-DDL-01).
+pub(crate) const MAX_IDENTIFIER_LEN: usize = 63;
+
+/// Sanitizes a derived index/constraint name to `[A-Za-z0-9_]`, at most
+/// [`MAX_IDENTIFIER_LEN`] bytes.
+///
+/// Over-long names are truncated deterministically and suffixed with an FNV-1a
+/// hash of the original text, so two different declarations never collapse to
+/// the same identifier and re-running the generator yields the same name.
 pub(crate) fn sanitize_index_name(raw: &str) -> String {
     let mut out: String = raw
         .chars()
@@ -371,16 +386,16 @@ pub(crate) fn sanitize_index_name(raw: &str) -> String {
             }
         })
         .collect();
-    if out.len() > 64 {
-        let mut truncated: String = out.chars().take(55).collect();
-        // Short, deterministic suffix to avoid collisions after truncation.
+    if out.len() > MAX_IDENTIFIER_LEN {
+        // 63 - 1 (underscore) - 8 (hash) = 54.
+        let mut truncated: String = out.chars().take(MAX_IDENTIFIER_LEN - 9).collect();
         let mut hash: u64 = 1469598103934665603;
         for b in raw.as_bytes() {
             hash ^= *b as u64;
             hash = hash.wrapping_mul(1099511628211);
         }
         truncated.push('_');
-        truncated.push_str(&format!("{hash:08x}"));
+        truncated.push_str(&format!("{:08x}", hash as u32));
         out = truncated;
     }
     out
@@ -577,5 +592,52 @@ impl Default for EntityTypeMeta {
             property_index: std::sync::OnceLock::new(),
             navigation_index: std::sync::OnceLock::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IndexColumn, IndexMeta, MAX_IDENTIFIER_LEN};
+
+    #[test]
+    fn derived_names_respect_the_portable_identifier_limit() {
+        let index = IndexMeta {
+            columns: vec![
+                IndexColumn::Column("tenant_id".into()),
+                IndexColumn::Column("link_id".into()),
+                IndexColumn::Column("review_kind".into()),
+                IndexColumn::Column("configuration_version".into()),
+            ],
+            ..IndexMeta::default()
+        };
+        let name = index.derive_name("link_review");
+        assert!(
+            name.len() <= MAX_IDENTIFIER_LEN,
+            "name too long ({}): {name}",
+            name.len()
+        );
+        // Deterministic across calls.
+        assert_eq!(name, index.derive_name("link_review"));
+        // Short names stay readable and unchanged.
+        let short = IndexMeta {
+            columns: vec![IndexColumn::Column("tenant_id".into())],
+            ..IndexMeta::default()
+        };
+        assert_eq!(short.derive_name("orders"), "ix_orders_tenant_id");
+    }
+
+    #[test]
+    fn long_auto_names_hash_instead_of_colliding() {
+        let make = |column: &'static str| IndexMeta {
+            columns: vec![IndexColumn::Column(column.into())],
+            ..IndexMeta::default()
+        };
+        let first = make("a_very_long_column_name_that_keeps_going_and_going_one")
+            .derive_name("a_table_with_a_long_name");
+        let second = make("a_very_long_column_name_that_keeps_going_and_going_two")
+            .derive_name("a_table_with_a_long_name");
+        assert!(first.len() <= MAX_IDENTIFIER_LEN);
+        assert!(second.len() <= MAX_IDENTIFIER_LEN);
+        assert_ne!(first, second);
     }
 }

@@ -187,7 +187,7 @@ pub(super) fn fk_target(col: &SnapshotColumn) -> Option<(String, String)> {
 
 /// Standard index name used by CreateIndex/DropIndex SQL generation.
 pub(super) fn index_name(table: &str, column: &str) -> String {
-    format!("ix_{}_{}", table, column)
+    crate::metadata::sanitize_index_name(&format!("ix_{}_{}", table, column))
 }
 
 pub(super) fn fk_reference_for_property(

@@ -1,4 +1,4 @@
-﻿//! `MigrationEngine` SQL generation 鈥?Up/Down DDL from `SchemaChange` lists.
+//! `MigrationEngine` SQL generation 鈥?Up/Down DDL from `SchemaChange` lists.
 
 use super::ddl_expr::quote_string;
 use super::dialect::MigrationDialect;
@@ -212,6 +212,87 @@ impl MigrationEngine {
         suffix
     }
 
+    /// Validates a raw `CHECK` expression for known dialect incompatibilities.
+    ///
+    /// `has_check` accepts arbitrary SQL (the caller owns portability). This
+    /// generation-time check catches the patterns that are valid on one dialect
+    /// and invalid on another — the common portability trap is PostgreSQL
+    /// rejecting boolean arithmetic such as
+    /// `(a IS NOT NULL) + (b IS NOT NULL) = 1` (EF-DDL-02). Prefer
+    /// [`crate::check_expr::CheckExpr`], which emits portable `CASE`
+    /// arithmetic.
+    pub fn validate_check_expression(&self, expression: &str) -> Vec<String> {
+        let compact: String = expression
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if compact.is_empty() {
+            return vec![
+                "CHECK expression is empty; PostgreSQL and MySQL reject an empty constraint".into(),
+            ];
+        }
+        let mut warnings = Vec::new();
+        match self.dialect {
+            MigrationDialect::Postgres => {
+                if compact.contains("isnotnull)+(") || compact.contains("isnull)+(") {
+                    warnings.push(
+                        "PostgreSQL does not define '+' for boolean operands; use \
+                         CheckExpr::exactly_one_of / at_most_one_of instead of adding IS NOT NULL \
+                         expressions"
+                            .into(),
+                    );
+                }
+                if compact.contains("ifnull(") {
+                    warnings.push("IFNULL is not a PostgreSQL function; use COALESCE(...)".into());
+                }
+            }
+            MigrationDialect::MySql => {
+                if compact.contains("::") {
+                    warnings.push(
+                        "PostgreSQL-style '::' casts are invalid in MySQL; use CAST(... AS ...)"
+                            .into(),
+                    );
+                }
+                if compact.contains("ilike") {
+                    warnings.push(
+                        "ILIKE is PostgreSQL-specific; MySQL comparisons are case-insensitive \
+                         under the default collation (use COLLATE for an explicit rule)"
+                            .into(),
+                    );
+                }
+                if compact.contains("similarto") || compact.contains("~'") {
+                    warnings.push(
+                        "SIMILAR TO / regular-expression operators are not supported by MySQL"
+                            .into(),
+                    );
+                }
+            }
+            MigrationDialect::Sqlite => {
+                if compact.contains("ilike") {
+                    warnings.push(
+                        "ILIKE is PostgreSQL-specific; SQLite LIKE is case-insensitive for ASCII"
+                            .into(),
+                    );
+                }
+                if compact.contains("::") {
+                    warnings.push(
+                        "PostgreSQL-style '::' casts are invalid in SQLite; use CAST(... AS ...)"
+                            .into(),
+                    );
+                }
+            }
+        }
+        warnings
+    }
+
+    /// Writes `-- WARNING: ...` comments for a raw CHECK expression.
+    fn push_check_warnings(&self, sql: &mut String, expression: &str) {
+        for warning in self.validate_check_expression(expression) {
+            sql.push_str(&format!("-- WARNING: {warning}\n"));
+        }
+    }
+
     /// Renders a declared index key part for a CREATE INDEX statement.
     fn render_index_key_part(&self, part: &SnapshotIndexColumn) -> String {
         if part.is_expression {
@@ -337,18 +418,21 @@ impl MigrationEngine {
 
     fn add_check_sql(&self, table: &str, check: &SnapshotCheck) -> String {
         let q = |s: &str| self.dialect.quote(s);
+        let mut sql = String::new();
+        self.push_check_warnings(&mut sql, &check.expression);
         match self.dialect {
-            MigrationDialect::Sqlite => format!(
+            MigrationDialect::Sqlite => sql.push_str(&format!(
                 "-- WARNING: SQLite cannot add CHECK constraint {} to an existing table; rebuild the table to apply it\n",
                 q(&check.name)
-            ),
-            _ => format!(
+            )),
+            _ => sql.push_str(&format!(
                 "ALTER TABLE {} ADD CONSTRAINT {} CHECK ({});\n",
                 q(table),
                 q(&check.name),
                 check.expression
-            ),
+            )),
         }
+        sql
     }
 
     fn drop_check_sql(&self, table: &str, check: &SnapshotCheck) -> String {
@@ -380,17 +464,21 @@ impl MigrationEngine {
     /// Dots from schema-qualified tables are flattened so the name stays a
     /// single identifier.
     pub fn foreign_key_name(table: &str, column: &str, referenced_table: &str) -> String {
-        format!(
+        crate::metadata::sanitize_index_name(&format!(
             "fk_{}_{}_{}",
             table.replace('.', "_"),
             column,
             referenced_table.replace('.', "_")
-        )
+        ))
     }
 
     /// Standard index name used by CreateIndex/DropIndex.
+    ///
+    /// Bounded to the portable identifier length so a long table/column pair
+    /// cannot fail on MySQL (error 1059) or be silently truncated by
+    /// PostgreSQL.
     pub fn index_name(table: &str, column: &str) -> String {
-        format!("ix_{}_{}", table.replace('.', "_"), column)
+        crate::metadata::sanitize_index_name(&format!("ix_{}_{}", table.replace('.', "_"), column))
     }
 
     /// Returns the column type and whether MySQL `AUTO_INCREMENT` must be
@@ -558,6 +646,7 @@ impl MigrationEngine {
 
                     // Table-level CHECK constraints
                     for check in checks {
+                        self.push_check_warnings(&mut sql, &check.expression);
                         sql.push_str(&format!(
                             "    ,CONSTRAINT {} CHECK ({})\n",
                             q(&check.name),
@@ -1081,6 +1170,58 @@ mod tests {
             !sql.contains("INT AUTO_INCREMENT NOT NULL"),
             "unexpected DDL: {sql}"
         );
+    }
+
+    #[test]
+    fn postgres_boolean_addition_check_is_flagged() {
+        let engine = MigrationEngine::new(MigrationDialect::Postgres);
+        let warnings = engine.validate_check_expression("(a IS NOT NULL) + (b IS NOT NULL) = 1");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("boolean"), "{warnings:?}");
+        // The portable CheckExpr form is accepted.
+        assert!(engine
+            .validate_check_expression(
+                "(CASE WHEN a IS NOT NULL THEN 1 ELSE 0 END) + \
+                 (CASE WHEN b IS NOT NULL THEN 1 ELSE 0 END) = 1"
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn mysql_rejects_postgres_specific_check_syntax() {
+        let engine = MigrationEngine::new(MigrationDialect::MySql);
+        assert!(!engine
+            .validate_check_expression("name ILIKE 'a%'")
+            .is_empty());
+        assert!(!engine
+            .validate_check_expression("amount::int > 0")
+            .is_empty());
+        assert!(engine.validate_check_expression("amount > 0").is_empty());
+    }
+
+    #[test]
+    fn generated_check_ddl_carries_the_warning() {
+        let engine = MigrationEngine::new(MigrationDialect::Postgres);
+        let column = SnapshotColumn {
+            column_name: "id".into(),
+            type_name: "i32".into(),
+            is_primary_key: true,
+            is_required: true,
+            ..Default::default()
+        };
+        let sql = engine.generate_ddl_sql(&[SchemaChange::CreateTable {
+            table: "items".into(),
+            columns: vec![column],
+            checks: vec![SnapshotCheck {
+                name: "ck_bad".into(),
+                expression: "(a IS NOT NULL) + (b IS NOT NULL) = 1".into(),
+            }],
+            table_options: Default::default(),
+            foreign_keys: Vec::new(),
+            comment: None,
+        }]);
+        assert!(sql.contains("-- WARNING:"), "{sql}");
+        assert!(sql.contains("boolean"), "{sql}");
     }
 
     #[test]

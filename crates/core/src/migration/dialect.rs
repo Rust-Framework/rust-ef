@@ -29,10 +29,21 @@ impl MigrationDialect {
         // / contains matching to handle both simple and qualified names.
         //
         // Explicit `HasColumnType` wins verbatim (user is responsible for dialect
-        // portability).
+        // portability), except for the one combination that cannot work on
+        // MySQL: an unbounded `TEXT` column with a declared `max_length`.
+        // MySQL cannot index an unbounded TEXT/BLOB, so a custom enum mapped to
+        // TEXT would make `CREATE INDEX` fail with error 1170 even though
+        // `max_length` was declared (EF-MYSQL-01). The declared length wins.
         if let Some(explicit) = &col.column_type {
-            if !explicit.trim().is_empty() {
-                return explicit.trim().to_string();
+            let explicit = explicit.trim();
+            if !explicit.is_empty() {
+                if matches!(self, MigrationDialect::MySql)
+                    && explicit.eq_ignore_ascii_case("TEXT")
+                    && col.max_length.is_some()
+                {
+                    return mysql_text_type(col);
+                }
+                return explicit.to_string();
             }
         }
 
@@ -147,10 +158,27 @@ impl MigrationDialect {
                 MigrationDialect::MySql => format!("DECIMAL({p},{s})"),
                 MigrationDialect::Sqlite => "TEXT".into(),
             };
+        } else if matches!(self, MigrationDialect::MySql) {
+            // Custom/scalar types (contract enums, newtypes, ...) have no native
+            // mapping. MySQL's default TEXT is not indexable; a declared
+            // max_length therefore selects VARCHAR(n) (or CHAR(n) for
+            // fixed-length columns). PostgreSQL/SQLite keep TEXT, which is both
+            // indexable and the type existing databases were created with.
+            return mysql_text_type(col);
         } else {
             "TEXT"
         };
         base.to_string()
+    }
+}
+
+/// `VARCHAR(n)` / `CHAR(n)` for a MySQL text-like column with a declared
+/// length; unbounded `TEXT` when no length was configured.
+fn mysql_text_type(col: &SnapshotColumn) -> String {
+    match col.max_length {
+        Some(length) if col.is_fixed_length => format!("CHAR({length})"),
+        Some(length) => format!("VARCHAR({length})"),
+        None => "TEXT".to_string(),
     }
 }
 
@@ -192,6 +220,59 @@ mod tests {
             MigrationDialect::Postgres.map_column_type(&col),
             "VARCHAR(32)"
         );
+    }
+
+    #[test]
+    fn custom_enum_with_max_length_is_indexable_on_mysql() {
+        let col = SnapshotColumn {
+            type_name: "travel_contracts::enums::LinkReviewKind".into(),
+            max_length: Some(32),
+            ..Default::default()
+        };
+        // EF-MYSQL-01: MySQL cannot index unbounded TEXT, so the declared
+        // length must select VARCHAR(n).
+        assert_eq!(MigrationDialect::MySql.map_column_type(&col), "VARCHAR(32)");
+        // PostgreSQL/SQLite keep TEXT (indexable; matches existing databases).
+        assert_eq!(MigrationDialect::Postgres.map_column_type(&col), "TEXT");
+        assert_eq!(MigrationDialect::Sqlite.map_column_type(&col), "TEXT");
+    }
+
+    #[test]
+    fn custom_enum_without_length_stays_text_on_mysql() {
+        let col = SnapshotColumn {
+            type_name: "some::CustomStatus".into(),
+            ..Default::default()
+        };
+        assert_eq!(MigrationDialect::MySql.map_column_type(&col), "TEXT");
+    }
+
+    #[test]
+    fn explicit_text_with_length_is_promoted_on_mysql() {
+        let col = SnapshotColumn {
+            type_name: "alloc::string::String".into(),
+            column_type: Some("TEXT".into()),
+            max_length: Some(64),
+            ..Default::default()
+        };
+        assert_eq!(MigrationDialect::MySql.map_column_type(&col), "VARCHAR(64)");
+        // An explicit non-TEXT type still wins verbatim.
+        let json = SnapshotColumn {
+            type_name: "alloc::string::String".into(),
+            column_type: Some("JSON".into()),
+            max_length: Some(64),
+            ..Default::default()
+        };
+        assert_eq!(MigrationDialect::MySql.map_column_type(&json), "JSON");
+    }
+
+    #[test]
+    fn option_wrapped_custom_enum_uses_inner_mapping() {
+        let col = SnapshotColumn {
+            type_name: "core::option::Option<some::CustomStatus>".into(),
+            max_length: Some(16),
+            ..Default::default()
+        };
+        assert_eq!(MigrationDialect::MySql.map_column_type(&col), "VARCHAR(16)");
     }
 
     #[test]

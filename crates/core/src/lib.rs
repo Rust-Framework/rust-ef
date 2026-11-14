@@ -28,6 +28,7 @@
 pub mod audit;
 pub mod cascade;
 pub mod change_executor;
+pub mod check_expr;
 pub mod connection_string;
 pub mod db_context;
 pub mod db_set;
@@ -66,6 +67,7 @@ pub mod prelude {
     pub use crate::audit::{
         AuditInterceptor, IAuditActor, IAuditable, IClock, NoAuditActor, SystemClock,
     };
+    pub use crate::check_expr::CheckExpr;
     pub use crate::db_context::{
         AsyncPreflight, AsyncPreflightFuture, DbContext, DbContextOptions, DbContextOptionsBuilder,
         SaveChangesResult,
@@ -77,7 +79,7 @@ pub mod prelude {
         INavigationSetter,
     };
     pub use crate::entity_snapshot::EntitySnapshot;
-    pub use crate::error::{EFError, EFErrorCode, EFResult};
+    pub use crate::error::{DatabaseErrorInfo, EFError, EFErrorCode, EFResult};
     pub use crate::interceptor::{
         ISaveChangesInterceptor, MutableEntityEntry, MutableSaveChangesContext, SaveChangesContext,
         SaveChangesResultContext,

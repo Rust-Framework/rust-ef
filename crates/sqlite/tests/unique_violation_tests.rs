@@ -96,8 +96,17 @@ async fn sqlite_non_unique_errors_keep_their_typed_category() {
         .await
         .expect_err("NOT NULL violation must fail");
 
-    assert!(
-        matches!(err, EFError::Query(..)),
-        "expected EFError::Query for NOT NULL violation, got {err:?}"
-    );
+    match err {
+        EFError::Database(info, _) => {
+            assert!(
+                info.message.contains("NOT NULL"),
+                "expected the driver message, got {info:?}"
+            );
+            assert!(
+                info.code.is_some(),
+                "expected the SQLite extended result code, got {info:?}"
+            );
+        }
+        other => panic!("expected EFError::Database for NOT NULL violation, got {other:?}"),
+    }
 }

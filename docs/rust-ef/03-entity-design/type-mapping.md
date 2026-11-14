@@ -20,6 +20,21 @@
 
 `Option<T>` 会解包内层类型再映射：例如 `Option<String>` + `#[max_length(32)]` 生成 `VARCHAR(32)`（MySQL 可建索引），而不是退化为 `TEXT`；`Option<uuid::Uuid>` → `CHAR(36)`，`Option<rust_decimal::Decimal>` → `DECIMAL(38,18)`。
 
+### 自定义枚举 / 新类型（2.5.0）
+
+`#[derive(DbEnum)]` 的契约枚举没有数据库原生类型。映射规则：
+
+| 方言 | 无 `max_length` | 有 `max_length(n)` |
+|---|---|---|
+| MySQL | `TEXT` | `VARCHAR(n)`（可建普通/复合索引；不会因 TEXT 报 1170） |
+| PostgreSQL | `TEXT` | `TEXT` |
+| SQLite | `TEXT` | `TEXT` |
+
+MySQL 是唯一不能给无界 `TEXT` 建索引的方言，因此只有它在声明 `#[max_length(n)]` / `.has_max_length(n)`
+（或 `#[column_type("TEXT")]` + `max_length`）时提升为 `VARCHAR(n)`；PostgreSQL/SQLite 保持 `TEXT`
+（可索引且与既有库一致）。因此**给枚举列加索引时，在 MySQL 目标库上务必声明长度**，例如
+`property_named(Order::COLUMN_STATUS).has_max_length(32)`。
+
 ## 列类型覆盖与精度
 
 | 配置 | 效果 |

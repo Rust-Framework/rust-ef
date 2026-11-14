@@ -71,7 +71,7 @@ pub(crate) async fn introspect_postgres_client(
             &[],
         )
         .await
-        .map_err(|e| EFError::query(format!("Table query error: {}", e)))?;
+        .map_err(|e| crate::error_map::map_pg_error(e, "Table query error", ""))?;
 
     let mut tables = Vec::new();
     for table_row in &table_rows {
@@ -114,7 +114,7 @@ async fn columns(client: &tokio_postgres::Client, table: &str) -> EFResult<Vec<D
             &[&table],
         )
         .await
-        .map_err(|e| EFError::query(format!("Column query error: {}", e)))?;
+        .map_err(|e| crate::error_map::map_pg_error(e, "Column query error", ""))?;
 
     let mut columns = Vec::with_capacity(col_rows.len());
     for col_row in &col_rows {
@@ -162,7 +162,7 @@ async fn indexes(client: &tokio_postgres::Client, table: &str) -> EFResult<Vec<D
             &[&table],
         )
         .await
-        .map_err(|e| EFError::query(format!("Index query error: {}", e)))?;
+        .map_err(|e| crate::error_map::map_pg_error(e, "Index query error", ""))?;
 
     let mut indexes: Vec<DbIndex> = Vec::new();
     for row in &rows {
@@ -211,7 +211,7 @@ async fn foreign_keys(client: &tokio_postgres::Client, table: &str) -> EFResult<
             &[&table],
         )
         .await
-        .map_err(|e| EFError::query(format!("Foreign key query error: {}", e)))?;
+        .map_err(|e| crate::error_map::map_pg_error(e, "Foreign key query error", ""))?;
 
     let mut foreign_keys: Vec<DbForeignKey> = Vec::new();
     for row in &rows {
@@ -265,7 +265,7 @@ async fn checks(client: &tokio_postgres::Client, table: &str) -> EFResult<Option
             &[&table],
         )
         .await
-        .map_err(|e| EFError::query(format!("Check query error: {}", e)))?;
+        .map_err(|e| crate::error_map::map_pg_error(e, "Check query error", ""))?;
 
     let mut checks = Vec::with_capacity(rows.len());
     for row in &rows {
@@ -311,7 +311,7 @@ async fn triggers(
             &[&table],
         )
         .await
-        .map_err(|e| EFError::query(format!("Trigger query error: {}", e)))?;
+        .map_err(|e| crate::error_map::map_pg_error(e, "Trigger query error", ""))?;
 
     let mut triggers = Vec::with_capacity(rows.len());
     for row in &rows {

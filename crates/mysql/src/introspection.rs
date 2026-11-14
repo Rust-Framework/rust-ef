@@ -52,8 +52,12 @@ pub(crate) async fn introspect_mysql_pool(pool: &MySqlPool) -> EFResult<Vec<DbTa
 }
 
 async fn columns(pool: &MySqlPool, table: &str) -> EFResult<Vec<DbColumn>> {
+    // `COLUMN_TYPE` is the full type (`varchar(64)`, `tinyint(1)`,
+    // `decimal(10,2)`, `datetime(6)`) whereas `DATA_TYPE` drops the length/
+    // precision. Comparing the full spelling is what makes a freshly bootstrapped
+    // MySQL schema diff to zero ALTERs (EF-DIFF-01).
     let col_rows = query(
-        "SELECT c.column_name, c.data_type, c.is_nullable, \
+        "SELECT c.column_name, c.column_type, c.is_nullable, \
                 CAST(c.character_maximum_length AS SIGNED), \
                 CAST(c.numeric_precision AS SIGNED), \
                 CAST(c.numeric_scale AS SIGNED), \
@@ -100,9 +104,21 @@ async fn columns(pool: &MySqlPool, table: &str) -> EFResult<Vec<DbColumn>> {
     Ok(columns)
 }
 
+/// One raw `information_schema.statistics` row used while grouping key parts.
+struct RawIndexRow {
+    name: String,
+    non_unique: i64,
+    column: Option<String>,
+    expression: Option<String>,
+}
+
 async fn indexes(pool: &MySqlPool, table: &str) -> EFResult<Vec<DbIndex>> {
-    let rows = query(
-        "SELECT index_name, CAST(non_unique AS SIGNED), CAST(seq_in_index AS SIGNED), column_name \
+    // MySQL 8.0.13+ exposes functional key parts through `EXPRESSION`
+    // (`COLUMN_NAME` is NULL for them); older servers reject that column, so
+    // fall back to the column-only query. Without the fallback the whole
+    // introspection fails on MySQL 5.7/8.0.12.
+    let rows = match query(
+        "SELECT index_name, CAST(non_unique AS SIGNED), column_name, expression \
          FROM information_schema.statistics \
          WHERE table_schema = DATABASE() AND table_name = ? \
          ORDER BY index_name, seq_in_index",
@@ -110,39 +126,70 @@ async fn indexes(pool: &MySqlPool, table: &str) -> EFResult<Vec<DbIndex>> {
     .bind(table)
     .fetch_all(pool)
     .await
-    .map_err(|e| EFError::query(format!("Index query error: {e}")))?;
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|row| {
+                Ok(RawIndexRow {
+                    name: row.try_get(0).map_err(map_row_err)?,
+                    non_unique: row.try_get(1).map_err(map_row_err)?,
+                    column: row.try_get(2).map_err(map_row_err)?,
+                    expression: row.try_get(3).map_err(map_row_err)?,
+                })
+            })
+            .collect::<EFResult<Vec<_>>>()?,
+        Err(error) if is_unknown_column(&error) => {
+            let rows = query(
+                "SELECT index_name, CAST(non_unique AS SIGNED), column_name \
+                 FROM information_schema.statistics \
+                 WHERE table_schema = DATABASE() AND table_name = ? \
+                 ORDER BY index_name, seq_in_index",
+            )
+            .bind(table)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| EFError::query(format!("Index query error: {e}")))?;
+            rows.into_iter()
+                .map(|row| {
+                    Ok(RawIndexRow {
+                        name: row.try_get(0).map_err(map_row_err)?,
+                        non_unique: row.try_get(1).map_err(map_row_err)?,
+                        column: row.try_get(2).map_err(map_row_err)?,
+                        expression: None,
+                    })
+                })
+                .collect::<EFResult<Vec<_>>>()?
+        }
+        Err(error) => return Err(EFError::query(format!("Index query error: {error}"))),
+    };
 
     let mut indexes: Vec<DbIndex> = Vec::new();
     for row in rows {
-        let name: String = row.try_get(0).map_err(map_row_err)?;
-        let non_unique: i64 = row.try_get(1).map_err(map_row_err)?;
-        let _seq: i64 = row.try_get(2).map_err(map_row_err)?;
-        // `COLUMN_NAME` is NULL for functional index parts (MySQL 8.0.13+).
-        let column: Option<String> = row.try_get(3).map_err(map_row_err)?;
-        if name == "PRIMARY" {
+        if row.name == "PRIMARY" {
             // The primary key is represented by `DbColumn::is_primary_key`.
             continue;
         }
+        let part = match (row.column, row.expression) {
+            (Some(column), _) => Some(DbIndexColumn {
+                value: column,
+                is_expression: false,
+            }),
+            (None, Some(expression)) => Some(DbIndexColumn {
+                value: expression,
+                is_expression: true,
+            }),
+            (None, None) => None,
+        };
         match indexes.last_mut() {
-            Some(index) if index.name == name => {
-                if let Some(column) = column {
-                    index.columns.push(DbIndexColumn {
-                        value: column,
-                        is_expression: false,
-                    });
+            Some(index) if index.name == row.name => {
+                if let Some(part) = part {
+                    index.columns.push(part);
                 }
             }
             _ => indexes.push(DbIndex {
-                name,
-                columns: column
-                    .map(|column| {
-                        vec![DbIndexColumn {
-                            value: column,
-                            is_expression: false,
-                        }]
-                    })
-                    .unwrap_or_default(),
-                is_unique: non_unique == 0,
+                name: row.name,
+                columns: part.into_iter().collect(),
+                is_unique: row.non_unique == 0,
                 // MySQL has no partial indexes (the framework emulates them
                 // with functional indexes on MySQL 8).
                 filter: None,
@@ -248,6 +295,16 @@ fn is_missing_catalog(error: &sqlx_core::Error) -> bool {
         error,
         sqlx_core::Error::Database(database_error)
             if database_error.code().as_deref() == Some("42S02")
+    )
+}
+
+/// SQLSTATE `42S22`: unknown column — e.g. `statistics.EXPRESSION` on
+/// MySQL < 8.0.13.
+fn is_unknown_column(error: &sqlx_core::Error) -> bool {
+    matches!(
+        error,
+        sqlx_core::Error::Database(database_error)
+            if database_error.code().as_deref() == Some("42S22")
     )
 }
 
