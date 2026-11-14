@@ -9,6 +9,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.1] — 2026-11-14 — 网络 diff 保真补丁（首个发布的 2.5 版本）
+
+> **English** · **简体中文**
+>
+> Patch release for the 2.5 line. The `v2.5.0` tag was cut but its publish
+> preflight failed on real PostgreSQL (see below) before any crate reached
+> crates.io, so `2.5.1` is the first published 2.5 release. No public API change.
+
+#### English
+
+**Fixed**
+
+- **EF-DIFF-01 — PostgreSQL integer/float precision no longer causes false `ALTER`.**
+  `information_schema` reports `numeric_precision` for `INTEGER`/`BIGINT`/`REAL`/`DOUBLE
+  PRECISION` (32/64/24/53); only `NUMERIC`/`DECIMAL` carry precision in the type spelling.
+  The runtime diff compared `integer` with `integer(32,0)` and emitted a spurious
+  `ALTER COLUMN ... TYPE` / `SET NOT NULL` / `DROP DEFAULT` for every such column.
+- **EF-DIFF-01 — PostgreSQL `TEXT` with a declared `max_length` no longer looks modified.**
+  A custom enum mapped to `TEXT` keeps `text` even when `max_length` is declared (the
+  length only selects `VARCHAR(n)` on MySQL); the comparison no longer appends
+  `(32)` to `text`.
+- **EF-DIFF-01 — PostgreSQL temporal precision is compared correctly.** Introspection now
+  reads `information_schema.columns.datetime_precision` (not `numeric_precision`) and
+  treats the default `timestamp(6)` as `timestamp`, while still detecting an explicit
+  different precision such as `timestamp(3)`.
+- **Real-database parity test isolation.** The provider-smoke job runs the provider
+  example before the parity tests on the same database; the tests now use dedicated
+  `parity_*` tables and a dedicated migration id, so they assert their own schema.
+
+**Verification**
+
+- `provider_parity_tests --ignored` on MySQL 8 + PostgreSQL 16: generated schema
+  introspects and diffs back to **zero statements**; mixed expression index,
+  custom-enum `VARCHAR(32)` index, long auto names, structured driver errors and
+  unverifiable CHECK safety are asserted on the real servers.
+- PostgreSQL `DbValue::Null` INSERT and UPDATE matrix, plus NUMERIC read/write,
+  remain covered by `postgres_null_binding --ignored`.
+
+#### 简体中文
+
+**修复**
+
+- **EF-DIFF-01 — PG 整数/浮点精度不再误判**：`information_schema` 对
+  `INTEGER/BIGINT/REAL/DOUBLE PRECISION` 也报告 `numeric_precision`（32/64/24/53），
+  只有 `NUMERIC/DECIMAL` 才把它写进类型；运行期 diff 曾把 `integer` 与
+  `integer(32,0)` 比较，给每列生成伪 `ALTER COLUMN ... TYPE` / `SET NOT NULL` / `DROP DEFAULT`。
+- **EF-DIFF-01 — PG `TEXT` + `max_length` 不再误判**：自定义枚举在 PG 映射为 `TEXT`，
+  即使声明 `max_length`（该长度只用于 MySQL 选择 `VARCHAR(n)`），比较也不再拼成 `text(32)`。
+- **EF-DIFF-01 — PG 时间精度正确比较**：内省改读 `datetime_precision`（而非
+  `numeric_precision`），默认 `timestamp(6)` 与 `timestamp` 等价，显式不同精度（如
+  `timestamp(3)`）仍能识别。
+- **真库 parity 测试隔离**：provider-smoke 先跑 example 再跑 parity 测试，测试改用
+  独立的 `parity_*` 表与迁移 id，避免复用 example 的旧 schema。
+
+**验证**
+
+- MySQL 8 + PostgreSQL 16 上 `provider_parity_tests --ignored`：生成 schema 反内省后
+  `diff` **零语句**；混合表达式索引、枚举 `VARCHAR(32)` 索引、超长自动名、结构化驱动错误、
+  不可逐字验证的 CHECK 安全路径均在真库断言。
+- PostgreSQL `DbValue::Null` 的 INSERT/UPDATE 矩阵与 NUMERIC 读写由
+  `postgres_null_binding --ignored` 覆盖。
+
+---
+
 ## [2.5.0] — 2026-11-14 — 上游真库缺陷修复：PG NULL、MySQL DDL、网络 diff、诊断、连接串
 
 > **English** · **简体中文**

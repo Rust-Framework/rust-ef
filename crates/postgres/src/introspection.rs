@@ -97,7 +97,8 @@ async fn columns(client: &tokio_postgres::Client, table: &str) -> EFResult<Vec<D
     let col_rows = client
         .query(
             "SELECT c.column_name, c.data_type, c.is_nullable, c.character_maximum_length, \
-                    c.numeric_precision, c.numeric_scale, c.column_default, c.is_identity, \
+                    c.numeric_precision, c.datetime_precision, c.numeric_scale, c.column_default, \
+                    c.is_identity, \
                     CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END AS is_pk \
              FROM information_schema.columns c \
              LEFT JOIN ( \
@@ -122,11 +123,21 @@ async fn columns(client: &tokio_postgres::Client, table: &str) -> EFResult<Vec<D
         let data_type: String = col_row.get(1);
         let is_nullable: String = col_row.get(2);
         let max_length: Option<i32> = col_row.get(3);
-        let precision: Option<i32> = col_row.get(4);
-        let scale: Option<i32> = col_row.get(5);
-        let default_value: Option<String> = col_row.get(6);
-        let is_identity: String = col_row.get(7);
-        let is_pk: bool = col_row.get(8);
+        let numeric_precision: Option<i32> = col_row.get(4);
+        let datetime_precision: Option<i32> = col_row.get(5);
+        let scale: Option<i32> = col_row.get(6);
+        let default_value: Option<String> = col_row.get(7);
+        let is_identity: String = col_row.get(8);
+        let is_pk: bool = col_row.get(9);
+
+        // `numeric_precision` is meaningless for temporal types (NULL), whose
+        // fractional-second precision lives in `datetime_precision`.
+        let is_temporal = data_type.starts_with("time") || data_type.starts_with("date");
+        let precision = if is_temporal {
+            datetime_precision
+        } else {
+            numeric_precision
+        };
 
         let default_sql = default_value.as_deref().unwrap_or_default();
         columns.push(DbColumn {

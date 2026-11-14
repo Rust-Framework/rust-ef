@@ -413,7 +413,18 @@ fn normalize_sqlite_type(value: &str) -> String {
 fn pg_type(expected: &str, model: &SnapshotColumn) -> String {
     let normalized = pg_alias(&normalize_ws(expected));
     let normalized = append_numeric_precision(&normalized, model.precision, model.scale);
-    append_length(&normalized, model.max_length)
+    // A declared `max_length` only modifies character/binary types. A custom
+    // enum mapped to TEXT keeps `text` even when the model declares a
+    // max_length for MySQL indexability; appending it as `text(32)` would make
+    // every such column look modified (EF-DIFF-01).
+    let normalized = if !normalized.contains('(')
+        && (normalized.contains("char") || normalized.contains("bit"))
+    {
+        append_length(&normalized, model.max_length)
+    } else {
+        normalized
+    };
+    strip_default_temporal_precision(normalized)
 }
 
 fn pg_alias(value: &str) -> String {
@@ -444,7 +455,40 @@ fn pg_live_type(live: &DbColumn) -> String {
     } else {
         append_length(&normalized, live.max_length)
     };
-    append_numeric_precision(&normalized, live.precision, live.scale)
+    // `information_schema` reports `numeric_precision` for integer/float types
+    // too (32 for INTEGER, 64 for BIGINT, ...). Only NUMERIC/DECIMAL carry
+    // precision in the type spelling; appending it to `integer` would compare
+    // `integer` with `integer(32,0)` and emit a false MODIFY on every column
+    // (EF-DIFF-01).
+    let normalized = if normalized == "numeric" || normalized == "decimal" {
+        append_numeric_precision(&normalized, live.precision, live.scale)
+    } else if is_pg_temporal(&normalized) {
+        match live.precision {
+            Some(precision) => format!("{normalized}({precision})"),
+            None => normalized,
+        }
+    } else {
+        normalized
+    };
+    strip_default_temporal_precision(normalized)
+}
+
+/// Whether `value` is a PostgreSQL temporal type that carries a
+/// fractional-second precision.
+fn is_pg_temporal(value: &str) -> bool {
+    matches!(value, "timestamp" | "timestamptz" | "time" | "timetz")
+}
+
+/// PostgreSQL's default temporal precision is 6, so `timestamp` and
+/// `timestamp(6)` are the same type. Comparing the spellings without this
+/// normalization would report a false `ALTER` for every default timestamp.
+fn strip_default_temporal_precision(value: String) -> String {
+    for base in ["timestamp", "timestamptz", "time", "timetz"] {
+        if value == format!("{base}(6)") {
+            return base.to_string();
+        }
+    }
+    value
 }
 
 /// Canonical MySQL type name (information_schema `COLUMN_TYPE` spelling).
@@ -1261,6 +1305,134 @@ mod tests {
             normalize_expression("my_utf8_column = 'x'"),
             "my_utf8_column='x'"
         );
+    }
+
+    #[test]
+    fn postgres_integer_precision_is_not_part_of_the_type() {
+        // information_schema reports numeric_precision=32 for INTEGER and 64
+        // for BIGINT; those are not type modifiers and must not trigger a
+        // MODIFY (EF-DIFF-01).
+        let live_integer = DbColumn {
+            name: "id".into(),
+            data_type: "integer".into(),
+            precision: Some(32),
+            scale: Some(0),
+            ..DbColumn::default()
+        };
+        let model_integer = SnapshotColumn {
+            column_name: "id".into(),
+            type_name: "i32".into(),
+            ..SnapshotColumn::default()
+        };
+        assert!(column_types_match(
+            MigrationDialect::Postgres,
+            &model_integer,
+            &live_integer
+        ));
+
+        let live_bigint = DbColumn {
+            name: "price".into(),
+            data_type: "bigint".into(),
+            precision: Some(64),
+            scale: Some(0),
+            ..DbColumn::default()
+        };
+        let model_bigint = SnapshotColumn {
+            column_name: "price".into(),
+            type_name: "i64".into(),
+            ..SnapshotColumn::default()
+        };
+        assert!(column_types_match(
+            MigrationDialect::Postgres,
+            &model_bigint,
+            &live_bigint
+        ));
+
+        // NUMERIC keeps precision/scale in its type spelling.
+        let live_numeric = DbColumn {
+            name: "amount".into(),
+            data_type: "numeric".into(),
+            precision: Some(10),
+            scale: Some(2),
+            ..DbColumn::default()
+        };
+        let model_numeric = SnapshotColumn {
+            column_name: "amount".into(),
+            type_name: "rust_decimal::Decimal".into(),
+            precision: Some(10),
+            scale: Some(2),
+            ..SnapshotColumn::default()
+        };
+        assert!(column_types_match(
+            MigrationDialect::Postgres,
+            &model_numeric,
+            &live_numeric
+        ));
+    }
+
+    #[test]
+    fn postgres_text_ignores_a_declared_max_length() {
+        // A custom enum is TEXT on PostgreSQL even when max_length is declared
+        // (the length only matters for MySQL indexability).
+        let model = SnapshotColumn {
+            column_name: "status".into(),
+            type_name: "contracts::Status".into(),
+            max_length: Some(32),
+            ..SnapshotColumn::default()
+        };
+        let live = DbColumn {
+            name: "status".into(),
+            data_type: "text".into(),
+            is_nullable: false,
+            ..DbColumn::default()
+        };
+        assert!(column_types_match(
+            MigrationDialect::Postgres,
+            &model,
+            &live
+        ));
+    }
+
+    #[test]
+    fn postgres_temporal_default_precision_is_not_drift() {
+        // PostgreSQL reports datetime_precision=6 for an unqualified TIMESTAMP;
+        // `timestamp` and `timestamp(6)` are the same type.
+        let model = SnapshotColumn {
+            column_name: "created_at".into(),
+            type_name: "chrono::NaiveDateTime".into(),
+            ..SnapshotColumn::default()
+        };
+        let live_six = DbColumn {
+            name: "created_at".into(),
+            data_type: "timestamp without time zone".into(),
+            precision: Some(6),
+            ..DbColumn::default()
+        };
+        assert!(column_types_match(
+            MigrationDialect::Postgres,
+            &model,
+            &live_six
+        ));
+
+        // An explicit non-default precision still compares exactly.
+        let model_three = SnapshotColumn {
+            precision: Some(3),
+            ..model.clone()
+        };
+        let live_three = DbColumn {
+            precision: Some(3),
+            ..live_six.clone()
+        };
+        assert!(column_types_match(
+            MigrationDialect::Postgres,
+            &model_three,
+            &live_three
+        ));
+        assert!(!column_types_match(
+            MigrationDialect::Postgres,
+            &model_three,
+            &live_six
+        ));
     }
 
     #[test]
