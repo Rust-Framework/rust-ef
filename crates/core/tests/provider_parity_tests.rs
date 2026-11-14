@@ -23,7 +23,7 @@ use rust_ef_mysql::DbContextOptionsBuilderExt as MySqlExt;
 use rust_ef_postgres::DbContextOptionsBuilderExt as PostgresExt;
 
 #[derive(Debug, Clone, EntityType)]
-#[table("categories")]
+#[table("parity_categories")]
 struct Category {
     #[primary_key]
     #[auto_increment]
@@ -46,7 +46,7 @@ enum ProductStatus {
 }
 
 #[derive(Debug, Clone, EntityType)]
-#[table("products")]
+#[table("parity_products")]
 struct Product {
     #[primary_key]
     #[auto_increment]
@@ -140,7 +140,7 @@ fn assert_model_schema(tables: &[DbTable], dialect: MigrationDialect) {
     );
     let products = tables
         .iter()
-        .find(|table| table.name == "products")
+        .find(|table| table.name == "parity_products")
         .expect("products table must be introspected");
     let id = products.column("id").expect("products.id");
     assert!(id.is_primary_key, "products.id must be a primary key");
@@ -173,7 +173,7 @@ fn assert_model_schema(tables: &[DbTable], dialect: MigrationDialect) {
     let foreign_key = products
         .foreign_keys
         .iter()
-        .find(|fk| fk.referenced_table == "categories")
+        .find(|fk| fk.referenced_table == "parity_categories")
         .unwrap_or_else(|| {
             panic!(
                 "{dialect:?}: FK products.category_id -> categories missing: {:?}",
@@ -239,10 +239,9 @@ fn assert_model_schema(tables: &[DbTable], dialect: MigrationDialect) {
         expression_index.columns
     );
     assert!(
-        expression_index
-            .columns
-            .iter()
-            .any(|part| part.is_expression && part.value.contains("coalesce")),
+        expression_index.columns.iter().any(|part| {
+            part.is_expression && part.value.to_ascii_lowercase().contains("coalesce")
+        }),
         "{dialect:?}: mixed index must keep the expression part: {:?}",
         expression_index.columns
     );
@@ -343,7 +342,7 @@ async fn mysql_introspection_matches_the_migrated_model() {
     let metas = ctx.model().build();
     let engine = MigrationEngine::new(MigrationDialect::MySql);
     let migration = engine
-        .generate("init", &metas, &None)
+        .generate("provider_parity_init", &metas, &None)
         .expect("generate migration");
 
     engine
@@ -367,7 +366,7 @@ async fn mysql_introspection_matches_the_migrated_model() {
 
     let products = tables
         .iter()
-        .find(|table| table.name == "products")
+        .find(|table| table.name == "parity_products")
         .expect("products table");
     // MySQL cannot expose re-executable trigger SQL through information_schema.
     assert_eq!(products.triggers, None);
@@ -386,7 +385,7 @@ async fn postgres_introspection_matches_the_migrated_model() {
     let metas = ctx.model().build();
     let engine = MigrationEngine::new(MigrationDialect::Postgres);
     let migration = engine
-        .generate("init", &metas, &None)
+        .generate("provider_parity_init", &metas, &None)
         .expect("generate migration");
 
     engine
@@ -409,7 +408,7 @@ async fn postgres_introspection_matches_the_migrated_model() {
 
     let products = tables
         .iter()
-        .find(|table| table.name == "products")
+        .find(|table| table.name == "parity_products")
         .expect("products table");
     assert!(
         products.triggers.is_some(),
