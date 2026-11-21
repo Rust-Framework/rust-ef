@@ -152,7 +152,7 @@ match err {
 }
 ```
 
-- 客户端仍看不到这些细节：`webx` 映射把 `Database` 归为 500 + `public_detail() = None`，只进日志。
+- 客户端仍看不到这些细节：在 Handler 边界把 `Database` 映射为 500 且不返回 detail，结构化字段只进日志。
 - 唯一/主键冲突仍优先走 `UniqueViolation`，不要改成字符串嗅探。
 - 事务/BEGIN/SAVEPOINT 失败也走同一映射，`Display` 与 `source()` 链都保留。
 

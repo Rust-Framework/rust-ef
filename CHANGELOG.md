@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.0] — 2026-11-21 — 删除 webx feature：ORM 与 Web 框架彻底解耦
+
+> **English** · **简体中文**
+>
+> Breaking change within 2.x: the optional `webx` feature is removed, so `rust-ef`
+> no longer depends on a web framework. Map `EFError` at the application boundary
+> (`map_ef_error` + `EfResultExt::map_ef`, for example in `common_mapper.rs`).
+
+#### English
+
+**Breaking**
+
+- **`webx` feature (XR-1) removed.** `rust-ef` no longer depends on `rust-webx-core`,
+  even optionally. The dependency inverted the layering (an ORM depending on a web
+  framework) and was pinned to `^1.2`, which resolves a 1.x core while rust-webx is
+  2.5.0; the `impl From<EFError> for webx::Error` therefore never applied to the
+  current `webx::Error`. Map `EFError` at the application boundary
+  (`common_mapper::map_ef_error` + `EfResultExt::map_ef`, call sites `.map_ef()?`)
+  as the rust-webx reference applications do.
+
+**Migration**
+
+- Drop `features = ["webx"]` from the `rust-ef` dependency, implement the shared
+  mapping in the application, and replace `?` on EF results with `.map_ef()?`.
+  The `compat/webx-core-shim` workaround and its `[patch.crates-io]` entry can be
+  deleted. See `docs/v2.6-migration-guide.md`.
+
+#### 简体中文
+
+**破坏性变更**
+
+- **移除 `webx` feature（XR-1）**：`rust-ef` 不再依赖 `rust-webx-core`（含可选依赖）。
+  该依赖让 ORM 反向依赖 Web 框架，且版本固定在 `^1.2`——解析出 1.x core，而当前
+  rust-webx 是 2.5.0，`impl From<EFError> for webx::Error` 对 2.5 的 `Error` 不生效。
+  错误映射回到应用边界（`common_mapper::map_ef_error` + `EfResultExt::map_ef`，
+  调用点 `.map_ef()?`），与 rust-webx 参考应用一致。
+
+**迁移**
+
+- 从 `rust-ef` 依赖中删除 `features = ["webx"]`，在应用侧实现统一映射，并把 EF 错误的
+  `?` 改为 `.map_ef()?`；针对旧 1.x 依赖的 `compat/webx-core-shim` 与
+  `[patch.crates-io]` 可一并删除。详见 `docs/v2.6-migration-guide.md`。
+
+---
+
 ## [2.5.1] — 2026-11-14 — 网络 diff 保真补丁（首个发布的 2.5 版本）
 
 > **English** · **简体中文**

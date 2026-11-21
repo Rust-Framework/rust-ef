@@ -53,8 +53,6 @@ pub mod schema;
 pub(crate) mod session;
 pub mod tracking;
 pub mod transaction;
-#[cfg(feature = "webx")]
-pub mod webx;
 
 pub use async_trait;
 

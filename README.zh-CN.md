@@ -16,8 +16,8 @@
 
 ```toml
 [dependencies]
-rust-ef = "2.5"
-rust-ef-sqlite = "2.5"
+rust-ef = "2.6"
+rust-ef-sqlite = "2.6"
 rust-dix = "1.0"
 tokio = { version = "1", features = ["full"] }
 ```
