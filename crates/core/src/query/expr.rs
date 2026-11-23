@@ -55,6 +55,10 @@ pub struct CaseArm {
 #[derive(Debug, Clone)]
 pub enum SqlExpr {
     /// A bare column name, or a `table.column` reference emitted verbatim.
+    ///
+    /// The string is SQL identifier text, not a value: it must come from code
+    /// constants / a whitelist, never from request data (values belong in
+    /// [`SqlExpr::Literal`] or a `FilterCondition`, which bind parameters).
     Column(String),
     /// An aggregate call, e.g. `SUM(amount)` / `COUNT(*)`.
     Aggregate {
@@ -267,10 +271,39 @@ fn last_segment(column: &str) -> &str {
     column.rsplit('.').next().unwrap_or(column)
 }
 
+/// Debug-only validation for runtime identifier strings.
+///
+/// The runtime builder accepts identifiers as `&str` (EF Core has expression
+/// trees; rust-ef's runtime API is the expert surface). A caller that passes a
+/// request value by mistake must fail loudly in development instead of
+/// producing an injectable statement: this assertion only fires in debug builds
+/// and accepts a dotted identifier (`table.column`).
+pub(crate) fn debug_assert_identifier(text: &str, context: &str) {
+    debug_assert!(
+        !text.is_empty()
+            && text.split('.').all(|part| {
+                let mut chars = part.chars();
+                matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            }),
+        "{context} must be an SQL identifier (`col` or `table.col`), got {text:?}; \n         runtime identifier APIs must never receive request data"
+    );
+}
+
 /// One SELECT-list projection: an expression plus its output alias.
 ///
 /// `to_sql` always emits `<expr> AS <alias>`; aliases are emitted bare (like
 /// the column names used by the existing query layer).
+///
+/// # Identifier safety
+///
+/// Column names, aggregate arguments and aliases are rendered as SQL
+/// identifiers **verbatim**, exactly like [`QueryBuilder`](crate::query::QueryBuilder)'s
+/// ordering/`group_by` methods. They are an expert runtime API: pass entity
+/// `COLUMN_*` constants or a hard-coded whitelist, never request data. For
+/// request-driven queries use the compile-time-checked `linq!` surface (or map
+/// untrusted values to a whitelist of column constants) and keep all values in
+/// bound parameters (`SelectItem::literal` / `coalesce` are parameterised).
 #[derive(Debug, Clone)]
 pub struct SelectItem {
     expr: SqlExpr,
@@ -282,6 +315,7 @@ impl SelectItem {
     /// (`"t.col"` → `"col"`).
     pub fn column(column: impl Into<String>) -> Self {
         let column = column.into();
+        debug_assert_identifier(&column, "SelectItem::column");
         let alias = last_segment(&column).to_string();
         Self {
             expr: SqlExpr::Column(column),
@@ -292,6 +326,7 @@ impl SelectItem {
     /// Projects `SUM(column)` with alias `sum_<column>`.
     pub fn sum(column: impl Into<String>) -> Self {
         let column = column.into();
+        debug_assert_identifier(&column, "SelectItem::sum");
         let alias = format!("sum_{}", last_segment(&column));
         Self {
             expr: SqlExpr::sum(column),
@@ -302,6 +337,7 @@ impl SelectItem {
     /// Projects `AVG(column)` with alias `avg_<column>`.
     pub fn avg(column: impl Into<String>) -> Self {
         let column = column.into();
+        debug_assert_identifier(&column, "SelectItem::avg");
         let alias = format!("avg_{}", last_segment(&column));
         Self {
             expr: SqlExpr::avg(column),
@@ -312,6 +348,7 @@ impl SelectItem {
     /// Projects `MIN(column)` with alias `min_<column>`.
     pub fn min(column: impl Into<String>) -> Self {
         let column = column.into();
+        debug_assert_identifier(&column, "SelectItem::min");
         let alias = format!("min_{}", last_segment(&column));
         Self {
             expr: SqlExpr::min(column),
@@ -322,6 +359,7 @@ impl SelectItem {
     /// Projects `MAX(column)` with alias `max_<column>`.
     pub fn max(column: impl Into<String>) -> Self {
         let column = column.into();
+        debug_assert_identifier(&column, "SelectItem::max");
         let alias = format!("max_{}", last_segment(&column));
         Self {
             expr: SqlExpr::max(column),
@@ -340,6 +378,7 @@ impl SelectItem {
     /// Projects `COUNT(column)` with alias `count_<column>`.
     pub fn count_column(column: impl Into<String>) -> Self {
         let column = column.into();
+        debug_assert_identifier(&column, "SelectItem::count_column");
         let alias = format!("count_{}", last_segment(&column));
         Self {
             expr: SqlExpr::count_column(column),
@@ -376,9 +415,24 @@ impl SelectItem {
     }
 
     /// Overrides the output alias.
+    ///
+    /// The alias is emitted as a bare SQL identifier: use a code constant, never
+    /// request data (aliases also appear in `ORDER BY`).
     pub fn alias(mut self, alias: impl Into<String>) -> Self {
-        self.alias = alias.into();
+        let alias = alias.into();
+        debug_assert_identifier(&alias, "SelectItem::alias");
+        self.alias = alias;
         self
+    }
+
+    /// The projected expression.
+    pub fn expression(&self) -> &SqlExpr {
+        &self.expr
+    }
+
+    /// The output alias (column name / `sum_<column>` / override).
+    pub fn alias_name(&self) -> &str {
+        &self.alias
     }
 
     /// Compiles this projection as `<expr> AS <alias>`.

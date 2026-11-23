@@ -63,8 +63,16 @@ pub(crate) fn cell_to_db_value(row: &MySqlRow, col_idx: usize) -> DbValue {
     if let Ok(v) = row.try_get::<Option<chrono::NaiveDate>, _>(col_idx) {
         return v.map(DbValue::NaiveDate).unwrap_or(DbValue::Null);
     }
-    // String (VARCHAR, TEXT, CHAR) — also catches DECIMAL since MySQL
-    // returns DECIMAL as string to preserve precision.
+    // DECIMAL / NUMERIC. MySQL returns `SUM(BIGINT)` / `AVG(INT)` and
+    // DECIMAL columns as NEWDECIMAL; sqlx's integer/float decoders reject that
+    // type by design, so without this branch the cell falls through to NULL and
+    // integer aggregates silently become zero. Decode into
+    // `rust_decimal::Decimal` to keep full precision (the core conversion layer
+    // accepts whole numbers for integer targets and rejects fractional values).
+    if let Ok(v) = row.try_get::<Option<rust_decimal::Decimal>, _>(col_idx) {
+        return v.map(DbValue::Decimal).unwrap_or(DbValue::Null);
+    }
+    // String (VARCHAR, TEXT, CHAR).
     //
     // IMPORTANT: String must be probed **before** `uuid::Uuid`. sqlx-mysql's
     // `Decode for Uuid` is `Uuid::from_slice(bytes)`, which accepts *any*

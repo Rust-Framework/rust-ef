@@ -189,6 +189,26 @@ let rows: Vec<SalesRow> = ctx
 
 详细规则（位置映射、列序、参数绑定、实体按列名版）见 [原始 SQL 与已知限制](raw-sql-limitations.md)。
 
+## 安全边界：标识符来自代码常量，值走参数
+
+`SelectItem::column/sum/...` 的列名、`SelectItem::alias`、`SelectQueryBuilder::order_by(_desc)`
+都会作为 SQL **标识符原样输出**（与既有 `order_by_column` / `group_by` 运行时 API 一致）。
+因此：
+
+- 列名/别名只能来自实体 `COLUMN_*` 常量或硬编码白名单；**绝不能**直接拼接请求参数
+  （需要「用户可选列/排序」时，请求值 → 白名单映射 → 常量）；
+- debug 构建会对这些标识符做 `debug_assert!`（非标识符会立刻 panic，把漏网的白名单
+  问题挡在开发期）；release 构建仍要求调用方遵守同一边界；
+- 值一律走绑定参数：`SelectItem::literal`、`coalesce(fallback)`、`CASE` 条件值都是参数化的；
+- 请求驱动的纯过滤/排序优先用编译期校验的 `linq!`，动态报表用运行时 builder 时按上面的
+  白名单规则处理。
+
+## 内省与编译产物
+
+- `SelectQueryBuilder::compile_sql() -> (String, Vec<DbValue>)`：与 `QueryBuilder` 一致，返回 SQL 与按文本顺序的参数（日志、审计、SQL 形状断言）；
+- `SelectQueryBuilder::state()`、`SelectItem::expression()` / `alias_name()`：报表运行时内省（例如动态 OpenAPI/导出适配器）；
+- `QueryState::compile_sql_with::<T>(gen)`：手写 `QueryState` 时的唯一正确入口（会解析相关子查询并使用正确占位符），不要自己 `to_sql_with` + `params()` 拼参数。
+
 ## 参数顺序
 
 投影表达式可能带绑定参数（常量、`COALESCE` 回退值、`CASE` 条件/结果），参数顺序由 `QueryState` 统一计算：

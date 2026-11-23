@@ -528,3 +528,56 @@ async fn projection_where_and_having_params_align_in_sqlite() {
          must line up with their placeholders"
     );
 }
+
+#[tokio::test]
+async fn entity_materialization_rejects_grouped_queries() {
+    let mut ctx = seeded_ctx().await;
+
+    let error = linq!(ctx.set::<Sale>(); group_by s.category)
+        .to_list()
+        .await
+        .expect_err("grouped entity materialization must be rejected");
+    assert!(
+        matches!(error, EFError::Configuration(..)),
+        "expected a configuration error, got {error:?}"
+    );
+
+    // A projection query is the supported path.
+    let rows: Vec<(String, i64)> = linq!(ctx.set::<Sale>();
+        group_by s.category;
+        select (s.category, count())
+    )
+    .to_list_typed_2()
+    .await
+    .expect("projection rows");
+    assert_eq!(rows.len(), 3);
+}
+
+#[test]
+fn plain_columns_and_typed_items_compose_instead_of_dropping_columns() {
+    let mut ctx = make_ctx();
+    ctx.set::<Sale>();
+
+    let sql = ctx
+        .set::<Sale>()
+        .query()
+        .select(&[Sale::COLUMN_CATEGORY])
+        .select_items(&[SelectItem::sum(Sale::COLUMN_AMOUNT)])
+        .group_by(&[Sale::COLUMN_CATEGORY])
+        .to_sql();
+
+    assert!(
+        sql.contains("category AS category, SUM(amount) AS sum_amount"),
+        "the plain select column must be kept: {sql}"
+    );
+    assert_eq!(
+        ctx.set::<Sale>()
+            .query()
+            .select_items(&[SelectItem::sum(Sale::COLUMN_AMOUNT)])
+            .state()
+            .projections
+            .len(),
+        1,
+        "state() exposes the typed projections"
+    );
+}

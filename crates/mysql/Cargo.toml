@@ -24,7 +24,7 @@ async-trait = "0.1"
 # caching_sha2_password over plaintext (local dev/tests); sqlx-mysql 0.9
 # requires rsa >=0.10.0-rc.18, which resolves to the fixed rsa 0.10.0.
 sqlx-core = { version = "0.9", default-features = false, features = ["_rt-tokio", "_tls-native-tls"] }
-sqlx-mysql = { version = "0.9", default-features = false, features = ["chrono", "uuid", "rsa"] }
+sqlx-mysql = { version = "0.9", default-features = false, features = ["chrono", "uuid", "rsa", "rust_decimal"] }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }

@@ -201,11 +201,16 @@ async fn test_distinct_clause() {
 async fn test_group_by_with_having() {
     let mut ctx = seed().await;
     // tech category has 2 blogs; food has 1. HAVING count > 1 keeps only tech.
-    let blogs = linq!(ctx.set::<DslBlog>(); group_by b.category; having count(b.blog_id) > 1)
-        .to_list()
-        .await
-        .unwrap();
-    assert!(!blogs.is_empty());
+    let categories: Vec<String> = linq!(
+        ctx.set::<DslBlog>();
+        select (b.category);
+        group_by b.category;
+        having count(b.blog_id) > 1
+    )
+    .to_list_typed_1()
+    .await
+    .unwrap();
+    assert_eq!(categories, vec!["tech".to_string()]);
 }
 
 #[tokio::test]
@@ -213,16 +218,16 @@ async fn test_having_with_and() {
     let mut ctx = seed().await;
     // tech: count=2 > 1 AND sum(views)=150 > 100 → true
     // food: count=1 > 1 → false (short-circuit) → excluded
-    let blogs = linq!(
+    let categories: Vec<String> = linq!(
         ctx.set::<DslBlog>();
+        select (b.category);
         group_by b.category;
         having count(b.blog_id) > 1 && sum(b.views) > 100
     )
-    .to_list()
+    .to_list_typed_1()
     .await
     .unwrap();
-    assert_eq!(blogs.len(), 1, "only tech group should pass AND condition");
-    assert_eq!(blogs[0].category, "tech");
+    assert_eq!(categories, vec!["tech".to_string()], "only tech passes AND");
 }
 
 #[tokio::test]
@@ -230,32 +235,32 @@ async fn test_having_with_or() {
     let mut ctx = seed().await;
     // tech: count=2 > 5 → false; sum(views)=150 > 100 → true → true
     // food: count=1 > 5 → false; sum(views)=10 > 100 → false → false
-    let blogs = linq!(
+    let categories: Vec<String> = linq!(
         ctx.set::<DslBlog>();
+        select (b.category);
         group_by b.category;
         having count(b.blog_id) > 5 || sum(b.views) > 100
     )
-    .to_list()
+    .to_list_typed_1()
     .await
     .unwrap();
-    assert_eq!(blogs.len(), 1, "only tech group should pass OR condition");
-    assert_eq!(blogs[0].category, "tech");
+    assert_eq!(categories, vec!["tech".to_string()], "only tech passes OR");
 }
 
 #[tokio::test]
 async fn test_having_with_not() {
     let mut ctx = seed().await;
     // NOT(count > 1): tech (NOT true = false), food (NOT false = true)
-    let blogs = linq!(
+    let categories: Vec<String> = linq!(
         ctx.set::<DslBlog>();
+        select (b.category);
         group_by b.category;
         having !(count(b.blog_id) > 1)
     )
-    .to_list()
+    .to_list_typed_1()
     .await
     .unwrap();
-    assert_eq!(blogs.len(), 1, "only food group should pass NOT condition");
-    assert_eq!(blogs[0].category, "food");
+    assert_eq!(categories, vec!["food".to_string()], "only food passes NOT");
 }
 
 #[tokio::test]
@@ -264,16 +269,17 @@ async fn test_having_compare_agg() {
     // sum(views) > count(blog_id):
     //   tech: 150 > 2 → true
     //   food: 10 > 1 → true
-    let blogs = linq!(
+    let categories: Vec<String> = linq!(
         ctx.set::<DslBlog>();
+        select (b.category);
         group_by b.category;
         having sum(b.views) > count(b.blog_id)
     )
-    .to_list()
+    .to_list_typed_1()
     .await
     .unwrap();
     assert_eq!(
-        blogs.len(),
+        categories.len(),
         2,
         "both groups should pass agg-vs-agg comparison"
     );
@@ -285,16 +291,20 @@ async fn test_having_nested_and_or() {
     // count > 1 && (sum(views) > 100 || count(blog_id) > 0)
     //   tech: true && (true || true) → true
     //   food: false && ... → false
-    let blogs = linq!(
+    let categories: Vec<String> = linq!(
         ctx.set::<DslBlog>();
+        select (b.category);
         group_by b.category;
         having count(b.blog_id) > 1 && (sum(b.views) > 100 || count(b.blog_id) > 0)
     )
-    .to_list()
+    .to_list_typed_1()
     .await
     .unwrap();
-    assert_eq!(blogs.len(), 1, "only tech should pass nested AND/OR");
-    assert_eq!(blogs[0].category, "tech");
+    assert_eq!(
+        categories,
+        vec!["tech".to_string()],
+        "only tech passes nested AND/OR"
+    );
 }
 
 #[tokio::test]

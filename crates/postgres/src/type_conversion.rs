@@ -19,12 +19,53 @@ enum PgNumeric {
     F64(f64),
 }
 
+impl PgNumeric {
+    /// Decimal form of the value, for a parameter the server inferred as
+    /// `NUMERIC` (e.g. `COALESCE(SUM(bigint_col), $1)` or `SUM(int_col) > $1`).
+    fn to_decimal(&self) -> Option<rust_decimal::Decimal> {
+        match self {
+            PgNumeric::I16(v) => Some(rust_decimal::Decimal::from(*v)),
+            PgNumeric::I32(v) => Some(rust_decimal::Decimal::from(*v)),
+            PgNumeric::I64(v) => Some(rust_decimal::Decimal::from(*v)),
+            PgNumeric::F32(v) => rust_decimal::Decimal::from_f32_retain(*v),
+            PgNumeric::F64(v) => rust_decimal::Decimal::from_f64_retain(*v),
+        }
+    }
+
+    /// Textual form of the value for a parameter the server inferred as
+    /// `TEXT` (e.g. a bare constant projection `SELECT $1 AS scope`).
+    fn to_text(&self) -> String {
+        match self {
+            PgNumeric::I16(v) => v.to_string(),
+            PgNumeric::I32(v) => v.to_string(),
+            PgNumeric::I64(v) => v.to_string(),
+            PgNumeric::F32(v) => v.to_string(),
+            PgNumeric::F64(v) => v.to_string(),
+        }
+    }
+}
+
 impl ToSql for PgNumeric {
     fn to_sql(
         &self,
         ty: &Type,
         out: &mut BytesMut,
     ) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
+        // Server-inferred parameter types that the native Rust types do not
+        // accept: NUMERIC comes from aggregate comparisons / COALESCE over
+        // BIGINT sums, TEXT from a bare constant SELECT list item in PG 10+.
+        match *ty {
+            Type::NUMERIC => {
+                if let Some(decimal) = self.to_decimal() {
+                    return decimal.to_sql(ty, out);
+                }
+                return self.to_text().to_sql(ty, out);
+            }
+            Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME => {
+                return self.to_text().to_sql(ty, out);
+            }
+            _ => {}
+        }
         match self {
             PgNumeric::I16(v) => match *ty {
                 Type::INT4 => (*v as i32).to_sql(ty, out),
@@ -67,7 +108,16 @@ impl ToSql for PgNumeric {
     fn accepts(ty: &Type) -> bool {
         matches!(
             *ty,
-            Type::INT2 | Type::INT4 | Type::INT8 | Type::FLOAT4 | Type::FLOAT8
+            Type::INT2
+                | Type::INT4
+                | Type::INT8
+                | Type::FLOAT4
+                | Type::FLOAT8
+                | Type::NUMERIC
+                | Type::TEXT
+                | Type::VARCHAR
+                | Type::BPCHAR
+                | Type::NAME
         )
     }
 
@@ -187,6 +237,36 @@ mod tests {
             .expect("Decimal must serialize for NUMERIC");
         assert!(matches!(result, IsNull::No));
         assert!(!out.is_empty());
+    }
+
+    /// A numeric parameter must bind to a server-inferred NUMERIC slot
+    /// (`COALESCE(SUM(bigint), $1)` / `SUM(int) > $1`).
+    #[test]
+    fn numeric_values_bind_to_numeric() {
+        for value in [DbValue::I64(7), DbValue::F64(7.5), DbValue::I32(3)] {
+            let params = db_values_to_pg_params(std::slice::from_ref(&value));
+            let mut out = BytesMut::new();
+            let result = params[0]
+                .to_sql_checked(&Type::NUMERIC, &mut out)
+                .unwrap_or_else(|error| panic!("{value:?} -> NUMERIC: {error}"));
+            assert!(matches!(result, IsNull::No));
+            assert!(!out.is_empty());
+        }
+    }
+
+    /// A numeric parameter must bind to a server-inferred TEXT slot (a bare
+    /// constant projection list item is typed TEXT by PostgreSQL 10+).
+    #[test]
+    fn numeric_values_bind_to_text() {
+        for value in [DbValue::I64(7), DbValue::F64(7.5), DbValue::I32(3)] {
+            let params = db_values_to_pg_params(std::slice::from_ref(&value));
+            let mut out = BytesMut::new();
+            let result = params[0]
+                .to_sql_checked(&Type::TEXT, &mut out)
+                .unwrap_or_else(|error| panic!("{value:?} -> TEXT: {error}"));
+            assert!(matches!(result, IsNull::No));
+            assert!(!out.is_empty());
+        }
     }
 
     /// The typed wrapper still adapts numeric values to the inferred type.

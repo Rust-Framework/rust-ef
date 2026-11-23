@@ -22,6 +22,25 @@ use rust_ef::schema::DbTable;
 use rust_ef_mysql::DbContextOptionsBuilderExt as MySqlExt;
 use rust_ef_postgres::DbContextOptionsBuilderExt as PostgresExt;
 
+/// EF-02 parity: integer/DECIMAL aggregates must decode exactly on every
+/// provider (MySQL returns NEWDECIMAL for `SUM(BIGINT)` / `AVG(INT)`).
+#[derive(Debug, Clone, EntityType)]
+#[table("parity_aggregates")]
+struct ParityAggregate {
+    #[primary_key]
+    #[auto_increment]
+    pub id: i32,
+
+    pub amount: i64,
+
+    #[required]
+    #[max_length(16)]
+    pub label: String,
+
+    #[column_type("DECIMAL(12, 2)")]
+    pub price: Option<f64>,
+}
+
 #[derive(Debug, Clone, EntityType)]
 #[table("parity_categories")]
 struct Category {
@@ -419,3 +438,154 @@ async fn postgres_introspection_matches_the_migrated_model() {
 // EF-PG-01: the `DbValue::Null` binding matrix against a real PostgreSQL server
 // lives in `tests/postgres_null_binding.rs`
 // (`RUST_EF_PG_URL=... cargo test -p rust-ef --test postgres_null_binding -- --ignored`).
+
+/// Creates the aggregate fixture, seeds BIGINT and DECIMAL rows, and asserts
+/// that `sum_i64` / `sum_as` decode the provider's DECIMAL cells exactly.
+async fn assert_integer_aggregate_decoding(ctx: &mut DbContext, postgres: bool) {
+    ctx.set::<ParityAggregate>();
+
+    let id_ddl = if postgres {
+        "id BIGSERIAL PRIMARY KEY"
+    } else {
+        "id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY"
+    };
+    let create = format!(
+        "CREATE TABLE parity_aggregates ({id_ddl}, amount BIGINT NOT NULL, \
+         label VARCHAR(16) NOT NULL, price DECIMAL(12, 2) NULL)"
+    );
+    ctx.provider()
+        .execute_migration_command("DROP TABLE IF EXISTS parity_aggregates")
+        .await
+        .expect("drop fixture");
+    ctx.provider()
+        .execute_migration_command(&create)
+        .await
+        .expect("create fixture");
+
+    for (amount, label, price) in [
+        (9_007_199_254_740_993_i64, "a", "10.25"),
+        (4, "a", "5.25"),
+        (50, "b", "0.00"),
+    ] {
+        let insert = format!(
+            "INSERT INTO parity_aggregates (amount, label, price) \
+             VALUES ({amount}, '{label}', {price})"
+        );
+        ctx.provider()
+            .execute_migration_command(&insert)
+            .await
+            .expect("insert fixture row");
+    }
+
+    // SUM(BIGINT) is DECIMAL-shaped on MySQL/PG; without DECIMAL decoding the
+    // legacy integer path would silently become NULL -> 0.
+    let total: i64 = linq!(ctx.set::<ParityAggregate>(); sum_i64 a.amount)
+        .await
+        .expect("sum_i64");
+    assert_eq!(
+        total,
+        9_007_199_254_740_997 + 50,
+        "integer sum must be exact"
+    );
+
+    let avg: f64 = ctx
+        .set::<ParityAggregate>()
+        .query()
+        .avg_as::<f64>(ParityAggregate::COLUMN_AMOUNT)
+        .await
+        .expect("avg_as");
+    assert!(
+        (avg - (9_007_199_254_740_997.0 + 50.0) / 3.0).abs() < 2.0,
+        "unexpected integer average: {avg}"
+    );
+
+    // SUM over a DECIMAL column returns a fractional DECIMAL cell; decoding
+    // into String must keep the value (a silent NULL would become 0).
+    let price_total: String = ctx
+        .set::<ParityAggregate>()
+        .query()
+        .sum_as::<String>(ParityAggregate::COLUMN_PRICE)
+        .await
+        .expect("sum decimal");
+    assert_eq!(
+        price_total.parse::<f64>().expect("decimal sum"),
+        15.5,
+        "DECIMAL sum must not lose precision or become NULL"
+    );
+
+    // Grouped projection: column + COALESCE(SUM(bigint), $1) + ORDER BY alias +
+    // HAVING with an integer parameter. On PostgreSQL this exercises
+    // NUMERIC-inferred parameter binding; on MySQL the NEWDECIMAL decode path.
+    use rust_ef::query::{AggKind, CompareOp, HavingExpr, SelectItem};
+    let groups: Vec<(String, i64)> = ctx
+        .set::<ParityAggregate>()
+        .query()
+        .select_items(&[
+            SelectItem::column(ParityAggregate::COLUMN_LABEL),
+            SelectItem::sum(ParityAggregate::COLUMN_AMOUNT).coalesce(0i64),
+        ])
+        .group_by(&[ParityAggregate::COLUMN_LABEL])
+        .having(HavingExpr::Compare {
+            agg: AggKind::Sum,
+            col: ParityAggregate::COLUMN_AMOUNT.to_string(),
+            op: CompareOp::Gt,
+            value: DbValue::I64(60),
+        })
+        .order_by("label")
+        .to_list_typed_2()
+        .await
+        .expect("grouped projection");
+    assert_eq!(
+        groups,
+        vec![("a".to_string(), 9_007_199_254_740_997)],
+        "only group `a` exceeds the HAVING bound"
+    );
+
+    // Set-based expression update on the same provider.
+    let affected = ctx
+        .set::<ParityAggregate>()
+        .query()
+        .filter(linq!(|a: ParityAggregate| a.label == "a"))
+        .execute_update()
+        .increment(ParityAggregate::COLUMN_AMOUNT, 5i64)
+        .execute()
+        .await
+        .expect("expression update");
+    assert_eq!(affected, 2);
+
+    let updated: i64 = linq!(ctx.set::<ParityAggregate>(); sum_i64 a.amount)
+        .await
+        .expect("updated sum");
+    assert_eq!(updated, 9_007_199_254_740_997 + 50 + 10);
+
+    ctx.provider()
+        .execute_migration_command("DROP TABLE IF EXISTS parity_aggregates")
+        .await
+        .expect("drop fixture");
+}
+
+#[tokio::test]
+#[ignore = "requires a MySQL server (RUST_EF_MYSQL_URL); run with --ignored"]
+async fn mysql_integer_and_decimal_aggregates_decode_exactly() {
+    let url = require_env("RUST_EF_MYSQL_URL");
+    let mut builder = DbContextOptionsBuilder::new();
+    builder.use_mysql_with(&url, |options| {
+        options.insecure();
+    });
+    let options = builder.build();
+    let mut ctx = DbContext::from_options(&options).expect("context");
+    assert_integer_aggregate_decoding(&mut ctx, false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a PostgreSQL server (RUST_EF_PG_URL); run with --ignored"]
+async fn postgres_integer_and_decimal_aggregates_decode_exactly() {
+    let url = require_env("RUST_EF_PG_URL");
+    let mut builder = DbContextOptionsBuilder::new();
+    builder.use_postgres_with(&url, |options| {
+        options.insecure();
+    });
+    let options = builder.build();
+    let mut ctx = DbContext::from_options(&options).expect("context");
+    assert_integer_aggregate_decoding(&mut ctx, true).await;
+}

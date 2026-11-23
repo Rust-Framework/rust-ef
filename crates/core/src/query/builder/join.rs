@@ -86,6 +86,10 @@ impl<T: IEntityType> QueryBuilder<T> {
     ///     .await?;
     /// ```
     pub fn join<J: IEntityType>(mut self, kind: JoinKind, on: &[(&str, &str)]) -> Self {
+        debug_assert!(
+            kind == JoinKind::Cross || !on.is_empty(),
+            "a non-CROSS join needs at least one ON key"
+        );
         let left_table = self.state.from.clone();
         let table = J::entity_meta().table_name.to_string();
         self.push_join(kind, table, left_table, on);
@@ -108,6 +112,10 @@ impl<T: IEntityType> QueryBuilder<T> {
         kind: JoinKind,
         on: &[(&str, &str)],
     ) -> Self {
+        debug_assert!(
+            kind == JoinKind::Cross || !on.is_empty(),
+            "a non-CROSS join needs at least one ON key"
+        );
         let left_table = L::entity_meta().table_name.to_string();
         let table = J::entity_meta().table_name.to_string();
         self.push_join(kind, table, left_table, on);
@@ -131,6 +139,10 @@ impl<T: IEntityType> QueryBuilder<T> {
         table: &'static str,
         keys: &'static [(&'static str, &'static str)],
     ) -> Self {
+        debug_assert!(
+            kind == JoinKind::Cross || !keys.is_empty(),
+            "a non-CROSS join needs at least one ON key"
+        );
         let root_table = T::entity_meta().table_name.to_string();
         let effective_left = if left_table == root_table.as_str() && self.state.from != root_table {
             self.state.from.clone()

@@ -3,7 +3,7 @@
 分组有两种写法：
 
 1. **运行时报表 API（2.7.0 起，推荐）**：`group_by(&[&str])` + `select_items(&[SelectItem])` + `to_list_rows::<R>()`，得到「每组一行」的类型化结果，不需要把报表伪装成实体。
-2. **`linq!` 子句（可选语法糖）**：`group_by ...; having ...`，终端返回实体行（`to_list`/`to_list_typed_*`）。需要每组一行的类型化字段时用 1。
+2. **`linq!` 子句（可选语法糖）**：`group_by ...; having ...` 终端返回实体行（`to_list`）；`select` 里带聚合项时返回类型化投影（`to_list_typed_*` / `to_list_rows`）。
 
 ## 运行时报表 API
 
@@ -78,21 +78,23 @@ let rows: Vec<(String, i64)> = ctx
 
 ### linq! 可选写法
 
-```rust
-// 实体查询：group_by / having 子句（终端返回实体行）
-let blogs = linq!(ctx.set::<Blog>();
-    group_by b.category;
-    having count(b.blog_id) > 1
-).to_list().await?;
+> ⚠️ 带 `group_by`/`having` 的查询**不能**再用实体的 `to_list()`/`count()`：分组结果每组
+> 一行、不是实体形状（`SELECT * ... GROUP BY` 在 PG/MySQL 报错、SQLite 返回组内任意行）。
+> 实体终端会返回 `EFError::Configuration`；请用聚合投影 + `to_list_typed_*`/`to_list_rows`。
 
-// 支持 AND / OR / NOT 与 agg op agg
-let rows = linq!(ctx.set::<Blog>();
+```rust
+// 分组聚合投影：select 里写聚合项，终端返回类型化投影
+let rows: Vec<(String, i64, i64)> = linq!(ctx.set::<Blog>();
     group_by b.category;
-    having count(b.blog_id) > 1 && sum(b.views) > 100
-).to_list().await?;
+    select (b.category, sum(b.views), count())
+).to_list_typed_3::<String, i64, i64>().await?;
 ```
 
-> `linq!` 的 `select` 子句是原始列投影（`to_list_typed_*` 终端）。需要「每组一行」的强类型字段（例如只要 category + SUM）时用上面的运行时 `select_items` + `to_list_rows`。
+> `linq!` 的 `select` 已支持 `sum/avg/min/max(...)`、`count()`、`count(col)` 聚合项
+> （纯列 `select` 的 SQL 与 2.6 逐字符一致）。`linq!` 的 `order_by` 只能引用列或组键，
+> **不能按聚合别名排序**；需要「按 SUM 降序取 Top N」时用运行时
+> `select_items(...).order_by_desc("sum_amount")`（默认别名规则见
+> [类型化投影](typed-projections.md)）。
 
 ## 组内聚合的 NULL 语义
 

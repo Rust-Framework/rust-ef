@@ -169,3 +169,85 @@ async fn expression_updates_bind_set_values_before_the_where_clause() {
         vec![DbValue::I64(100), DbValue::I32(5), DbValue::I32(7)]
     );
 }
+
+#[tokio::test]
+async fn a_projection_compiles_its_params_in_sql_order() {
+    let mut ctx = seeded_ctx().await;
+
+    let query = ctx
+        .set::<PoSale>()
+        .query()
+        .with_cte_typed(
+            "rich",
+            PoSale::TABLE,
+            linq!(|s: PoSale| s.amount > 100).into_expr(),
+        )
+        .from_cte("rich")
+        .filter(linq!(|s: PoSale| s.amount < 999))
+        .select_items(&[
+            SelectItem::literal(DbValue::String("REPORT".to_string()), "grant_scope"),
+            SelectItem::column(PoSale::COLUMN_ID),
+        ]);
+
+    let (sql, params) = query.compile_sql();
+    assert!(
+        sql.starts_with("WITH rich AS (SELECT * FROM \"po_sales\" WHERE amount > ?)"),
+        "unexpected SQL: {sql}"
+    );
+    assert!(
+        sql.contains("SELECT ? AS grant_scope, id AS id FROM rich WHERE amount < ?"),
+        "unexpected SQL: {sql}"
+    );
+    assert_eq!(
+        params,
+        vec![
+            DbValue::I32(100),
+            DbValue::String("REPORT".to_string()),
+            DbValue::I32(999),
+        ],
+        "CTE -> projection -> WHERE order"
+    );
+}
+
+#[test]
+fn set_operation_operands_are_renumbered_after_the_main_query() {
+    use rust_ef::query::QueryBuilder;
+
+    // Operand compiled independently: its `$1` must become `$3`.
+    let operand = QueryBuilder::<PoSale>::new("po_sales").filter(linq!(|s: PoSale| s.amount > 100));
+    let operand_state = operand.state();
+    let operand_sql = operand_state.to_sql_with(&PgLikeGenerator);
+    assert!(operand_sql.ends_with("WHERE amount > $1"), "{operand_sql}");
+    let operand_params = operand_state.all_params();
+
+    // Main query: the union clause is a QueryBuilder operation (clause order in
+    // `linq!` puts it before `select`); the projection then adds one literal +
+    // the WHERE parameter, i.e. 2 params precede the operand.
+    let query = QueryBuilder::<PoSale>::new("po_sales")
+        .filter(linq!(|s: PoSale| s.amount < 999))
+        .union_internal((operand_sql, operand_params))
+        .select_items(&[
+            SelectItem::literal(DbValue::String("REPORT".to_string()), "grant_scope"),
+            SelectItem::column(PoSale::COLUMN_ID),
+        ]);
+    let (sql, params) = (
+        query.state().to_sql_with(&PgLikeGenerator),
+        query.state().all_params(),
+    );
+    assert!(
+        sql.contains("SELECT $1 AS grant_scope, id AS id FROM po_sales WHERE amount < $2"),
+        "main query placeholders: {sql}"
+    );
+    assert!(
+        sql.contains("UNION SELECT * FROM po_sales WHERE amount > $3"),
+        "the operand's placeholder must be shifted past the main params: {sql}"
+    );
+    assert_eq!(
+        params,
+        vec![
+            DbValue::String("REPORT".to_string()),
+            DbValue::I32(999),
+            DbValue::I32(100),
+        ]
+    );
+}

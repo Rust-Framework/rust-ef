@@ -39,6 +39,21 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         }
     }
 
+    /// Returns the generated SQL and its bound parameters in SQL text order.
+    ///
+    /// Same contract as [`QueryBuilder::compile_sql`](super::QueryBuilder::compile_sql):
+    /// parameters follow `all_params()` (CTE -> projections -> WHERE -> HAVING ->
+    /// set operations). Useful for logging, SQL-shape assertions and custom
+    /// execution wrappers; the terminals already bind the same vector.
+    pub fn compile_sql(&self) -> (String, Vec<DbValue>) {
+        let resolved = self.resolved_state();
+        let sql = match &self.provider {
+            Some(provider) => resolved.to_sql_with(provider.sql_generator()),
+            None => resolved.to_sql(),
+        };
+        (sql, resolved.all_params())
+    }
+
     /// Query state with correlated subqueries resolved from `T`'s navigation
     /// metadata (a projected query can still carry an `EXISTS`/`IN (SELECT ...)`
     /// predicate; without this resolution those subqueries would compile with
@@ -65,15 +80,50 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     }
 
     /// Appends one typed SELECT-list projection.
+    ///
+    /// Mixing with [`select`](crate::query::QueryBuilder::select) is safe: the
+    /// plain columns become `SelectItem::column` projections in their original
+    /// order, so no column is silently dropped.
     pub fn select_item(mut self, item: SelectItem) -> Self {
+        self.absorb_plain_columns();
         self.state.projections.push(item);
         self
     }
 
     /// Appends typed SELECT-list projections in the given order.
+    ///
+    /// Mixing with [`select`](crate::query::QueryBuilder::select) is safe (see
+    /// [`select_item`](Self::select_item)); an empty list is a programming
+    /// error and is rejected in debug builds.
     pub fn select_items(mut self, items: &[SelectItem]) -> Self {
+        debug_assert!(
+            !items.is_empty(),
+            "select_items needs at least one projection item"
+        );
+        self.absorb_plain_columns();
         self.state.projections.extend(items.iter().cloned());
         self
+    }
+
+    /// Folds a plain `select(&[...])` column list into typed projections so a
+    /// later `select_item(s)` call appends instead of discarding it.
+    fn absorb_plain_columns(&mut self) {
+        if let Some(columns) = self.state.projected_columns.take() {
+            self.state.projections.extend(
+                columns
+                    .into_iter()
+                    .map(SelectItem::column)
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    /// Returns a reference to the accumulated query state.
+    ///
+    /// Together with [`SelectItem::expr`] / [`SelectItem::alias`] this makes a
+    /// runtime report introspectable (for logging/OpenAPI adapters).
+    pub fn state(&self) -> &QueryState {
+        &self.state
     }
 
     /// Adds a HAVING condition (`AND`-joined with previous ones).
@@ -83,7 +133,11 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     }
 
     /// Adds an ascending ORDER BY column (may reference a projection alias).
+    ///
+    /// `column` is an SQL identifier / output alias and is emitted verbatim:
+    /// use code constants or a hard-coded whitelist, never request data.
     pub fn order_by(mut self, column: &str) -> Self {
+        super::expr::debug_assert_identifier(column, "ORDER BY column");
         self.state
             .orderings
             .push(OrderBy::new(column, OrderDirection::Ascending));
@@ -91,7 +145,11 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     }
 
     /// Adds a descending ORDER BY column (may reference a projection alias).
+    ///
+    /// `column` is an SQL identifier / output alias and is emitted verbatim:
+    /// use code constants or a hard-coded whitelist, never request data.
     pub fn order_by_desc(mut self, column: &str) -> Self {
+        super::expr::debug_assert_identifier(column, "ORDER BY column");
         self.state
             .orderings
             .push(OrderBy::new(column, OrderDirection::Descending));

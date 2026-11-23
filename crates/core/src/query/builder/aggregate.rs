@@ -206,6 +206,9 @@ impl<T: IEntityType> QueryBuilder<T> {
 
     /// Changes the FROM clause to reference a CTE name (or any table/subquery).
     ///
+    /// JOINs resolve their left table from the current FROM when they are
+    /// added, so call `from_cte` **before** the join clauses.
+    ///
     /// Used in combination with `with_cte_internal` to query from a CTE:
     /// ```ignore
     /// builder.with_cte_internal("cte", "SELECT ...", params, &[])
@@ -281,19 +284,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// `#[doc(hidden)]` — called by `linq!(sum b.views)` expansion.
     #[doc(hidden)]
     pub async fn sum_internal(self, column: &'static str) -> EFResult<f64> {
-        let mut state = self.state.clone();
-        state.aggregate = Some("SUM".to_string());
-        state.aggregate_column = Some(column.to_string());
-        let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::configuration(
-                "No provider attached to QueryBuilder.".to_string(),
-            )
-        })?;
-        let sql = Self::compile_state_sql(&state, provider);
-        let params = state.all_params();
-        let mut conn = provider.get_connection().await?;
-        let rows = conn.query(&sql, &params).await?;
-        aggregate_f64_cell(&rows, "SUM")
+        aggregate_f64_cell(self.fetch_scalar_aggregate("SUM", column).await?, "SUM")
     }
 
     /// Executes an AVG aggregation query.
@@ -304,19 +295,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// `#[doc(hidden)]` — called by `linq!(avg b.rating)` expansion.
     #[doc(hidden)]
     pub async fn avg_internal(self, column: &'static str) -> EFResult<f64> {
-        let mut state = self.state.clone();
-        state.aggregate = Some("AVG".to_string());
-        state.aggregate_column = Some(column.to_string());
-        let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::configuration(
-                "No provider attached to QueryBuilder.".to_string(),
-            )
-        })?;
-        let sql = Self::compile_state_sql(&state, provider);
-        let params = state.all_params();
-        let mut conn = provider.get_connection().await?;
-        let rows = conn.query(&sql, &params).await?;
-        aggregate_f64_cell(&rows, "AVG")
+        aggregate_f64_cell(self.fetch_scalar_aggregate("AVG", column).await?, "AVG")
     }
 
     /// Executes a SUM aggregation and decodes the result as `V`.
@@ -357,7 +336,35 @@ impl<T: IEntityType> QueryBuilder<T> {
         aggregate_typed_cell(rows, "AVG")
     }
 
-    /// Runs a single-cell aggregate query (`SUM`/`AVG`) over the current state.
+    /// Executes a MIN aggregation query, returning the typed result.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(min b.rating)` expansion. The target
+    /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
+    #[doc(hidden)]
+    pub async fn min_internal<V>(self, column: &'static str) -> EFResult<Option<V>>
+    where
+        V: TryFrom<DbValue, Error = DbValueConvertError>,
+    {
+        convert_aggregate_cell(self.fetch_scalar_aggregate("MIN", column).await?)
+    }
+
+    /// Executes a MAX aggregation query, returning the typed result.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(max b.rating)` expansion. The target
+    /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
+    #[doc(hidden)]
+    pub async fn max_internal<V>(self, column: &'static str) -> EFResult<Option<V>>
+    where
+        V: TryFrom<DbValue, Error = DbValueConvertError>,
+    {
+        convert_aggregate_cell(self.fetch_scalar_aggregate("MAX", column).await?)
+    }
+
+    /// Runs a single-cell aggregate query over the current state.
+    ///
+    /// All scalar aggregate terminals share this one execution path, so the
+    /// provider resolution, SQL compilation and parameter binding cannot drift
+    /// between SUM/AVG/MIN/MAX or between the f64 and typed variants.
     async fn fetch_scalar_aggregate(
         self,
         func: &str,
@@ -375,54 +382,6 @@ impl<T: IEntityType> QueryBuilder<T> {
         let params = state.all_params();
         let mut conn = provider.get_connection().await?;
         conn.query(&sql, &params).await
-    }
-
-    /// Executes a MIN aggregation query, returning the typed result.
-    ///
-    /// `#[doc(hidden)]` — called by `linq!(min b.rating)` expansion. The target
-    /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
-    #[doc(hidden)]
-    pub async fn min_internal<V>(self, column: &'static str) -> EFResult<Option<V>>
-    where
-        V: TryFrom<DbValue, Error = DbValueConvertError>,
-    {
-        let mut state = self.state.clone();
-        state.aggregate = Some("MIN".to_string());
-        state.aggregate_column = Some(column.to_string());
-        let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::configuration(
-                "No provider attached to QueryBuilder.".to_string(),
-            )
-        })?;
-        let sql = Self::compile_state_sql(&state, provider);
-        let params = state.all_params();
-        let mut conn = provider.get_connection().await?;
-        let rows = conn.query(&sql, &params).await?;
-        convert_aggregate_cell::<V>(rows)
-    }
-
-    /// Executes a MAX aggregation query, returning the typed result.
-    ///
-    /// `#[doc(hidden)]` — called by `linq!(max b.rating)` expansion. The target
-    /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
-    #[doc(hidden)]
-    pub async fn max_internal<V>(self, column: &'static str) -> EFResult<Option<V>>
-    where
-        V: TryFrom<DbValue, Error = DbValueConvertError>,
-    {
-        let mut state = self.state.clone();
-        state.aggregate = Some("MAX".to_string());
-        state.aggregate_column = Some(column.to_string());
-        let provider = self.provider.as_ref().ok_or_else(|| {
-            crate::error::EFError::configuration(
-                "No provider attached to QueryBuilder.".to_string(),
-            )
-        })?;
-        let sql = Self::compile_state_sql(&state, provider);
-        let params = state.all_params();
-        let mut conn = provider.get_connection().await?;
-        let rows = conn.query(&sql, &params).await?;
-        convert_aggregate_cell::<V>(rows)
     }
 
     // -------------------------------------------------------------------
@@ -461,6 +420,11 @@ impl<T: IEntityType> QueryBuilder<T> {
     ///     .await?;
     /// ```
     pub fn select_items(self, items: &[SelectItem]) -> SelectQueryBuilder<T> {
+        debug_assert!(
+            !items.is_empty(),
+            "select_items needs at least one projection item (an empty list would \
+             silently fall back to SELECT *)"
+        );
         let mut state = self.state.clone();
         state.projections = items.to_vec();
         SelectQueryBuilder {
@@ -497,7 +461,7 @@ impl<T: IEntityType> QueryBuilder<T> {
 ///   same neutral value `0.0` instead of a `TypeConversion` error.
 /// - `MIN`/`MAX` keep their `Option<V>` signatures and return `None`
 ///   ([`convert_aggregate_cell`]); `COUNT` counts rows and is unaffected.
-fn aggregate_f64_cell(rows: &[Vec<DbValue>], func: &str) -> EFResult<f64> {
+fn aggregate_f64_cell(rows: Vec<Vec<DbValue>>, func: &str) -> EFResult<f64> {
     match rows.first().and_then(|row| row.first()) {
         // No rows at all (should not happen for an aggregate) or a SQL NULL
         // cell (empty/NULL-only input set): neutral value.
@@ -543,26 +507,26 @@ mod tests {
     #[test]
     fn success_cell_is_converted_unchanged() {
         let rows = vec![vec![DbValue::F64(15.0)]];
-        assert_eq!(aggregate_f64_cell(&rows, "SUM").unwrap(), 15.0);
+        assert_eq!(aggregate_f64_cell(rows, "SUM").unwrap(), 15.0);
     }
 
     #[test]
     fn null_cell_is_the_neutral_zero() {
         let rows = vec![vec![DbValue::Null]];
-        assert_eq!(aggregate_f64_cell(&rows, "SUM").unwrap(), 0.0);
-        assert_eq!(aggregate_f64_cell(&rows, "AVG").unwrap(), 0.0);
+        assert_eq!(aggregate_f64_cell(rows.clone(), "SUM").unwrap(), 0.0);
+        assert_eq!(aggregate_f64_cell(rows, "AVG").unwrap(), 0.0);
     }
 
     #[test]
     fn no_rows_is_the_neutral_zero() {
-        assert_eq!(aggregate_f64_cell(&[], "SUM").unwrap(), 0.0);
-        assert_eq!(aggregate_f64_cell(&[vec![]], "AVG").unwrap(), 0.0);
+        assert_eq!(aggregate_f64_cell(Vec::new(), "SUM").unwrap(), 0.0);
+        assert_eq!(aggregate_f64_cell(vec![vec![]], "AVG").unwrap(), 0.0);
     }
 
     #[test]
     fn non_numeric_cell_stays_a_type_error() {
         let rows = vec![vec![DbValue::String("not-a-number".to_string())]];
-        match aggregate_f64_cell(&rows, "SUM") {
+        match aggregate_f64_cell(rows, "SUM") {
             Err(EFError::TypeConversion(message, _)) => {
                 assert_eq!(message, "SUM result is not f64");
             }

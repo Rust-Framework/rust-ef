@@ -496,3 +496,24 @@ async fn linq_composite_join_with_filter_joined_runs() {
     .unwrap();
     assert!(ups.is_empty());
 }
+
+#[test]
+fn a_join_without_keys_emits_a_valid_on_clause() {
+    // A keyless non-CROSS JOIN is a cross product; emitting `ON 1 = 1` keeps
+    // the statement valid instead of a dangling `JOIN t ON`. The runtime
+    // builder also debug-asserts non-empty keys, so this asserts the compiled
+    // shape of the public `JoinSpec` directly.
+    let spec = rust_ef::query::JoinSpec {
+        kind: JoinKind::Inner,
+        table: "jc_shipments".to_string(),
+        keys: Vec::new(),
+    };
+    assert_eq!(spec.to_sql(), "INNER JOIN jc_shipments ON 1 = 1");
+
+    let cross = rust_ef::query::JoinSpec {
+        kind: JoinKind::Cross,
+        table: "jc_shipments".to_string(),
+        keys: Vec::new(),
+    };
+    assert_eq!(cross.to_sql(), "CROSS JOIN jc_shipments");
+}

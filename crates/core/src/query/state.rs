@@ -4,9 +4,9 @@
 //! pagination, includes, projections, window functions, CTEs, and set
 //! operations.
 //! `to_sql_with` compiles the state into a SQL string using the provider's
-//! placeholder syntax; `all_params` returns the bound parameter vector in
-//! the order expected by the generated SQL (CTE params first, then WHERE/
-//! HAVING, then set operation operand params).
+//! placeholder syntax; `all_params` returns the bound parameter vector in the
+//! order expected by the generated SQL: CTE parameters, SELECT-list projection
+//! parameters, WHERE, HAVING, then set-operation operand parameters.
 
 use crate::provider::DbValue;
 
@@ -314,6 +314,11 @@ impl QueryState {
         // full SELECT (including CTE prefix). Operands are pre-compiled SQL
         // strings; their params are appended in all_params() after the main
         // query params. Per D5, operands should not contain ORDER BY / LIMIT.
+        //
+        // PostgreSQL placeholders are statement-global: each operand was
+        // compiled independently with `$1..`, so they must be renumbered past
+        // the main query's parameters. SQLite/MySQL use `?` and need no shift.
+        let setop_param_offset = param_idx.saturating_sub(1);
         for op in &self.set_operations {
             let kw = match op.operator {
                 SetOperator::Union => " UNION ",
@@ -322,7 +327,11 @@ impl QueryState {
                 SetOperator::Except => " EXCEPT ",
             };
             sql.push_str(kw);
-            sql.push_str(&op.operand_sql);
+            if gen.uses_numbered_placeholders() && setop_param_offset > 0 {
+                sql.push_str(&renumber_placeholders(&op.operand_sql, setop_param_offset));
+            } else {
+                sql.push_str(&op.operand_sql);
+            }
         }
 
         sql
@@ -363,6 +372,22 @@ impl QueryState {
         self.to_sql_with(&PortablePlaceholderGenerator)
     }
 
+    /// Resolves correlated subqueries for `T` and returns SQL + full
+    /// parameter vector in text order.
+    ///
+    /// This is the correct low-level entry point for a manually assembled
+    /// [`QueryState`]: [`params`](Self::params) intentionally returns only the
+    /// WHERE values, and [`to_sql_with`](Self::to_sql_with) does not resolve
+    /// `EXISTS`/`IN` subquery metadata.
+    pub fn compile_sql_with<T: crate::entity::IEntityType>(
+        &self,
+        gen: &dyn crate::provider::ISqlGenerator,
+    ) -> (String, Vec<DbValue>) {
+        let mut state = self.clone();
+        super::compile::resolve_state_subqueries::<T>(&mut state);
+        (state.to_sql_with(gen), state.all_params())
+    }
+
     /// Returns the WHERE parameter values accumulated by builder calls.
     ///
     /// Projection and HAVING parameters are not stored here: they are derived
@@ -371,4 +396,40 @@ impl QueryState {
     pub fn params(&self) -> &[DbValue] {
         &self.parameters
     }
+}
+
+/// Shifts every `$N` placeholder in a pre-compiled SQL fragment by `offset`.
+///
+/// Set-operation operands are compiled as standalone queries (`$1..$k`), but a
+/// PostgreSQL statement numbers placeholders globally. `offset` is the number of
+/// parameters that precede the operand in the final statement.
+fn renumber_placeholders(sql: &str, offset: usize) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '$' {
+            out.push(ch);
+            continue;
+        }
+        let mut digits = String::new();
+        while let Some(next) = chars.peek() {
+            if next.is_ascii_digit() {
+                digits.push(*next);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        match digits.parse::<usize>() {
+            Ok(index) => {
+                out.push('$');
+                out.push_str(&(index + offset).to_string());
+            }
+            Err(_) => {
+                out.push('$');
+                out.push_str(&digits);
+            }
+        }
+    }
+    out
 }

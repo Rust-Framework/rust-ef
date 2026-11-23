@@ -13,15 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **English** · **简体中文**
 >
-> Additive minor release. Reporting queries can now be expressed end-to-end in the
-> object API (GROUP BY + aggregates + `COALESCE`/`CASE` + typed rows), bulk updates
-> can assign column expressions (`col = col + ?`), JOINs support composite and
-> chained ON keys, and projection/raw-SQL results materialize into plain structs
-> and tuples without a keyless entity. The exported builders are unchanged; three
-> observable changes (two public-struct shapes and the `QueryState::params()`
-> boundary) are listed under **Changed**.
+> Minor release. Reporting queries can now be expressed end-to-end in the object
+> API (GROUP BY + aggregates + `COALESCE`/`CASE` + typed rows), bulk updates can
+> assign column expressions (`col = col + ?`), JOINs support composite and chained
+> ON keys, and projection/raw-SQL results materialize into plain structs and tuples
+> without a keyless entity.
+>
+> **Breaking (documented, low-impact):** direct struct-literal construction of
+> `JoinSpec` and `QueryState` changed; see the **Breaking** section below. All
+> builder APIs are additive.
 
 #### English
+
+**Breaking**
+
+- **`JoinSpec` fields changed** from `{ join_type, table, on_clause }` to
+  `{ kind: JoinKind, table: String, keys: Vec<JoinKey> }`. Build joins through
+  `QueryBuilder::{join, join_from}` (or the `linq!` clauses); the legacy
+  `*_join_internal` entry points still generate byte-identical SQL. Code that
+  constructed `JoinSpec` literals must adopt the new fields.
+- **`QueryState` gained the public `projections: Vec<SelectItem>` field.**
+  Struct-literal construction must add it (recommended: `QueryState::new`).
+- **`QueryState::params()` returns WHERE parameters only.** In 2.6 it also
+  contained HAVING values (they were registered when the clause was added).
+  The generated SQL and all built-in terminals are unchanged; code that compiled
+  `QueryState` by hand must use `all_params()` — or the new
+  `QueryState::compile_sql_with::<T>(gen)` which also resolves correlated
+  subqueries.
 
 **Added — typed report projections**
 
@@ -39,7 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   works with the aggregate items in the `select` tuple.
 - **`QueryBuilder` runtime entry points** — `group_by(&[&str])`,
   `select(&[&str])`, `select_items(&[SelectItem])` for dynamically assembled
-  reports (the `linq!` macro remains the typed surface).
+  reports (the `linq!` macro remains the typed surface). `SelectQueryBuilder`
+  also gained `compile_sql()` for parity with `QueryBuilder` (SQL + bound
+  parameters in text order, for logging/SQL-shape assertions).
 
 **Added — exact aggregate types**
 
@@ -78,8 +98,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consecutive join clauses form a chain; the legacy `*_join_internal` entry points
   keep their exact SQL.
 - Known boundaries (documented): self-joins are not aliased (use raw SQL +
-  `IRow`), and a join that starts from a CTE must use `join_from` for the second
-  hop.
+  `IRow`), a join that starts from a CTE must use `join_from` for the second
+  hop, and `from` must precede the join clauses because a JOIN resolves its
+  left table from the current FROM when it is added. A keyless non-CROSS JOIN
+  now compiles to `ON 1 = 1` (a cross product) instead of a dangling `ON`.
 
 **Added — expression updates**
 
@@ -92,29 +114,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Changed**
 
-- **`JoinSpec` is now `{ kind: JoinKind, table: String, keys: Vec<JoinKey> }`**
-  (was `{ join_type: String, table: String, on_clause: String }`). Build joins
-  through the builders; the generated SQL of the legacy internal methods is
-  unchanged.
-- **`QueryState` gains the public `projections: Vec<SelectItem>` field**; struct
-  literals must add it (use `QueryState::new`).
 - **HAVING parameters are derived from the stored `HavingExpr` nodes at
   `all_params()` time** (instead of being appended when the clause is
   registered). Generated SQL and parameter vectors are unchanged for existing
   `linq!` usage and now stay correct when a filter is added after a HAVING
   clause. Full parameter order is documented as
   CTE → SELECT projections → WHERE → HAVING → set operations.
-- **`QueryState::params()` now returns WHERE parameters only.** In 2.6 it also
-  contained HAVING values; from 2.7 they are collected by `all_params()` in SQL
-  order. Use `all_params()` whenever a query carries HAVING (the built-in
-  terminals already do); the generated SQL and execution behavior are unchanged.
+- **Grouped/HAVING queries are rejected at entity terminals.** `to_list` /
+  `count` on a `QueryBuilder` with `group_bys`/`havings` now return a typed
+  configuration error instead of generating `SELECT * ... GROUP BY` (invalid on
+  PostgreSQL/MySQL and non-deterministic on SQLite). Use `select_items(...)` +
+  `to_list_rows` / `to_list_typed_*`.
+- **`select(...)` columns and `select_item(s)` compose.** Typed projection items
+  absorb a preceding plain column list instead of silently dropping it, and an
+  empty `select_items(&[])` is rejected in debug builds.
+- **Rust/PostgreSQL/MySQL aggregate decoding hardened:** MySQL now decodes
+  `NEWDECIMAL` (`SUM(BIGINT)` / `AVG(INT)` / DECIMAL columns) instead of falling
+  through to `NULL` (which silently produced `0`); PostgreSQL binds integer /
+  float parameters for `NUMERIC`- and `TEXT`-inferred slots (COALESCE fallback,
+  constant projection, CASE result, HAVING bounds); set-operation operands get
+  their `$N` placeholders renumbered after the main query on PostgreSQL.
+- **Keyless non-CROSS JOIN compiles to `ON 1 = 1`** instead of a dangling `ON`;
+  runtime `join`/`join_from` debug-assert non-empty keys.
+- **Runtime identifier APIs fail loudly in debug builds.** `SelectItem`
+  column/alias/aggregate arguments, `order_by(_desc)`, `ColumnExpr::column` and
+  join keys are checked with `debug_assert!` when they are not SQL identifiers
+  (values must still never be passed as identifiers; see the security sections
+  in the typed-projection/JOIN docs).
+- **New introspection/parity helpers:** `SelectQueryBuilder::compile_sql`,
+  `SelectQueryBuilder::state`, `SelectItem::{expression, alias_name}`,
+  `QueryState::compile_sql_with::<T>`.
 
 **Verification**
 
 - `cargo test --workspace --all-features` green (existing suites + new suites:
-  grouped projections 14, typed aggregates 9, row mapping 12, composite/chained
-  JOIN 14, expression updates 9, `linq!` 2.7 syntax 12, projection subqueries 2,
-  nullable rows 3, parameter order 4, `DbValue` conversions 6).
+  grouped projections 16, typed aggregates 9, row mapping 12, composite/chained
+  JOIN 15, expression updates 9, `linq!` 2.7 syntax 13, projection subqueries 2,
+  nullable rows 3, parameter order 6, `DbValue` conversions 6).
+- Real MySQL/PostgreSQL `#[ignore]` parity tests cover NUMERIC/NEWDECIMAL
+  decoding, grouped projections (COALESCE/HAVING/ORDER BY), and expression
+  updates; they run in the CI real-database job (no local server required).
 - SQL-shape assertions for SQLite/MySQL `?` and PostgreSQL `$N` placeholders,
   parameter-order assertions, and SQLite end-to-end execution for every new
   capability; `cargo clippy --workspace --all-targets --all-features -D warnings`
@@ -141,6 +180,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `linq!(...; group_by ...; select (键, sum(列), count()))` 可直接使用。
 - **`QueryBuilder` 运行时入口**：`group_by(&[&str])`、`select(&[&str])`、
   `select_items(&[SelectItem])`，用于动态拼装报表；`linq!` 仍是类型化主入口。
+  `SelectQueryBuilder` 补齐 `compile_sql()`（与 `QueryBuilder` 一致，返回 SQL +
+  文本顺序的参数，便于日志/SQL 形状断言）。
 
 **新增 — 精确聚合类型**
 
@@ -166,7 +207,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`linq!`** 的 join 支持 `a.x == b.x && a.y == b.y` 复合条件，连续多个 join
   子句即链式连接；旧 `*_join_internal` 生成的 SQL 逐字符不变。
 - 已知边界（已写入文档）：同表自连接没有别名（用原生 SQL + `IRow`）；从 CTE
-  起步的 join 第二跳需显式 `join_from`。
+  起步的 join 第二跳需显式 `join_from`；`from` 子句必须写在 join 之前（JOIN 在添加时解析
+  当前 FROM 作为左表）。无 ON 键的非 CROSS JOIN 现在编译为 `ON 1 = 1`（叉积），不再产生
+  悬空 `ON`。
 
 **新增 — 表达式更新**
 

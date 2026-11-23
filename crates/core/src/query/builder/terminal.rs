@@ -143,6 +143,19 @@ impl<T: IEntityType> QueryBuilder<T> {
         state
     }
 
+    /// Rejects entity terminals for grouped/HAVING queries.
+    fn ensure_not_grouped(state: &QueryState) -> EFResult<()> {
+        if state.group_bys.is_empty() && state.havings.is_empty() {
+            return Ok(());
+        }
+        Err(crate::error::EFError::configuration(
+            "a query with GROUP BY/HAVING returns one row per group and cannot be \
+             materialized as an entity; use select_items(...) (or linq! select with \
+             aggregate items) plus to_list_rows()/to_list_typed_* instead"
+                .to_string(),
+        ))
+    }
+
     pub(super) fn compile_state_sql(
         state: &QueryState,
         provider: &Arc<dyn IDatabaseProvider>,
@@ -157,10 +170,18 @@ impl<T: IEntityType> QueryBuilder<T> {
     // -------------------------------------------------------------------
 
     /// Executes the query and returns all matching entities.
+    ///
+    /// A query carrying `GROUP BY`/`HAVING` returns one row per group and is
+    /// not entity-shaped (`SELECT *` + `GROUP BY` is invalid on PostgreSQL /
+    /// MySQL and silently non-deterministic on SQLite). Use
+    /// [`select_items`](Self::select_items) + `to_list_rows` /
+    /// `to_list_typed_*` for grouped results; this terminal reports a
+    /// configuration error instead.
     pub async fn to_list(self) -> EFResult<Vec<T>>
     where
         T: IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + ILazyInit,
     {
+        Self::ensure_not_grouped(&self.state)?;
         let includes = self.state.includes.clone();
         let lazy_loading = self.lazy_loading_enabled;
         let (sql, params) = self.compile_sql();
@@ -221,7 +242,11 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Executes a COUNT query.
+    ///
+    /// Grouped queries are rejected: `COUNT(*)` with `GROUP BY` returns one row
+    /// per group (use a projection query to count groups).
     pub async fn count(self) -> EFResult<i64> {
+        Self::ensure_not_grouped(&self.state)?;
         let mut state = self.state.clone();
         state.is_count = true;
         let provider = self.provider.as_ref().ok_or_else(|| {

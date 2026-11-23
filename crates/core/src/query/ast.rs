@@ -439,6 +439,13 @@ impl JoinSpec {
             })
             .collect::<Vec<_>>()
             .join(" AND ");
+        // A join without keys is a cross product; emitting `ON 1 = 1` keeps the
+        // statement valid instead of producing a dangling `JOIN t ON`.
+        let on_clause = if on_clause.is_empty() {
+            "1 = 1".to_string()
+        } else {
+            on_clause
+        };
         format!("{} JOIN {} ON {}", join_kw, self.table, on_clause)
     }
 }

@@ -169,5 +169,7 @@ let blogs = linq!(ctx.set::<Blog>(); include b.posts).to_list().await?;
 | 不支持同表自连接 | 框架不生成表别名；同一张表自连接请用原生 SQL + `IRow`，见[原始 SQL 与已知限制](raw-sql-limitations.md) |
 | `from_cte` + JOIN | `linq!` 的首个 JOIN 沿用旧语义：左表是 CTE 名（当前 FROM）；运行时 `join` 同样使用当前 FROM，链式续连请用 `join_from` 显式指定 `L` 的表名 |
 | `filter_joined` 的谓词边界 | 只限定普通列条件（`FilterCondition`）；被 JOIN 实体的导航子查询（EXISTS/IN）仍按根实体解析，复杂跨表条件用原生 SQL + `IRow` |
+| `from` / CTE 与 JOIN 的顺序 | JOIN 在添加时用**当前** FROM 作为左表，所以 `from cte` 必须写在 join 子句之前；链式续连用 `join_from` 显式指定左表 |
+| 运行时 join 的列名 | `join`/`join_from` 的 ON 列名按标识符原样输出：只能来自实体 `COLUMN_*` 常量或白名单，不能来自请求数据 |
 
 上一节：[类型化投影与报表行](typed-projections.md) ｜ 下一节：[CTE 与 Window 函数](cte-window-functions.md)

@@ -42,8 +42,13 @@ pub enum ColumnExpr {
 
 impl ColumnExpr {
     /// A column reference (normally an entity `COLUMN_*` constant).
+    ///
+    /// The name is rendered as an SQL identifier verbatim: use entity
+    /// `COLUMN_*` constants or a hard-coded whitelist, never request data.
     pub fn column(column: impl Into<String>) -> Self {
-        ColumnExpr::Column(column.into())
+        let column = column.into();
+        super::expr::debug_assert_identifier(&column, "ColumnExpr::column");
+        ColumnExpr::Column(column)
     }
 
     /// A bound parameter value.
@@ -78,11 +83,17 @@ impl ColumnExpr {
                 *param_idx += 1;
                 placeholder
             }
-            ColumnExpr::Add(left, right) => format!(
-                "{} + {}",
-                left.to_sql(gen, param_idx),
-                right.to_sql(gen, param_idx)
-            ),
+            ColumnExpr::Add(left, right) => {
+                // `a + (b - c)` must keep its parentheses: without them SQL
+                // evaluates `(a + b) - c`. `+` is associative on its own.
+                let left_sql = left.to_sql(gen, param_idx);
+                let right_sql = right.to_sql(gen, param_idx);
+                if matches!(**right, ColumnExpr::Sub(..)) {
+                    format!("{} + ({})", left_sql, right_sql)
+                } else {
+                    format!("{} + {}", left_sql, right_sql)
+                }
+            }
             ColumnExpr::Sub(left, right) => {
                 // `a - (b + c)` / `a - (b - c)` need parentheses; a column or
                 // value operand is already atomic.
@@ -306,5 +317,56 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
         })?;
         let mut conn = provider.get_connection().await?;
         conn.execute(&sql, &params).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query::compile::PortablePlaceholderGenerator;
+
+    fn sql(expr: &ColumnExpr) -> String {
+        let mut idx = 1;
+        expr.to_sql(&PortablePlaceholderGenerator, &mut idx)
+    }
+
+    #[test]
+    fn nested_subtraction_keeps_its_parentheses() {
+        // `a + (b - c)` must not collapse to `a + b - c`; the right operand of
+        // `-` keeps parentheses when it is itself additive.
+        let add_sub =
+            ColumnExpr::column("a").add(ColumnExpr::column("b").sub(ColumnExpr::column("c")));
+        assert_eq!(sql(&add_sub), "a + (b - c)");
+
+        let sub_add =
+            ColumnExpr::column("a").sub(ColumnExpr::column("b").add(ColumnExpr::column("c")));
+        assert_eq!(sql(&sub_add), "a - (b + c)");
+
+        // Associative shapes stay flat.
+        let add_add =
+            ColumnExpr::column("a").add(ColumnExpr::column("b").add(ColumnExpr::column("c")));
+        assert_eq!(sql(&add_add), "a + b + c");
+
+        let chained = ColumnExpr::column("a")
+            .sub(ColumnExpr::column("b").add(ColumnExpr::column("c")))
+            .sub(ColumnExpr::column("d"));
+        assert_eq!(sql(&chained), "a - (b + c) - d");
+    }
+
+    #[test]
+    fn values_are_bound_in_left_to_right_order() {
+        let expr = ColumnExpr::column("a")
+            .add(ColumnExpr::value(1i64))
+            .sub(ColumnExpr::value(2i64));
+        let mut idx = 1;
+        assert_eq!(
+            expr.to_sql(&PortablePlaceholderGenerator, &mut idx),
+            "a + ? - ?"
+        );
+        assert_eq!(
+            expr.collect_params(),
+            vec![DbValue::I64(1), DbValue::I64(2)]
+        );
+        assert_eq!(idx, 3);
     }
 }

@@ -36,6 +36,9 @@ impl ISqlGenerator for PgLikeGenerator {
     fn parameter_placeholder(&self, index: usize) -> String {
         format!("${}", index)
     }
+    fn uses_numbered_placeholders(&self) -> bool {
+        true
+    }
     fn quote_identifier(&self, identifier: &str) -> String {
         format!("\"{}\"", identifier)
     }
