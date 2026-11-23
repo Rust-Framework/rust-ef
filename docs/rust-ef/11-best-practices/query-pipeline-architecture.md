@@ -10,7 +10,7 @@
       │                            │
       └──────── Predicate<T> ──────┘       业务条件（类型安全）
                      │
-              BoolExpr / HavingExpr         布尔代数（AND/OR/NOT/子查询/比较）
+              BoolExpr                     布尔代数（AND/OR/NOT/子查询/比较）
                      │   ├── FilterCondition（列 op 参数）
                      │   └── Compare(SqlExpr, op, SqlExpr)（HAVING/高级比较）
                      │
@@ -24,10 +24,14 @@
 ```
 
 - **一个布尔代数**：WHERE、HAVING、CTE 谓词、子查询谓词、DML 过滤都编译为
-  `BoolExpr`。`HavingExpr` 是面向 `linq!(having ...)` 的构造器，通过
-  `into_bool_expr()` 降到 `BoolExpr`，不会再出现"HAVING 参数顺序单独维护"的第二套实现。
+  `BoolExpr`。2.8 删除了独立的 `HavingExpr` 枚举——HAVING 条件就是
+  `BoolExpr::Compare`（`BoolExpr::aggregate_compare` /
+  `aggregate_compare_agg` 构造），`HavingExpr` 仅作为 `BoolExpr` 的兼容别名；
+  `linq!(having ...)` 直接生成 `BoolExpr`，不存在第二套 HAVING 编译器。
 - **一个标量代数**：SELECT 投影、HAVING 比较、SET 表达式、CASE 分支共用 `SqlExpr` 的
-  编译与取值逻辑。`ColumnExpr`（SET）是受限于算术子集的构造器，编译时降为 `SqlExpr`。
+  编译与取值逻辑。2.8 删除了独立的 `ColumnExpr` 枚举（保留为 `SqlExpr` 别名）；
+  `set_column_expr` 接受 `SqlExpr`，编译时校验只含列/字面量/`+`/`-` 的 SET 子集，
+  聚合/COALESCE/CASE 返回 typed error。
 - **一个 SELECT 形状**：`QueryState::select_list() -> &SelectList`，
   `SelectList` 是 `Star | Columns | Projections | Aggregate | Count | Exists` 的单一状态，
   取代过去六个可同时为真的布尔/字段；非法组合由 `validate()` 在终端前一次性拒绝。
@@ -89,12 +93,14 @@
 - **终端形状切换**：`count()`/`any()`/聚合终端会显式设置 `SelectList` 变体；分页与
   `COUNT` 的组合被拒绝（不会悄悄把 LIMIT 放在聚合行上），窗口投影与单值终端/EXISTS
   的组合同样被拒绝。
-- **标识符**：表名/CTE 名/别名在 2.8 与既有 FROM 行为保持一致（按代码常量原样输出，
-  由调用方保证是标识符）；相关子查询内部使用 `quote_identifier` 引用表/列。运行时
-  标识符入口在 debug 构建有 `debug_assert_identifier`。3.0 计划统一引用策略。
-- DML/导航/懒加载中仍有"编译 SQL + 另一遍取值"的调用点，但它们与主查询共用同一个
-  表达式编译器，且 DML 侧加了参数数目断言；后续版本会收敛为单遍 helper（不影响当前
-  正确性）。
+- **标识符（2.8 统一策略）**：框架**生成**的标识符（CTE 名与列名、子查询/窗口别名、
+  相关子查询引用的表/列）一律经 `quote_identifier` 引用；调用方**提供**的 FROM/表名是
+  代码常量，按原样输出（运行时入口在 debug 构建有 `debug_assert_identifier`，release
+  仍由调用方保证是常量/白名单）。两类边界明确，不再有"同一类标识符时引时不引"的分支。
+- **DML 单遍**：批量/逐行 `UPDATE`/`DELETE` 的过滤条件在同一次遍历里生成 SQL 并收集
+  参数（portable `?` 方言缓存一次，PostgreSQL `$N` 按语句重编译），SQL 与参数不会因
+  两次遍历而漂移。导航/懒加载的全局过滤器在**注册时**预收集参数、每查询只编译方言
+  SQL（静态值只取一次、占位符按当前语句编号），是刻意的两阶段设计而非遗漏。
 
 ## 6. 宏支持 API 的边界
 
@@ -111,5 +117,7 @@ semver、不出现在 rustdoc 公共契约中，应用代码不应直接调用�
   在 debug 构建做标识符断言，但 release 仍需调用方保证"常量/白名单"。
 - 三方言执行验证在 CI 的 real-database job（PostgreSQL/MySQL service containers）完成；
   本地默认只跑 SQLite。
-- 3.0 计划：`SelectList`/表达式 AST 的 `#[non_exhaustive]` 收口、进一步收敛公开配置结构体、
-  raw 片段占位符的完整 AST 化。
+- 2.8 已完成：HAVING/SET 表达式收敛到 `BoolExpr`/`SqlExpr` 单核、标识符策略统一、
+  `DbContext` 元数据 `Arc<BuiltMetadata>` 共享（创建上下文不再深拷贝实体元数据）。
+- 3.0 候选：raw 片段占位符的完整 AST 化（当前词法器 + `??` 转义已覆盖字面量/注释/
+  dollar-quote）；进一步收敛公开配置结构体。

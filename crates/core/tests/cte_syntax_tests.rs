@@ -71,8 +71,8 @@ fn test_typed_cte_sql_generation() {
     .to_sql();
 
     assert!(
-        sql.contains("WITH high_earners AS ("),
-        "expected `WITH high_earners AS (...)` in SQL, got: {sql}"
+        sql.contains("WITH \"high_earners\" AS ("),
+        "expected `WITH \"high_earners\" AS (...)` in SQL, got: {sql}"
     );
     assert!(
         sql.contains("SELECT * FROM \"cte_employees\" WHERE"),
@@ -100,8 +100,8 @@ fn test_typed_cte_compound_where() {
     .to_sql();
 
     assert!(
-        sql.contains("WITH eng_high AS ("),
-        "expected `WITH eng_high AS (...)`, got: {sql}"
+        sql.contains("WITH \"eng_high\" AS ("),
+        "expected `WITH \"eng_high\" AS (...)`, got: {sql}"
     );
     // Compound WHERE should produce AND in the CTE body.
     assert!(
@@ -126,11 +126,11 @@ fn test_typed_cte_multiple_ctes() {
     .to_sql();
 
     assert!(
-        sql.contains("WITH high_earners AS ("),
+        sql.contains("WITH \"high_earners\" AS ("),
         "expected first CTE, got: {sql}"
     );
     assert!(
-        sql.contains(", eng_earners AS ("),
+        sql.contains(", \"eng_earners\" AS ("),
         "expected second CTE with comma separator, got: {sql}"
     );
     assert!(
@@ -386,7 +386,7 @@ fn test_pg_multiple_typed_ctes_contiguous_placeholders() {
     // The string `$1, $1` or `$1) AND ... $1` would indicate the collision.
     // Verify `$2` appears and the second CTE doesn't reuse `$1`.
     let second_cte_start = sql
-        .find("eng_earners AS (")
+        .find("\"eng_earners\" AS (")
         .unwrap_or_else(|| panic!("expected `eng_earners AS (` in SQL, got: {sql}"));
     let second_cte_body = &sql[second_cte_start..];
     assert!(

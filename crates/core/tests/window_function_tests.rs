@@ -1,7 +1,7 @@
 //! Integration tests for v1.1 window function and CTE support.
 //!
 //! Verifies that `linq!(window ...)` generates correct `FUNC() OVER (...)`
-//! SQL and that `with_cte_internal` emits a `WITH name AS (...)` prefix.
+//! SQL and that `with_cte_internal` emits a `WITH \"name\" AS (...)` prefix.
 //! Execution tests confirm the queries run against SQLite (window functions
 //! are supported since SQLite 3.25+, CTEs since 3.8.3+).
 
@@ -313,7 +313,7 @@ async fn test_cte_sql_generation() {
         .to_sql();
 
     assert!(
-        sql.starts_with("WITH high_earners AS ("),
+        sql.starts_with("WITH \"high_earners\" AS ("),
         "expected WITH prefix in SQL, got: {sql}"
     );
     assert!(
@@ -343,7 +343,7 @@ async fn test_cte_with_explicit_columns() {
         .to_sql();
 
     assert!(
-        sql.contains("ranked (\"emp_id\", \"name\") AS"),
+        sql.contains("\"ranked\" (\"emp_id\", \"name\") AS"),
         "expected CTE with explicit columns in SQL, got: {sql}"
     );
 }

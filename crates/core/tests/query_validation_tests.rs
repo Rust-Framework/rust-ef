@@ -9,8 +9,8 @@ use rust_ef::linq;
 use rust_ef::prelude::*;
 use rust_ef::provider::DbValue;
 use rust_ef::query::{
-    AggKind, BoolExpr, CompareOp, HavingExpr, JoinKind, JoinSpec, QueryBuilder, QueryState,
-    SelectItem, SelectList,
+    AggKind, BoolExpr, CompareOp, JoinKind, JoinSpec, QueryBuilder, QueryState, SelectItem,
+    SelectList,
 };
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
@@ -181,7 +181,7 @@ fn raw_cte_question_placeholders_are_ported_to_the_provider() {
         .expect("compile");
     assert_eq!(
         sql,
-        "WITH big AS (SELECT * FROM qv_rows WHERE amount > $1) \
+        "WITH \"big\" AS (SELECT * FROM qv_rows WHERE amount > $1) \
          SELECT * FROM big WHERE label = $2"
     );
     assert_eq!(
@@ -224,24 +224,23 @@ async fn set_operation_operand_question_placeholders_are_ported() {
 
 #[test]
 fn having_lowers_into_the_shared_boolean_algebra() {
-    let having = HavingExpr::Compare {
-        agg: AggKind::Sum,
-        col: "amount".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::I64(5),
-    };
-    let lowered: BoolExpr = having.into_bool_expr();
-    assert!(matches!(lowered, BoolExpr::Compare { .. }));
+    let having = BoolExpr::aggregate_compare(
+        AggKind::Sum,
+        "amount".to_string(),
+        CompareOp::Gt,
+        DbValue::I64(5),
+    );
+    assert!(matches!(having, BoolExpr::Compare { .. }));
 
     let mut state = QueryState::new("qv_rows");
     state.group_bys = vec!["label".to_string()];
     state.set_projections(vec![SelectItem::column("label"), SelectItem::sum("amount")]);
-    state.havings.push(HavingExpr::Compare {
-        agg: AggKind::Sum,
-        col: "amount".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::I64(5),
-    });
+    state.havings.push(BoolExpr::aggregate_compare(
+        AggKind::Sum,
+        "amount".to_string(),
+        CompareOp::Gt,
+        DbValue::I64(5),
+    ));
     let (sql, params) = state
         .compile_sql_with::<QvRow>(&PgLikeGenerator)
         .expect("compile");
@@ -293,25 +292,25 @@ fn multiple_having_fragments_keep_their_boolean_grouping() {
     let mut state = QueryState::new("qv_rows");
     state.group_bys = vec!["label".to_string()];
     state.set_projections(vec![SelectItem::column("label"), SelectItem::count()]);
-    state.havings.push(HavingExpr::Compare {
-        agg: AggKind::Sum,
-        col: "amount".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::I64(1000),
-    });
-    state.havings.push(HavingExpr::Or(
-        Box::new(HavingExpr::Compare {
-            agg: AggKind::Sum,
-            col: "amount".to_string(),
-            op: CompareOp::Gt,
-            value: DbValue::I64(1),
-        }),
-        Box::new(HavingExpr::Compare {
-            agg: AggKind::Max,
-            col: "amount".to_string(),
-            op: CompareOp::Lt,
-            value: DbValue::I64(0),
-        }),
+    state.havings.push(BoolExpr::aggregate_compare(
+        AggKind::Sum,
+        "amount".to_string(),
+        CompareOp::Gt,
+        DbValue::I64(1000),
+    ));
+    state.havings.push(BoolExpr::Or(
+        Box::new(BoolExpr::aggregate_compare(
+            AggKind::Sum,
+            "amount".to_string(),
+            CompareOp::Gt,
+            DbValue::I64(1),
+        )),
+        Box::new(BoolExpr::aggregate_compare(
+            AggKind::Max,
+            "amount".to_string(),
+            CompareOp::Lt,
+            DbValue::I64(0),
+        )),
     ));
 
     let sql = state.to_sql();
@@ -332,25 +331,25 @@ async fn multiple_having_fragments_are_executed_with_correct_precedence() {
         .group_by(&[QvRow::COLUMN_LABEL])
         // `SUM > 1000` is false for every group, so the whole AND must be false
         // even though the OR branch is true for both groups.
-        .having(HavingExpr::Compare {
-            agg: AggKind::Sum,
-            col: QvRow::COLUMN_AMOUNT.to_string(),
-            op: CompareOp::Gt,
-            value: DbValue::I64(1000),
-        })
-        .having(HavingExpr::Or(
-            Box::new(HavingExpr::Compare {
-                agg: AggKind::Sum,
-                col: QvRow::COLUMN_AMOUNT.to_string(),
-                op: CompareOp::Gt,
-                value: DbValue::I64(0),
-            }),
-            Box::new(HavingExpr::Compare {
-                agg: AggKind::Max,
-                col: QvRow::COLUMN_AMOUNT.to_string(),
-                op: CompareOp::Lt,
-                value: DbValue::I64(0),
-            }),
+        .having(BoolExpr::aggregate_compare(
+            AggKind::Sum,
+            QvRow::COLUMN_AMOUNT.to_string(),
+            CompareOp::Gt,
+            DbValue::I64(1000),
+        ))
+        .having(BoolExpr::Or(
+            Box::new(BoolExpr::aggregate_compare(
+                AggKind::Sum,
+                QvRow::COLUMN_AMOUNT.to_string(),
+                CompareOp::Gt,
+                DbValue::I64(0),
+            )),
+            Box::new(BoolExpr::aggregate_compare(
+                AggKind::Max,
+                QvRow::COLUMN_AMOUNT.to_string(),
+                CompareOp::Lt,
+                DbValue::I64(0),
+            )),
         ))
         .to_list_typed_2()
         .await

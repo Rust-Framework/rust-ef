@@ -8,7 +8,7 @@ use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::linq;
 use rust_ef::prelude::*;
 use rust_ef::provider::DbValue;
-use rust_ef::query::{AggKind, CompareOp, HavingExpr, SelectItem};
+use rust_ef::query::{AggKind, BoolExpr, CompareOp, SelectItem};
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -110,12 +110,12 @@ fn bench_batch_select(c: &mut Criterion) {
 fn bench_compile_pipeline(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
     let mut ctx = rt.block_on(seeded_ctx(0));
-    let having = HavingExpr::Compare {
-        agg: AggKind::Sum,
-        col: "value".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::F64(10.0),
-    };
+    let having = BoolExpr::aggregate_compare(
+        AggKind::Sum,
+        "value".to_string(),
+        CompareOp::Gt,
+        DbValue::F64(10.0),
+    );
     let query = ctx
         .set::<BenchWidget>()
         .query()

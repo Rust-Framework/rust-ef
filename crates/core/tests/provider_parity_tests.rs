@@ -516,7 +516,7 @@ async fn assert_integer_aggregate_decoding(ctx: &mut DbContext, postgres: bool) 
     // Grouped projection: column + COALESCE(SUM(bigint), $1) + ORDER BY alias +
     // HAVING with an integer parameter. On PostgreSQL this exercises
     // NUMERIC-inferred parameter binding; on MySQL the NEWDECIMAL decode path.
-    use rust_ef::query::{AggKind, CompareOp, HavingExpr, SelectItem};
+    use rust_ef::query::{AggKind, BoolExpr, CompareOp, SelectItem};
     let groups: Vec<(String, i64)> = ctx
         .set::<ParityAggregate>()
         .query()
@@ -525,12 +525,12 @@ async fn assert_integer_aggregate_decoding(ctx: &mut DbContext, postgres: bool) 
             SelectItem::sum(ParityAggregate::COLUMN_AMOUNT).coalesce(0i64),
         ])
         .group_by(&[ParityAggregate::COLUMN_LABEL])
-        .having(HavingExpr::Compare {
-            agg: AggKind::Sum,
-            col: ParityAggregate::COLUMN_AMOUNT.to_string(),
-            op: CompareOp::Gt,
-            value: DbValue::I64(60),
-        })
+        .having(BoolExpr::aggregate_compare(
+            AggKind::Sum,
+            ParityAggregate::COLUMN_AMOUNT.to_string(),
+            CompareOp::Gt,
+            DbValue::I64(60),
+        ))
         .order_by("label")
         .to_list_typed_2()
         .await

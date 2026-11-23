@@ -23,14 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 >
 > **Breaking (documented, low-impact):** direct struct-literal construction of
 > `JoinSpec` and `QueryState` changed (both are now `#[non_exhaustive]`, with
-> `JoinSpec::new` / `QueryState::new` as constructors), `BoolExpr` / `HavingExpr`
-> are now `#[non_exhaustive]`, the deprecated `set_column_internal` alias was
-> removed, `IRow`/`IFromRow` were unified, `compile_sql()` is now fallible
-> (`EFResult<(String, Vec<DbValue>)>`) and `ExecuteUpdateBuilder::params()` is
-> fallible, and `QueryState::parameters` / `QueryState::params()` were removed
-> (use `try_compile_with` / `compile_sql_with` for SQL + parameters, or
-> `where_params()`); see the **Breaking** section below. All builder APIs are
-> additive.
+> `JoinSpec::new` / `QueryState::new` as constructors), the dedicated
+> `HavingExpr` and `ColumnExpr` enums were removed (HAVING is a `BoolExpr`, SET
+> expressions are `SqlExpr`; both names remain as compatibility aliases), the
+> deprecated `set_column_internal` alias was removed, `IRow`/`IFromRow` were
+> unified, `compile_sql()` is now fallible (`EFResult<(String, Vec<DbValue>)>`)
+> and `ExecuteUpdateBuilder::params()` is fallible, `QueryState::parameters` /
+> `QueryState::params()` were removed (use `try_compile_with` /
+> `compile_sql_with`), and CTE names/columns are now quoted in generated SQL;
+> see the **Breaking** section below. All builder APIs are additive.
 
 #### English
 
@@ -53,11 +54,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aggregate_column` → `aggregate()`; typed projections are read with
   `projections()` and built through the query builders (`select_items`,
   `group_by`, …). Framework terminals are unchanged.
-- **`BoolExpr` / `HavingExpr` are now `#[non_exhaustive]`.** `BoolExpr` also
-  gained the `Compare { left, op, right }` variant (expression comparisons used
-  by lowered HAVING conditions and column-arithmetic predicates). Non-exhaustive
-  means exhaustive downstream `match` statements need a wildcard arm (`_`); the
-  one-time break makes future AST additions non-breaking.
+- **`HavingExpr` / `ColumnExpr` enums removed — one expression core.**
+  `HavingExpr` is now a compatibility alias for `BoolExpr`; build HAVING
+  conditions with `BoolExpr::aggregate_compare(agg, column, op, value)` /
+  `BoolExpr::aggregate_compare_agg(...)` (the `linq!(having ...)` macro emits
+  these directly). `ColumnExpr` is an alias for `SqlExpr`; `set_column_expr`
+  accepts a `SqlExpr` and validates at compile time that it uses only
+  columns/literals/`+`/`-` (aggregates/`COALESCE`/`CASE` are typed
+  `EFError::Configuration` errors). Code matching the removed enum variants must
+  move to the `BoolExpr`/`SqlExpr` constructors. `BoolExpr` is
+  `#[non_exhaustive]` and retains the `Compare { left, op, right }` variant.
+- **CTE names and columns are quoted in generated SQL.** Framework-generated
+  identifiers now go through `quote_identifier` uniformly (`WITH "name" (...)
+  AS ...`); caller-supplied FROM/table names stay code constants emitted as
+  provided. SQL-shape assertions that matched `WITH name AS` must expect the
+  quoted form; execution is unchanged.
 - **`ExecuteUpdateBuilder::set_column_internal` removed.** The alias has been
   `#[deprecated]` since 2.3.0 (“renamed to `set_column`, kept for one release”);
   use `set_column` (or `set_column_expr` for expression right-hand sides).
@@ -96,6 +107,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vector. It now delegates to `compile_sql()` and returns the typed error;
   `compile_sql()` (SQL + parameters) or `execute()` are the canonical entry
   points, while `params()` remains for callers that only need the values.
+
+**Added — single expression core and metadata sharing**
+
+- **`BoolExpr::aggregate_compare` / `aggregate_compare_agg`** — public
+  constructors for the HAVING lowering that replace the removed `HavingExpr`
+  enum; `linq!(having ...)` uses them directly.
+- **`DbContext` shares process-level metadata** — every context created from the
+  same options now shares `Arc<BuiltMetadata>` (entity metas, model metas and
+  configs) and copies on the first Fluent API mutation, instead of deep-cloning
+  the whole model per context. This removes the per-request metadata clone
+  (notably for short-lived contexts such as the idempotency store). New
+  `DbContext::shares_metadata_with` (`#[doc(hidden)]`) exposes the invariant for
+  the regression test.
 
 **Added — typed report projections**
 
@@ -162,7 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Added — expression updates**
 
-- **`query::ColumnExpr` + `ExecuteUpdateBuilder::{set_column_expr, increment,
+- **`query::SqlExpr`（`ColumnExpr` 为兼容别名）+ `ExecuteUpdateBuilder::{set_column_expr, increment,
   decrement}`** — set-based `UPDATE ... SET col = col + ?` / `col = ? - col`
   without raw SQL. `linq!` expands `set b.col, b.col + 1`, `b.col - x`, or
   `b.col, other.col` to the expression form; plain values keep the old
@@ -230,6 +254,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### 简体中文
 
+**新增 — 单一表达式核心与元数据共享**
+
+- **`BoolExpr::aggregate_compare` / `aggregate_compare_agg`**：HAVING 下推的公开
+  构造器，替代已删除的 `HavingExpr` 枚举；`linq!(having ...)` 直接生成。
+- **`DbContext` 共享进程级元数据**：同一 options 创建的上下文共享
+  `Arc<BuiltMetadata>`（实体元数据/模型元数据/configs），首次 Fluent API 变更时才
+  复制；不再每上下文深拷贝整个模型（短生命周期上下文，如幂等 store，收益明显）。
+  `DbContext::shares_metadata_with`（`#[doc(hidden)]`）供回归测试断言该不变量。
+
 **新增 — 类型化报表投影**
 
 - **`query::SelectItem` / `query::SqlExpr`**：provider 中立的 SELECT 表达式——
@@ -277,10 +310,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **新增 — 表达式更新**
 
-- **`query::ColumnExpr` + `ExecuteUpdateBuilder::{set_column_expr, increment,
+- **`query::SqlExpr`（`ColumnExpr` 为兼容别名）+ `ExecuteUpdateBuilder::{set_column_expr, increment,
   decrement}`**：一条语句完成 `SET col = col + ?` / `col = ? - col`，可与
   版本号/CAS 的 `WHERE` 守卫组合；`linq!` 把 `set b.col, b.col + 1`、
   `b.col - x`、`b.col, other.col` 展开为表达式形式，普通值仍走 `set_column`。
+
+**破坏性变更（单一表达式核心/标识符）**
+
+- **`HavingExpr` / `ColumnExpr` 枚举删除**：`HavingExpr` 成为 `BoolExpr` 兼容
+  别名（HAVING 用 `BoolExpr::aggregate_compare(_agg)` 构造）；`ColumnExpr` 成为
+  `SqlExpr` 兼容别名，`set_column_expr` 编译期只允许列/字面量/`+`/`-`
+  （聚合/COALESCE/CASE 返回 typed error）。匹配旧枚举变体的代码改用
+  `BoolExpr`/`SqlExpr` 构造器。
+- **CTE 名与列名在生成 SQL 中加引号**（`WITH "name" ("col") AS ...`）；调用方
+  提供的 FROM/表名仍按代码常量原样输出。依赖 `to_sql()` 文本的断言需更新，
+  执行语义不变。
 
 **破坏性变更**
 

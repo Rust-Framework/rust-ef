@@ -372,7 +372,7 @@ async fn join_after_from_cte_uses_the_cte_as_left_table() {
 
     assert_eq!(
         query.to_sql(),
-        "WITH filtered AS (SELECT * FROM \"jc_orders\" WHERE id > ?) \
+        "WITH \"filtered\" AS (SELECT * FROM \"jc_orders\" WHERE id > ?) \
          SELECT * FROM filtered INNER JOIN jc_shipments ON filtered.id = jc_shipments.order_id",
         "the first JOIN after `from <cte>` must continue from the CTE"
     );

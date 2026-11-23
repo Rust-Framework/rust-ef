@@ -24,7 +24,6 @@ use super::compile::{
 };
 use super::cte::{CteSpec, SetOpSpec, SetOperator};
 use super::expr::SelectItem;
-use super::having_expr::HavingExpr;
 use super::window::WindowSpec;
 
 /// The SELECT list of a query.
@@ -107,7 +106,7 @@ pub struct QueryState {
     pub group_bys: Vec<String>,
     /// HAVING conditions stored as AST nodes; lowered to
     /// [`BoolExpr::Compare`] and compiled by the same compiler as WHERE.
-    pub havings: Vec<HavingExpr>,
+    pub havings: Vec<BoolExpr>,
     /// ORDER BY clauses.
     pub orderings: Vec<OrderBy>,
     /// OFFSET (Skip).
@@ -511,10 +510,7 @@ impl QueryState {
             let compiled: Vec<String> = self
                 .havings
                 .iter()
-                .map(|having| {
-                    let expr = having.clone().into_bool_expr();
-                    compile_bool_expr_into(&expr, gen, &mut param_idx, &mut params)
-                })
+                .map(|having| compile_bool_expr_into(having, gen, &mut param_idx, &mut params))
                 .collect();
             sql.push_str(" HAVING ");
             if compiled.len() == 1 {
@@ -612,8 +608,12 @@ impl QueryState {
                 emit_raw_fragment(&cte.sql, &cte.params, gen, param_idx, params, "raw CTE")
             };
 
+            // Framework-generated identifiers (CTE names/columns) are quoted;
+            // caller-supplied table names in FROM remain code constants emitted
+            // as provided (documented identifier policy).
+            let cte_name = gen.quote_identifier(&cte.name);
             let part = if cte.columns.is_empty() {
-                format!("{} AS ({})", cte.name, body)
+                format!("{} AS ({})", cte_name, body)
             } else {
                 let columns = cte
                     .columns
@@ -621,7 +621,7 @@ impl QueryState {
                     .map(|column| gen.quote_identifier(column))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{} ({}) AS ({})", cte.name, columns, body)
+                format!("{} ({}) AS ({})", cte_name, columns, body)
             };
             parts.push(part);
         }

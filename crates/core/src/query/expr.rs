@@ -138,6 +138,12 @@ impl SqlExpr {
         SqlExpr::Literal(value.into())
     }
 
+    /// Compatibility alias for [`SqlExpr::literal`] (the former `ColumnExpr`
+    /// SET-expression constructor).
+    pub fn value(value: impl Into<DbValue>) -> Self {
+        SqlExpr::literal(value)
+    }
+
     /// Wraps this expression in `COALESCE(self, fallback)`.
     pub fn coalesce(self, fallback: impl Into<DbValue>) -> Self {
         SqlExpr::Coalesce(Box::new(self), fallback.into())
@@ -289,6 +295,32 @@ pub(crate) fn debug_assert_identifier_columns(columns: &[&str], context: &str) {
     debug_assert!(!columns.is_empty(), "{context} needs at least one column");
     for column in columns {
         debug_assert_identifier(column, context);
+    }
+}
+
+/// Validates that `expr` only uses the SET-expression subset of [`SqlExpr`]:
+/// columns, bound literals and `+`/`-` arithmetic. Aggregates, COALESCE, CASE
+/// and anything else are rejected (a `SET` value cannot aggregate).
+/// Compatibility alias for [`SqlExpr`] used by SET-expression APIs.
+///
+/// 2.8 removed the separate `ColumnExpr` AST: a SET value is a [`SqlExpr`] that
+/// is validated to the arithmetic subset (`Column`/`Literal`/`Binary` with
+/// `+`/`-`) at compile time. The alias keeps the historical constructor paths
+/// (`ColumnExpr::column` / `::value` / `.add` / `.sub`) working.
+pub type ColumnExpr = SqlExpr;
+
+pub(crate) fn validate_set_expression(expr: &SqlExpr) -> Result<(), String> {
+    match expr {
+        SqlExpr::Column(_) | SqlExpr::Literal(_) => Ok(()),
+        SqlExpr::Binary { left, right, .. } => {
+            validate_set_expression(left)?;
+            validate_set_expression(right)
+        }
+        SqlExpr::Aggregate { .. } => {
+            Err("aggregate functions are not allowed in a SET value".to_string())
+        }
+        SqlExpr::Coalesce(..) => Err("COALESCE is not allowed in a SET value".to_string()),
+        SqlExpr::Case { .. } => Err("CASE is not allowed in a SET value".to_string()),
     }
 }
 

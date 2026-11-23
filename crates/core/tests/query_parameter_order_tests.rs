@@ -14,7 +14,7 @@ use common::PgLikeGenerator;
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::linq;
 use rust_ef::prelude::*;
-use rust_ef::query::{AggKind, CompareOp, HavingExpr, SelectItem};
+use rust_ef::query::{AggKind, BoolExpr, CompareOp, SelectItem};
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 #[derive(Debug, Clone, EntityType)]
@@ -50,12 +50,12 @@ async fn having_added_before_the_filter_keeps_sql_parameter_order() {
     let mut ctx = make_ctx();
     ctx.set::<PoSale>();
 
-    let having = HavingExpr::Compare {
-        agg: AggKind::Count,
-        col: "id".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::I64(1),
-    };
+    let having = BoolExpr::aggregate_compare(
+        AggKind::Count,
+        "id".to_string(),
+        CompareOp::Gt,
+        DbValue::I64(1),
+    );
     // Deliberately registers HAVING before the WHERE filter: the generated SQL
     // still emits WHERE first, so the bound vector must follow the SQL order.
     let query = ctx
@@ -106,7 +106,7 @@ async fn cte_plus_projection_parameters_follow_sql_text_order() {
     let sql = state.to_sql_with(&PgLikeGenerator);
     assert_eq!(
         sql,
-        "WITH rich AS (SELECT * FROM \"po_sales\" WHERE amount > $1) \
+        "WITH \"rich\" AS (SELECT * FROM \"po_sales\" WHERE amount > $1) \
          SELECT $2 AS grant_scope, id AS id FROM rich WHERE amount < $3"
     );
     assert_eq!(
@@ -191,7 +191,7 @@ async fn a_projection_compiles_its_params_in_sql_order() {
     let sql = query.to_sql();
     let params = query.state().all_params();
     assert!(
-        sql.starts_with("WITH rich AS (SELECT * FROM \"po_sales\" WHERE amount > ?)"),
+        sql.starts_with("WITH \"rich\" AS (SELECT * FROM \"po_sales\" WHERE amount > ?)"),
         "unexpected SQL: {sql}"
     );
     assert!(

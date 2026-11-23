@@ -107,3 +107,13 @@ inherent_method_missing = "allow"
 # code no longer gets the `IEntityType` / `Send + Sync + 'static` bounds
 # implicitly. CHANGELOG 2.8.0 "Breaking"; migration guide §3 item 6.
 trait_removed_supertrait = "allow"
+# `HavingExpr` was removed as a dedicated enum: it is now an alias for
+# `BoolExpr`, whose `Compare` variant carries `{ left, op, right }` instead of
+# the old `{ agg, col, op, value }`, and the old `CompareAgg` variant became
+# `BoolExpr::aggregate_compare_agg(...)` (no public enum variant). This is the
+# documented "one expression core" break of 2.8.0 (CHANGELOG "Breaking";
+# migration guide section 3 items 9-10). `ColumnExpr` likewise became an alias
+# for `SqlExpr`.
+enum_struct_variant_field_added = "allow"
+enum_struct_variant_field_missing = "allow"
+enum_variant_missing = "allow"

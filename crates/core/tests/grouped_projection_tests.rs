@@ -18,8 +18,8 @@ use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::prelude::*;
 use rust_ef::provider::DbValue;
 use rust_ef::query::{
-    AggKind, BoolExpr, CaseArm, CompareOp, FilterCondition, HavingExpr, QueryBuilder, QueryState,
-    SelectItem, SqlExpr,
+    AggKind, BoolExpr, CaseArm, CompareOp, FilterCondition, QueryBuilder, QueryState, SelectItem,
+    SqlExpr,
 };
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
@@ -207,12 +207,12 @@ fn params_follow_sql_text_order_projection_where_having() {
         ">",
         vec![DbValue::I32(1)],
     )));
-    state.havings.push(HavingExpr::Compare {
-        agg: AggKind::Sum,
-        col: "amount".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::I64(1000),
-    });
+    state.havings.push(BoolExpr::aggregate_compare(
+        AggKind::Sum,
+        "amount".to_string(),
+        CompareOp::Gt,
+        DbValue::I64(1000),
+    ));
 
     let sql = state.to_sql();
     assert_eq!(
@@ -283,12 +283,12 @@ async fn grouped_rows_alias_order_and_having() {
         .query()
         .group_by(&["category"])
         .select_items(&[SelectItem::column("category"), SelectItem::sum("amount")])
-        .having(HavingExpr::Compare {
-            agg: AggKind::Sum,
-            col: "amount".to_string(),
-            op: CompareOp::Gt,
-            value: DbValue::I64(250),
-        })
+        .having(BoolExpr::aggregate_compare(
+            AggKind::Sum,
+            "amount".to_string(),
+            CompareOp::Gt,
+            DbValue::I64(250),
+        ))
         .order_by_desc("sum_amount")
         .to_list_rows::<(String, i64)>()
         .await
@@ -506,12 +506,12 @@ async fn projection_where_and_having_params_align_in_sqlite() {
             SelectItem::sum("amount").coalesce(0i64),
             SelectItem::literal("TENANT", "grant_scope"),
         ])
-        .having(HavingExpr::Compare {
-            agg: AggKind::Sum,
-            col: "amount".to_string(),
-            op: CompareOp::Gt,
-            value: DbValue::I64(250),
-        })
+        .having(BoolExpr::aggregate_compare(
+            AggKind::Sum,
+            "amount".to_string(),
+            CompareOp::Gt,
+            DbValue::I64(250),
+        ))
         .order_by("category")
         .to_list_rows::<(String, i64, String)>()
         .await

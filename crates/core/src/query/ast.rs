@@ -7,7 +7,7 @@
 use crate::provider::{DbValue, ISqlGenerator};
 
 use super::expr::SqlExpr;
-use super::having_expr::CompareOp;
+use super::having_expr::{AggKind, CompareOp};
 
 // Use the compile-module helper for inline value collection. Declared
 // here (not `super::compile::collect_bool_expr_values`) so `CompiledFilter::new`
@@ -282,6 +282,37 @@ impl BoolExpr {
             op,
             right: Box::new(right),
         }
+    }
+
+    /// Builds an aggregate comparison (`agg(column) op value`), the lowering
+    /// target of `linq!(having ...)`.
+    pub fn aggregate_compare(
+        agg: AggKind,
+        column: impl Into<String>,
+        op: CompareOp,
+        value: impl Into<DbValue>,
+    ) -> Self {
+        Self::compare(
+            SqlExpr::aggregate(agg, Some(column.into()), false),
+            op,
+            SqlExpr::literal(value.into()),
+        )
+    }
+
+    /// Builds an aggregate-versus-aggregate comparison
+    /// (`left_agg(left_col) op right_agg(right_col)`).
+    pub fn aggregate_compare_agg(
+        left_agg: AggKind,
+        left_col: impl Into<String>,
+        op: CompareOp,
+        right_agg: AggKind,
+        right_col: impl Into<String>,
+    ) -> Self {
+        Self::compare(
+            SqlExpr::aggregate(left_agg, Some(left_col.into()), false),
+            op,
+            SqlExpr::aggregate(right_agg, Some(right_col.into()), false),
+        )
     }
 
     pub fn total_param_count(&self) -> usize {

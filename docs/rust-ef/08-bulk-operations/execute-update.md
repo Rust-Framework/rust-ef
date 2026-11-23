@@ -131,7 +131,7 @@ match affected {
 ```
 
 - `increment(column, by)` / `decrement(column, by)`：`SET col = col + ?` / `col - ?`，`by` 绑定参数；
-- `set_column_expr(column, expr)`：通用入口，`expr` 由 `ColumnExpr` 构造：
+- `set_column_expr(column, expr)`：通用入口，`expr` 是 `SqlExpr`（`ColumnExpr` 为兼容别名）：
 
 ```rust
 // stock = stock + reserved
@@ -142,8 +142,8 @@ let affected = ctx
     .execute_update()
     .set_column_expr(
         Product::COLUMN_STOCK,
-        ColumnExpr::column(Product::COLUMN_STOCK)
-            .add(ColumnExpr::column(Product::COLUMN_RESERVED)),
+        SqlExpr::column(Product::COLUMN_STOCK)
+            .add(SqlExpr::column(Product::COLUMN_RESERVED)),
     )
     .execute()
     .await?;
@@ -155,8 +155,9 @@ let affected = ctx
 UPDATE products SET stock = stock + ? WHERE (id = ?) AND (version = ?)
 ```
 
-`ColumnExpr` 的构造器：`column(列)`、`value(值)`、`.add(expr)`、`.sub(expr)`；`DbValue` 可
-`From` 转换为 `ColumnExpr`（等价于 `value`）。
+`SqlExpr`（SET 子集）的构造器：`column(列)`、`literal(值)`（兼容别名 `value`）、
+`.add(expr)`、`.sub(expr)`。编译期会拒绝聚合/COALESCE/CASE 等非 SET 子集表达式
+（typed `EFError::Configuration`）。
 
 ## 设计要点
 

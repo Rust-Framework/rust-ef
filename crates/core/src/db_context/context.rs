@@ -43,7 +43,7 @@ use super::{DbContextOptions, ErasedSetOps, SetOps};
 pub struct DbContext {
     pub(crate) sets: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     pub(crate) savers: HashMap<TypeId, Box<dyn ErasedSetOps>>,
-    pub(crate) entity_metas: HashMap<TypeId, EntityTypeMeta>,
+    pub(crate) entity_metas: Arc<HashMap<TypeId, EntityTypeMeta>>,
     pub(crate) model_builder: ModelBuilder,
     pub(crate) change_tracker: ChangeTracker,
     pub(crate) provider: Arc<dyn IDatabaseProvider>,
@@ -78,7 +78,7 @@ impl DbContext {
         let ctx = Self {
             sets: HashMap::new(),
             savers: HashMap::new(),
-            entity_metas: built.entity_metas.clone(),
+            entity_metas: Arc::clone(&built.entity_metas),
             model_builder: ModelBuilder::from_built(&built),
             change_tracker: ChangeTracker::new(),
             provider,
@@ -105,9 +105,9 @@ impl DbContext {
         self.savers
             .entry(type_id)
             .or_insert_with(|| Box::new(SetOps::<T>::new()));
-        self.entity_metas
-            .entry(type_id)
-            .or_insert_with(T::entity_meta);
+        if !self.entity_metas.contains_key(&type_id) {
+            Arc::make_mut(&mut self.entity_metas).insert(type_id, T::entity_meta());
+        }
         if !self.model_builder.has_entity(type_id) {
             self.model_builder.register_entity_meta(T::entity_meta());
         }
@@ -528,7 +528,7 @@ impl DbContext {
         self.savers
             .entry(type_id)
             .or_insert_with(|| Box::new(SetOps::<T>::new()));
-        self.entity_metas
+        Arc::make_mut(&mut self.entity_metas)
             .entry(type_id)
             .or_insert_with(T::entity_meta);
         if !self.model_builder.has_entity(type_id) {
@@ -660,6 +660,16 @@ impl DbContext {
             self.change_tracker
                 .set_state(entry_id, EntityState::Deleted);
         }
+    }
+
+    /// Test/observability hook: `true` when two contexts share the same
+    /// process-level `Arc<BuiltMetadata>` (metadata cache hit, no deep clone).
+    #[doc(hidden)]
+    pub fn shares_metadata_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.entity_metas, &other.entity_metas)
+            && self
+                .model_builder
+                .shares_metadata_with(&other.model_builder)
     }
 
     /// Loads all rows from the database into the DbSet as `Unchanged`.

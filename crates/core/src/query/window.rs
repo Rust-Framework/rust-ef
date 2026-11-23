@@ -71,7 +71,7 @@ impl WindowFuncKind {
 
 /// Specification for a window function projection.
 ///
-/// Mirrors the design of `HavingExpr`: a structured AST node
+/// Structured AST node (unlike `HavingExpr`, window functions keep their own
 /// stored in [`super::state::QueryState`] and compiled to SQL at generation
 /// time so that dialect-specific identifier quoting is applied consistently.
 #[derive(Debug, Clone)]

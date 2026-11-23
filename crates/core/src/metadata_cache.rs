@@ -29,12 +29,12 @@ use std::sync::{Arc, RwLock};
 #[derive(Clone)]
 pub(crate) struct BuiltMetadata {
     /// `TypeId -> EntityTypeMeta` map, cloned into `DbContext.entity_metas`.
-    pub entity_metas: HashMap<TypeId, EntityTypeMeta>,
+    pub entity_metas: Arc<HashMap<TypeId, EntityTypeMeta>>,
     /// `Vec<EntityTypeMeta>`, cloned into `ModelBuilder.entity_metas`.
-    pub model_metas: Vec<EntityTypeMeta>,
+    pub model_metas: Arc<Vec<EntityTypeMeta>>,
     /// Base configs from `IEntityTypeConfiguration::configure()`, cloned into
     /// `ModelBuilder.configs`. Per-instance query-filter mutations layer on top.
-    pub configs: HashMap<TypeId, EntityConfig>,
+    pub configs: Arc<HashMap<TypeId, EntityConfig>>,
 }
 
 /// Process-wide cache of `BuiltMetadata` keyed by `context_key`.
@@ -133,9 +133,9 @@ impl MetadataCache {
         let configs: HashMap<TypeId, EntityConfig> = model_builder.configs().clone();
 
         BuiltMetadata {
-            entity_metas,
-            model_metas,
-            configs,
+            entity_metas: Arc::new(entity_metas),
+            model_metas: Arc::new(model_metas),
+            configs: Arc::new(configs),
         }
     }
 }

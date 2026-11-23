@@ -16,101 +16,14 @@ use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
 
 use super::compile::{compile_bool_expr_into, PortablePlaceholderGenerator};
-use super::expr::SqlExpr;
+use super::expr::{ColumnExpr, SqlExpr};
 use super::state::QueryState;
-
-/// Expression used as the right-hand side of a `SET` assignment.
-///
-/// This mirrors only the `Column` / `Literal` / `Binary` subset of
-/// [`SqlExpr`](crate::query::SqlExpr): a `SET` list accepts column arithmetic
-/// but never aggregates / `COALESCE` / `CASE`, so the public surface stays
-/// minimal instead of exposing the projection AST here.
-///
-/// Build values with the constructors ([`column`](Self::column),
-/// [`value`](Self::value), [`add`](Self::add), [`sub`](Self::sub)); `DbValue`
-/// converts with `From`.
-#[derive(Debug, Clone)]
-pub enum ColumnExpr {
-    /// A bare column reference, e.g. `version` in `version = version + ?`.
-    Column(String),
-    /// A bound parameter value (`?`).
-    Value(DbValue),
-    /// `left + right`.
-    Add(Box<ColumnExpr>, Box<ColumnExpr>),
-    /// `left - right`.
-    Sub(Box<ColumnExpr>, Box<ColumnExpr>),
-}
-
-impl ColumnExpr {
-    /// A column reference (normally an entity `COLUMN_*` constant).
-    ///
-    /// The name is rendered as an SQL identifier verbatim: use entity
-    /// `COLUMN_*` constants or a hard-coded whitelist, never request data.
-    pub fn column(column: impl Into<String>) -> Self {
-        let column = column.into();
-        super::expr::debug_assert_identifier(&column, "ColumnExpr::column");
-        ColumnExpr::Column(column)
-    }
-
-    /// A bound parameter value.
-    pub fn value(value: impl Into<DbValue>) -> Self {
-        ColumnExpr::Value(value.into())
-    }
-
-    /// `self + other`.
-    ///
-    /// A named builder method (not `std::ops::Add`) because the other operand
-    /// is `impl Into<ColumnExpr>`, and because the expression is compiled to
-    /// SQL rather than evaluated in Rust.
-    #[allow(clippy::should_implement_trait)]
-    pub fn add(self, other: impl Into<ColumnExpr>) -> Self {
-        ColumnExpr::Add(Box::new(self), Box::new(other.into()))
-    }
-
-    /// `self - other`.
-    #[allow(clippy::should_implement_trait)]
-    pub fn sub(self, other: impl Into<ColumnExpr>) -> Self {
-        ColumnExpr::Sub(Box::new(self), Box::new(other.into()))
-    }
-
-    /// Lowers the SET expression to the shared scalar expression algebra.
-    ///
-    /// `ColumnExpr` remains a restricted builder (`SET` accepts arithmetic but
-    /// never aggregates/COALESCE/CASE), yet compilation/parameter collection
-    /// goes through the same [`SqlExpr`](super::expr::SqlExpr) compiler as
-    /// SELECT projections and the WHERE/HAVING trees.
-    fn to_sql_expr(&self) -> SqlExpr {
-        match self {
-            ColumnExpr::Column(column) => SqlExpr::column(column.clone()),
-            ColumnExpr::Value(value) => SqlExpr::literal(value.clone()),
-            ColumnExpr::Add(left, right) => left.to_sql_expr().add(right.to_sql_expr()),
-            ColumnExpr::Sub(left, right) => left.to_sql_expr().sub(right.to_sql_expr()),
-        }
-    }
-
-    /// Compiles the expression, advancing `param_idx` and collecting the bound
-    /// values in placeholder order.
-    pub(crate) fn compile(
-        &self,
-        gen: &dyn ISqlGenerator,
-        param_idx: &mut usize,
-        params: &mut Vec<DbValue>,
-    ) -> String {
-        self.to_sql_expr().compile(gen, param_idx, params)
-    }
-}
-
-impl From<DbValue> for ColumnExpr {
-    fn from(value: DbValue) -> Self {
-        ColumnExpr::Value(value)
-    }
-}
 
 /// Builder for bulk update operations.
 #[derive(Clone)]
 pub struct ExecuteUpdateBuilder<T: IEntityType> {
     pub(crate) state: QueryState,
-    pub(crate) updates: Vec<(String, ColumnExpr)>,
+    pub(crate) updates: Vec<(String, SqlExpr)>,
     pub(crate) provider: Option<Arc<dyn IDatabaseProvider>>,
     pub(crate) _phantom: PhantomData<T>,
 }
@@ -151,7 +64,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     /// ```
     pub fn set_column(mut self, column: &'static str, value: impl Into<DbValue>) -> Self {
         self.updates
-            .push((column.to_string(), ColumnExpr::Value(value.into())));
+            .push((column.to_string(), SqlExpr::literal(value.into())));
         self
     }
 
@@ -200,7 +113,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     pub fn increment(mut self, column: &'static str, by: impl Into<DbValue>) -> Self {
         self.updates.push((
             column.to_string(),
-            ColumnExpr::column(column).add(ColumnExpr::value(by)),
+            SqlExpr::column(column).add(SqlExpr::literal(by)),
         ));
         self
     }
@@ -211,7 +124,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     pub fn decrement(mut self, column: &'static str, by: impl Into<DbValue>) -> Self {
         self.updates.push((
             column.to_string(),
-            ColumnExpr::column(column).sub(ColumnExpr::value(by)),
+            SqlExpr::column(column).sub(SqlExpr::literal(by)),
         ));
         self
     }
@@ -240,6 +153,13 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
                  `set_column`, `set_column_expr`, `increment`)"
                     .to_string(),
             ));
+        }
+        for (column, expr) in &self.updates {
+            super::expr::validate_set_expression(expr).map_err(|error| {
+                crate::error::EFError::configuration(format!(
+                    "invalid SET expression for column `{column}`: {error}"
+                ))
+            })?;
         }
         let gen: &dyn ISqlGenerator = self
             .provider

@@ -46,7 +46,7 @@ ORDER BY sum_amount DESC
 
 ```rust
 use rust_ef::provider::DbValue;
-use rust_ef::query::{AggKind, CompareOp, HavingExpr, SelectItem};
+use rust_ef::query::{AggKind, BoolExpr, CompareOp, SelectItem};
 
 let rows: Vec<(String, i64)> = ctx
     .set::<OrderItem>()
@@ -56,23 +56,23 @@ let rows: Vec<(String, i64)> = ctx
         SelectItem::column("category"),
         SelectItem::sum("amount"),
     ])
-    .having(HavingExpr::Compare {
-        agg: AggKind::Sum,
-        col: "amount".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::I64(1000),
-    })
+    .having(BoolExpr::aggregate_compare(
+        AggKind::Sum,
+        "amount".to_string(),
+        CompareOp::Gt,
+        DbValue::I64(1000),
+    ))
     .to_list_rows::<(String, i64)>()
     .await?;
 ```
 
-`HavingExpr` 的节点：
+HAVING 是 `BoolExpr` 的 `Compare` 节点（`HavingExpr` 在 2.8 仅为兼容别名）：
 
-| 节点 | SQL |
+| 构造器/节点 | SQL |
 |---|---|
-| `Compare { agg, col, op, value }` | `AGG(col) op ?` |
-| `CompareAgg { left_agg, left_col, op, right_agg, right_col }` | `AGG(c1) op AGG(c2)`（无绑定参数） |
-| `And` / `Or` / `Not` | 布尔组合，可嵌套 |
+| `BoolExpr::aggregate_compare(agg, col, op, value)` | `AGG(col) op ?` |
+| `BoolExpr::aggregate_compare_agg(l_agg, l_col, op, r_agg, r_col)` | `AGG(c1) op AGG(c2)`（无绑定参数） |
+| `BoolExpr::And` / `Or` / `Not` | 布尔组合，可嵌套 |
 
 多次 `having(...)` 之间自动用 `AND` 连接。绑定参数在生成 SQL 时按 **WHERE → HAVING** 的文本顺序统一收集，所以即使先 `having` 后 `filter` 也不会参数错位（2.8.0 修复）。
 

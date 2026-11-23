@@ -10,7 +10,7 @@ mod common;
 
 use common::{MySqlLikeGenerator, PgLikeGenerator, SqliteLikeGenerator};
 use rust_ef::provider::DbValue;
-use rust_ef::query::{AggKind, BoolExpr, CompareOp, FilterCondition, HavingExpr, QueryState};
+use rust_ef::query::{AggKind, BoolExpr, CompareOp, FilterCondition, QueryState};
 
 // ---------------------------------------------------------------------------
 // LIMIT / OFFSET pagination dialect tests
@@ -148,12 +148,12 @@ fn test_pg_full_query_where_having_pagination() {
         vec![DbValue::String("tech".to_string())],
     )));
     state.group_bys = vec!["category".to_string()];
-    state.havings.push(HavingExpr::Compare {
-        agg: AggKind::Count,
-        col: "id".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::I32(1),
-    });
+    state.havings.push(BoolExpr::aggregate_compare(
+        AggKind::Count,
+        "id".to_string(),
+        CompareOp::Gt,
+        DbValue::I32(1),
+    ));
     state.offset = Some(10);
     state.limit = Some(5);
 
@@ -181,12 +181,12 @@ fn test_mysql_full_query_where_having_pagination() {
         vec![DbValue::String("tech".to_string())],
     )));
     state.group_bys = vec!["category".to_string()];
-    state.havings.push(HavingExpr::Compare {
-        agg: AggKind::Count,
-        col: "id".to_string(),
-        op: CompareOp::Gt,
-        value: DbValue::I32(1),
-    });
+    state.havings.push(BoolExpr::aggregate_compare(
+        AggKind::Count,
+        "id".to_string(),
+        CompareOp::Gt,
+        DbValue::I32(1),
+    ));
     state.offset = Some(10);
     state.limit = Some(5);
 

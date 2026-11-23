@@ -90,8 +90,10 @@ pub(crate) struct PropertyConfigOverride {
 
 /// Central configuration point for the EF model.
 pub struct ModelBuilder {
-    entity_metas: Vec<EntityTypeMeta>,
-    configs: HashMap<TypeId, EntityConfig>,
+    /// `Arc`-shared with the process-level `BuiltMetadata`; copy-on-write when
+    /// a Fluent API call registers an entity or filter.
+    entity_metas: Arc<Vec<EntityTypeMeta>>,
+    configs: Arc<HashMap<TypeId, EntityConfig>>,
     /// Cache of `build()` output. Invalidated by any mutation.
     build_cache: OnceLock<Vec<EntityTypeMeta>>,
     /// Cache of `filters_by_table()` output, shared via `Arc` so DbSets can
@@ -102,8 +104,8 @@ pub struct ModelBuilder {
 impl ModelBuilder {
     pub fn new() -> Self {
         Self {
-            entity_metas: Vec::new(),
-            configs: HashMap::new(),
+            entity_metas: Arc::new(Vec::new()),
+            configs: Arc::new(HashMap::new()),
             build_cache: OnceLock::new(),
             filter_cache: OnceLock::new(),
         }
@@ -120,8 +122,8 @@ impl ModelBuilder {
     /// construction only affect this `ModelBuilder` instance, not the cache.
     pub(crate) fn from_built(built: &crate::metadata_cache::BuiltMetadata) -> Self {
         Self {
-            entity_metas: built.model_metas.clone(),
-            configs: built.configs.clone(),
+            entity_metas: Arc::clone(&built.model_metas),
+            configs: Arc::clone(&built.configs),
             build_cache: OnceLock::new(),
             filter_cache: OnceLock::new(),
         }
@@ -131,13 +133,30 @@ impl ModelBuilder {
     /// to snapshot the configs produced by `IEntityTypeConfiguration::configure()`
     /// callbacks into the process-level cache.
     pub(crate) fn configs(&self) -> &HashMap<TypeId, EntityConfig> {
-        &self.configs
+        self.configs.as_ref()
+    }
+
+    /// Mutable access to the copied-on-write config map (Fluent API helpers).
+    pub(crate) fn config_mut(&mut self, type_id: TypeId) -> &mut EntityConfig {
+        Arc::make_mut(&mut self.configs).entry(type_id).or_default()
+    }
+
+    /// Mutable config lookup for Fluent API helpers.
+    pub(crate) fn config_get_mut(&mut self, type_id: &TypeId) -> Option<&mut EntityConfig> {
+        Arc::make_mut(&mut self.configs).get_mut(type_id)
     }
 
     /// Read-only access to the `entity_metas` vec. Used by `MetadataCache::build()`
     /// to snapshot the registered entity metas into the process-level cache.
     pub(crate) fn entity_metas_vec(&self) -> &[EntityTypeMeta] {
-        &self.entity_metas
+        self.entity_metas.as_ref()
+    }
+
+    /// `true` when two builders share the same `Arc`-backed metadata
+    /// (proves `DbContext::from_options` did not deep-clone).
+    pub(crate) fn shares_metadata_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.entity_metas, &other.entity_metas)
+            && Arc::ptr_eq(&self.configs, &other.configs)
     }
 
     /// Drops the cached `build()` and `filters_by_table()` results.
@@ -166,10 +185,12 @@ impl ModelBuilder {
         let meta = T::entity_meta();
         let type_id = meta.type_id;
         if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
-            self.entity_metas.push(meta);
+            Arc::make_mut(&mut self.entity_metas).push(meta);
             self.invalidate_cache();
         }
-        self.configs.entry(type_id).or_default();
+        if !self.configs.contains_key(&type_id) {
+            Arc::make_mut(&mut self.configs).insert(type_id, EntityConfig::default());
+        }
         EntityTypeBuilder::new(self, type_id)
     }
 
@@ -180,8 +201,16 @@ impl ModelBuilder {
     {
         let meta = T::entity_meta();
         let type_id = meta.type_id;
-        if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
-            self.entity_metas.push(meta);
+        let added = {
+            let metas = Arc::make_mut(&mut self.entity_metas);
+            if metas.iter().any(|m| m.type_id == type_id) {
+                false
+            } else {
+                metas.push(meta);
+                true
+            }
+        };
+        if added {
             self.invalidate_cache();
         }
 
@@ -363,7 +392,7 @@ impl ModelBuilder {
     pub fn entity_metas_mut(&mut self) -> &mut Vec<EntityTypeMeta> {
         // Note: cannot call invalidate_cache() here because the returned
         // &mut Vec would conflict. Documented as a manual-invalidation path.
-        &mut self.entity_metas
+        Arc::make_mut(&mut self.entity_metas)
     }
 
     pub fn find_entity<T: IEntityType>(&self) -> Option<&EntityTypeMeta> {
@@ -386,11 +415,19 @@ impl ModelBuilder {
     /// to write their overrides.
     pub fn register_entity_meta(&mut self, meta: EntityTypeMeta) {
         let type_id = meta.type_id;
-        if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
-            self.entity_metas.push(meta);
+        let added = {
+            let metas = Arc::make_mut(&mut self.entity_metas);
+            if metas.iter().any(|m| m.type_id == type_id) {
+                false
+            } else {
+                metas.push(meta);
+                true
+            }
+        };
+        if added {
             self.invalidate_cache();
         }
-        self.configs.entry(type_id).or_default();
+        Arc::make_mut(&mut self.configs).entry(type_id).or_default();
     }
 
     /// Registers a global query filter for entity type `T`.
@@ -403,12 +440,13 @@ impl ModelBuilder {
     ) -> &mut Self {
         let filter = filter.into().into_expr();
         let type_id = TypeId::of::<T>();
-        let config = self.configs.entry(type_id).or_default();
+        let config = Arc::make_mut(&mut self.configs).entry(type_id).or_default();
         config.query_filter = Some(filter);
 
         let meta = T::entity_meta();
-        if !self.entity_metas.iter().any(|m| m.type_id == type_id) {
-            self.entity_metas.push(meta);
+        let metas = Arc::make_mut(&mut self.entity_metas);
+        if !metas.iter().any(|m| m.type_id == type_id) {
+            metas.push(meta);
         }
 
         self.invalidate_cache();
@@ -441,7 +479,7 @@ impl ModelBuilder {
                 // navigation metadata / lazy loading). Fluent `to_table` /
                 // `to_schema` overrides do not change this key — see the
                 // doc comment above.
-                for meta in &self.entity_metas {
+                for meta in self.entity_metas.iter() {
                     if let Some(config) = self.configs.get(&meta.type_id) {
                         if let Some(filter) = &config.query_filter {
                             map.insert(
@@ -491,7 +529,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     }
 
     pub fn to_table(&mut self, name: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.table_name = Some(name.to_string());
         config.is_view = false;
         self.model.invalidate_cache();
@@ -509,7 +547,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     }
 
     pub fn has_key_named(&mut self, field_name: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.primary_key_fields = Some(vec![field_name.to_string()]);
         config.is_keyless = false;
         self.model.invalidate_cache();
@@ -517,7 +555,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     }
 
     pub fn has_keys(&mut self, field_names: &[&str]) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.primary_key_fields = Some(field_names.iter().map(|s| s.to_string()).collect());
         config.is_keyless = false;
         self.model.invalidate_cache();
@@ -528,7 +566,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     ///
     /// Generates `schema.table` (quoted per part), e.g. PostgreSQL `"audit"."logs"`.
     pub fn to_schema(&mut self, schema: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.table_schema = Some(schema.to_string());
         self.model.invalidate_cache();
         self
@@ -540,7 +578,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     /// the view itself is managed outside rust-ef. The entity is read-only in
     /// practice (`save_changes` should not be used for it).
     pub fn to_view(&mut self, name: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.table_name = Some(name.to_string());
         config.is_view = true;
         self.model.invalidate_cache();
@@ -552,7 +590,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     /// Useful for projections/views. `find`/`remove` require a key and must not
     /// be used on keyless entities.
     pub fn has_no_key(&mut self) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.primary_key_fields = Some(Vec::new());
         config.is_keyless = true;
         self.model.invalidate_cache();
@@ -561,7 +599,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
 
     /// Sets the table/entity comment (`HasComment`).
     pub fn has_comment(&mut self, comment: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.table_comment = Some(comment.to_string());
         self.model.invalidate_cache();
         self
@@ -569,7 +607,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
 
     /// Ignores a scalar field (`Ignore()`), excluding it from mapping/DDL.
     pub fn ignore(&mut self, field_name: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         if !config.ignored_fields.iter().any(|f| f == field_name) {
             config.ignored_fields.push(field_name.to_string());
         }
@@ -583,7 +621,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     /// Implemented as a unique index named `ak_<table>_<cols>` (equivalent for
     /// PostgreSQL/SQLite/MySQL foreign-key targets).
     pub fn has_alternate_key(&mut self, columns: &'static [&'static str]) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config
             .alternate_keys
             .push(columns.iter().map(|c| c.to_string()).collect());
@@ -596,7 +634,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     /// `#[doc(hidden)]` — called by `linq!(key |b: T| b.id)` expansion.
     #[doc(hidden)]
     pub fn has_key(&mut self, columns: &'static [&'static str]) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.primary_key_fields = Some(columns.iter().map(|s| s.to_string()).collect());
         config.is_keyless = false;
         self.model.invalidate_cache();
@@ -655,7 +693,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     }
 
     fn push_index(&mut self, columns: Vec<IndexColumn>) -> IndexBuilder<'_, T> {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         let position = config.indexes.len();
         config.indexes.push(IndexMeta {
             name: None,
@@ -692,7 +730,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
         referenced_table: &'static str,
         referenced_columns: &'static [&'static str],
     ) -> ForeignKeyBuilder<'_, T> {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         let position = config.foreign_keys.len();
         config.foreign_keys.push(ForeignKeyMeta {
             name: None,
@@ -720,7 +758,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     /// shapes (enum lists, exactly-one-of, ranges): it renders portable SQL and
     /// escapes literals (EF-DDL-02).
     pub fn has_check(&mut self, name: &str, expression: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.checks.push(CheckMeta {
             name: Cow::Owned(name.to_string()),
             expression: Cow::Owned(expression.to_string()),
@@ -743,7 +781,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
 
     /// Sets the MySQL storage engine (e.g. `InnoDB`). Ignored on other dialects.
     pub fn engine(&mut self, name: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.table_options.engine = Some(Cow::Owned(name.to_string()));
         self.model.invalidate_cache();
         self
@@ -751,7 +789,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
 
     /// Sets the MySQL default character set (e.g. `utf8mb4`).
     pub fn charset(&mut self, name: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.table_options.charset = Some(Cow::Owned(name.to_string()));
         self.model.invalidate_cache();
         self
@@ -759,7 +797,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
 
     /// Sets the MySQL default collation (e.g. `utf8mb4_bin`).
     pub fn collate(&mut self, name: &str) -> &mut Self {
-        let config = self.model.configs.entry(self.type_id).or_default();
+        let config = self.model.config_mut(self.type_id);
         config.table_options.collate = Some(Cow::Owned(name.to_string()));
         self.model.invalidate_cache();
         self
@@ -770,7 +808,7 @@ impl<'a, T> EntityTypeBuilder<'a, T> {
     where
         T: IEntitySnapshot,
     {
-        if let Some(config) = self.model.configs.get_mut(&self.type_id) {
+        if let Some(config) = self.model.config_get_mut(&self.type_id) {
             config.seed_rows = data.iter().map(|e| e.snapshot()).collect();
         }
         self.model.invalidate_cache();
@@ -811,8 +849,7 @@ impl<T> IndexBuilder<'_, T> {
         self.model.invalidate_cache();
         &mut self
             .model
-            .configs
-            .get_mut(&self.type_id)
+            .config_get_mut(&self.type_id)
             .expect("index config registered")
             .indexes[self.position]
     }
@@ -867,8 +904,7 @@ impl<T> ForeignKeyBuilder<'_, T> {
         self.model.invalidate_cache();
         &mut self
             .model
-            .configs
-            .get_mut(&self.type_id)
+            .config_get_mut(&self.type_id)
             .expect("foreign key config registered")
             .foreign_keys[self.position]
     }
@@ -904,9 +940,7 @@ impl<'a, T, V> PropertyBuilder<'a, T, V> {
         // `filters_by_table()` reflects the new override.
         self.model.invalidate_cache();
         self.model
-            .configs
-            .entry(self.type_id)
-            .or_default()
+            .config_mut(self.type_id)
             .property_overrides
             .entry(self.field_name.to_string())
             .or_default()
