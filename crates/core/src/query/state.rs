@@ -13,6 +13,7 @@ use crate::provider::DbValue;
 use super::ast::{BoolExpr, IncludePath, JoinSpec, OrderBy};
 use super::compile::{compile_bool_expr, PortablePlaceholderGenerator};
 use super::cte::{CteSpec, SetOpSpec, SetOperator};
+use super::expr::SelectItem;
 use super::having_expr::HavingExpr;
 use super::window::WindowSpec;
 
@@ -39,6 +40,10 @@ pub struct QueryState {
     pub includes: Vec<IncludePath>,
     /// Whether this is a projection (SELECT col1, col2 instead of SELECT *).
     pub projected_columns: Option<Vec<String>>,
+    /// Typed SELECT-list projections (`SelectItem`: columns, aggregates,
+    /// COALESCE/CASE/literals). When non-empty they take precedence over
+    /// `projected_columns` / `SELECT *` when the SELECT list is built.
+    pub projections: Vec<SelectItem>,
     /// Whether this is a COUNT query.
     pub is_count: bool,
     /// Whether this is an EXISTS sub-query.
@@ -77,6 +82,7 @@ impl QueryState {
             limit: None,
             includes: Vec::new(),
             projected_columns: None,
+            projections: Vec::new(),
             is_count: false,
             is_exists: false,
             aggregate: None,
@@ -103,6 +109,14 @@ impl QueryState {
         // must continue from this offset to stay contiguous with CTE params.
         let cte_param_count: usize = self.ctes.iter().map(|c| c.params.len()).sum();
 
+        // Parameter index follows the SQL text order: CTE bodies first (they
+        // occupy slots `1..=cte_param_count`), then the SELECT-list projection
+        // expressions, then WHERE and HAVING. It is created before the SELECT
+        // list is compiled so projection placeholders start right after the CTE
+        // parameters, keeping the generated SQL and `all_params()` aligned
+        // regardless of the order in which the builder methods were called.
+        let mut param_idx = 1usize + cte_param_count;
+
         let distinct_kw = if self.distinct { "DISTINCT " } else { "" };
         let select = if self.is_count {
             if self.distinct {
@@ -119,6 +133,19 @@ impl QueryState {
             } else {
                 format!("SELECT {}({})", agg, col)
             }
+        } else if !self.projections.is_empty() {
+            // Typed report projections (`SelectItem`) are compiled first because
+            // their expressions may bind parameters (literals/COALESCE/CASE).
+            let mut parts: Vec<String> = self
+                .projections
+                .iter()
+                .map(|item| item.to_sql(gen, &mut param_idx))
+                .collect();
+            // Window function projections are appended to explicit projection lists.
+            for w in &self.windows {
+                parts.push(w.to_sql(gen));
+            }
+            format!("SELECT {}{}", distinct_kw, parts.join(", "))
         } else if let Some(ref cols) = self.projected_columns {
             let mut parts: Vec<String> = cols.to_vec();
             // Window function projections are appended to explicit column lists.
@@ -151,12 +178,6 @@ impl QueryState {
             sql.push(' ');
             sql.push_str(&join.to_sql());
         }
-
-        // Parameter index is shared across WHERE and HAVING so that
-        // PostgreSQL's 1-indexed `$N` placeholders remain contiguous and
-        // correctly ordered across both clauses. CTE parameters (if any)
-        // occupy the leading slots, so the main query starts after them.
-        let mut param_idx = 1usize + cte_param_count;
 
         // WHERE
         if let Some(ref expr) = self.where_expr {
@@ -307,19 +328,30 @@ impl QueryState {
         sql
     }
 
-    /// Returns all parameter values for execution: CTE parameters first
-    /// (in declaration order), followed by WHERE/HAVING parameters, then
-    /// set operation operand params.
+    /// Returns all parameter values for execution in SQL text order:
     ///
-    /// This ordering matches the placeholder order in the generated SQL,
-    /// where CTE bodies appear before the main SELECT and set operations
-    /// appear after.
+    /// 1. CTE parameters (in declaration order),
+    /// 2. SELECT-list projection parameters (literals/COALESCE fallbacks/CASE),
+    /// 3. WHERE parameters,
+    /// 4. HAVING parameters (collected from the stored `HavingExpr` nodes),
+    /// 5. set operation operand params.
+    ///
+    /// This ordering matches the placeholder order in the generated SQL, where
+    /// CTE bodies appear before the main SELECT and set operations appear
+    /// after. HAVING parameters are collected here (not at builder-call time),
+    /// so adding a filter after a HAVING condition cannot shift the values.
     pub fn all_params(&self) -> Vec<DbValue> {
         let mut params = Vec::new();
         for cte in &self.ctes {
             params.extend(cte.params.clone());
         }
+        for projection in &self.projections {
+            params.extend(projection.params());
+        }
         params.extend(self.parameters.clone());
+        for having in &self.havings {
+            params.extend(having.collect_params());
+        }
         for op in &self.set_operations {
             params.extend(op.operand_params.clone());
         }
@@ -331,7 +363,11 @@ impl QueryState {
         self.to_sql_with(&PortablePlaceholderGenerator)
     }
 
-    /// Returns the accumulated parameters.
+    /// Returns the WHERE parameter values accumulated by builder calls.
+    ///
+    /// Projection and HAVING parameters are not stored here: they are derived
+    /// from the expression nodes by [`QueryState::all_params`], which returns
+    /// the full parameter vector in SQL text order.
     pub fn params(&self) -> &[DbValue] {
         &self.parameters
     }

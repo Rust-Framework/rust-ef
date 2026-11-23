@@ -24,6 +24,7 @@ use crate::metadata::EntityTypeMeta;
 use crate::migration::{MigrationEngine, SeedData};
 use crate::model_builder::ModelBuilder;
 use crate::provider::{DbValue, IDatabaseProvider, IsolationLevel};
+use crate::row::IRow;
 use crate::session::{Session, SessionConnection, SessionProvider};
 use crate::tracking::ChangeTracker;
 use crate::transaction::{DbTransaction, ITransaction};
@@ -349,6 +350,36 @@ impl DbContext {
         let mut conn = self.provider.get_connection().await?;
         let rows = conn.query(sql, params).await?;
         crate::entity::materialize_entities(&rows)
+    }
+
+    /// Executes a raw SQL query and materializes the result rows into any
+    /// [`IRow`] target — a `#[derive(FromRow)]` struct or a tuple — instead of
+    /// an entity.
+    ///
+    /// This is the escape hatch for report queries (multi-table JOINs, CTEs,
+    /// window functions) whose result shape is not an entity. Mapping is
+    /// positional: the `SELECT` list order must match the struct field / tuple
+    /// element order (providers return rows without column names). Values are
+    /// bound via `DbValue`; never interpolate user input into `sql`.
+    ///
+    /// ```rust,ignore
+    /// #[derive(FromRow)]
+    /// struct SalesRow {
+    ///     category: String,
+    ///     total: i64,
+    /// }
+    ///
+    /// let rows: Vec<SalesRow> = ctx
+    ///     .sql_query_rows(
+    ///         "SELECT category, SUM(amount) FROM orders GROUP BY category",
+    ///         &[],
+    ///     )
+    ///     .await?;
+    /// ```
+    pub async fn sql_query_rows<R: IRow>(&self, sql: &str, params: &[DbValue]) -> EFResult<Vec<R>> {
+        let mut conn = self.provider.get_connection().await?;
+        let rows = conn.query(sql, params).await?;
+        crate::row::materialize_rows(&rows)
     }
 
     /// Begins a context-scoped transaction and returns its handle.

@@ -9,19 +9,29 @@ use crate::provider::{DbValue, DbValueConvertError};
 use super::super::ast::{BoolExpr, OrderDirection};
 use super::super::compile::{collect_bool_expr_values, convert_aggregate_cell};
 use super::super::cte::{CteSpec, SetOpSpec, SetOperator};
+use super::super::expr::SelectItem;
 use super::super::having_expr::HavingExpr;
 use super::super::select::SelectQueryBuilder;
 use super::super::window::{WindowFuncKind, WindowSpec};
 use super::core::QueryBuilder;
 
 impl<T: IEntityType> QueryBuilder<T> {
+    /// Replaces the GROUP BY columns.
+    ///
+    /// Runtime entry point for report queries; the existing `linq!(group_by ...)`
+    /// clause goes through [`group_by_internal`](Self::group_by_internal), which
+    /// delegates here.
+    pub fn group_by(mut self, columns: &[&str]) -> Self {
+        self.state.group_bys = columns.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
     /// Adds a GROUP BY clause.
     ///
     /// `#[doc(hidden)]` — called by `linq!(group_by (b.cat, b.author))` expansion.
     #[doc(hidden)]
-    pub fn group_by_internal(mut self, columns: &'static [&'static str]) -> Self {
-        self.state.group_bys = columns.iter().map(|s| s.to_string()).collect();
-        self
+    pub fn group_by_internal(self, columns: &'static [&'static str]) -> Self {
+        self.group_by(columns)
     }
 
     /// Adds a HAVING condition from a `HavingExpr` AST.
@@ -30,11 +40,14 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// having clause contains boolean combinations (`AND`/`OR`/`NOT`) or
     /// aggregate-versus-aggregate comparisons. The expression is stored as an
     /// AST node and compiled to SQL at `to_sql_with` time using the provider's
-    /// placeholder syntax; bound parameters are collected via
-    /// [`HavingExpr::collect_params`] and pushed to `state.parameters`.
+    /// placeholder syntax.
+    ///
+    /// Bound values are *not* registered here: [`QueryState::all_params`]
+    /// collects them from the stored expression, so the values always follow
+    /// the SQL text order (WHERE before HAVING) even when the caller adds a
+    /// filter after the HAVING clause.
     #[doc(hidden)]
     pub fn having_expr_internal(mut self, expr: HavingExpr) -> Self {
-        self.state.parameters.extend(expr.collect_params());
         self.state.havings.push(expr);
         self
     }
@@ -306,6 +319,64 @@ impl<T: IEntityType> QueryBuilder<T> {
         aggregate_f64_cell(&rows, "AVG")
     }
 
+    /// Executes a SUM aggregation and decodes the result as `V`.
+    ///
+    /// Unlike [`sum_internal`](Self::sum_internal), the result is not routed
+    /// through `f64`: integer columns stay integers, so `i64` sums above
+    /// `2^53` are exact. Use `sum_as::<i64>` for money/counters stored as
+    /// integers and `sum_as::<f64>` only when a floating result is wanted.
+    ///
+    /// An empty input set (or an all-`NULL` column) is the neutral value
+    /// `V::try_from(DbValue::I64(0))`, consistent with the EF-17 `sum -> f64`
+    /// rule. A value that cannot be converted to `V` is a typed
+    /// `EFError::TypeConversion`.
+    pub async fn sum_as<V>(self, column: &'static str) -> EFResult<V>
+    where
+        V: TryFrom<DbValue, Error = DbValueConvertError>,
+    {
+        let rows = self.fetch_scalar_aggregate("SUM", column).await?;
+        aggregate_typed_cell(rows, "SUM")
+    }
+
+    /// Convenience alias for `sum_as::<i64>`.
+    pub async fn sum_i64(self, column: &'static str) -> EFResult<i64> {
+        self.sum_as(column).await
+    }
+
+    /// Executes an AVG aggregation and decodes the result as `V`.
+    ///
+    /// The target type decides the decoding (`f64` for the usual AVG; integer
+    /// targets accept only integer-shaped cells from the provider). An empty
+    /// input set (or an all-`NULL` column) is the neutral value
+    /// `V::try_from(DbValue::I64(0))`.
+    pub async fn avg_as<V>(self, column: &'static str) -> EFResult<V>
+    where
+        V: TryFrom<DbValue, Error = DbValueConvertError>,
+    {
+        let rows = self.fetch_scalar_aggregate("AVG", column).await?;
+        aggregate_typed_cell(rows, "AVG")
+    }
+
+    /// Runs a single-cell aggregate query (`SUM`/`AVG`) over the current state.
+    async fn fetch_scalar_aggregate(
+        self,
+        func: &str,
+        column: &'static str,
+    ) -> EFResult<Vec<Vec<DbValue>>> {
+        let mut state = self.state.clone();
+        state.aggregate = Some(func.to_string());
+        state.aggregate_column = Some(column.to_string());
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            crate::error::EFError::configuration(
+                "No provider attached to QueryBuilder.".to_string(),
+            )
+        })?;
+        let sql = Self::compile_state_sql(&state, provider);
+        let params = state.all_params();
+        let mut conn = provider.get_connection().await?;
+        conn.query(&sql, &params).await
+    }
+
     /// Executes a MIN aggregation query, returning the typed result.
     ///
     /// `#[doc(hidden)]` — called by `linq!(min b.rating)` expansion. The target
@@ -355,14 +426,12 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     // -------------------------------------------------------------------
-    // Projection
+    // Projection / typed report entry points
     // -------------------------------------------------------------------
 
-    /// Projects to named columns and returns raw row values.
-    ///
-    /// `#[doc(hidden)]` — called by `linq!(select (b.id, b.title))` expansion.
-    #[doc(hidden)]
-    pub fn select_internal(self, columns: &'static [&'static str]) -> SelectQueryBuilder<T> {
+    /// Projects to named columns (runtime API) and returns a
+    /// [`SelectQueryBuilder`] over the plain `SELECT col, ...` list.
+    pub fn select(self, columns: &[&str]) -> SelectQueryBuilder<T> {
         let mut state = self.state.clone();
         state.projected_columns = Some(columns.iter().map(|s| s.to_string()).collect());
         SelectQueryBuilder {
@@ -370,6 +439,45 @@ impl<T: IEntityType> QueryBuilder<T> {
             provider: self.provider,
             _phantom: PhantomData,
         }
+    }
+
+    /// Projects to typed [`SelectItem`]s (columns, aggregates, COALESCE/CASE,
+    /// constants, ...) and returns a [`SelectQueryBuilder`].
+    ///
+    /// Projection items are appended in order and determine the result row
+    /// layout, so the group keys should be projected explicitly:
+    ///
+    /// ```ignore
+    /// let rows: Vec<(String, i64)> = ctx
+    ///     .set::<Order>()
+    ///     .query()
+    ///     .group_by(&["category"])
+    ///     .select_items(&[
+    ///         SelectItem::column("category"),
+    ///         SelectItem::sum("amount"),
+    ///     ])
+    ///     .order_by("sum_amount")
+    ///     .to_list_rows()
+    ///     .await?;
+    /// ```
+    pub fn select_items(self, items: &[SelectItem]) -> SelectQueryBuilder<T> {
+        let mut state = self.state.clone();
+        state.projections = items.to_vec();
+        SelectQueryBuilder {
+            state,
+            provider: self.provider,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Projects to named columns and returns raw row values.
+    ///
+    /// `#[doc(hidden)]` — called by `linq!(select (b.id, b.title))` expansion.
+    /// Keeps the existing plain `SELECT col, ...` semantics (no `AS` aliases)
+    /// and delegates to [`select`](Self::select).
+    #[doc(hidden)]
+    pub fn select_internal(self, columns: &'static [&'static str]) -> SelectQueryBuilder<T> {
+        self.select(columns)
     }
 }
 
@@ -398,6 +506,33 @@ fn aggregate_f64_cell(rows: &[Vec<DbValue>], func: &str) -> EFResult<f64> {
             crate::error::EFError::type_conversion(format!("{func} result is not f64"))
         }),
     }
+}
+
+/// Converts the single cell returned by a typed scalar aggregation
+/// (`sum_as`/`avg_as`) into `V`.
+///
+/// SQL aggregate queries always return exactly one row. An empty input set —
+/// and an input set whose values are all `NULL` — produces a `NULL` cell; as
+/// with EF-17 this is normalized to the neutral value of the target type via
+/// `V::try_from(DbValue::I64(0))`. A conversion failure is reported as a typed
+/// `EFError::TypeConversion` naming the aggregate.
+fn aggregate_typed_cell<V>(rows: Vec<Vec<DbValue>>, func: &str) -> EFResult<V>
+where
+    V: TryFrom<DbValue, Error = DbValueConvertError>,
+{
+    let cell = match rows
+        .into_iter()
+        .next()
+        .and_then(|row| row.into_iter().next())
+    {
+        None | Some(DbValue::Null) => DbValue::I64(0),
+        Some(cell) => cell,
+    };
+    V::try_from(cell).map_err(|e| {
+        crate::error::EFError::type_conversion(format!(
+            "{func} result cannot be converted to the requested type: {e}"
+        ))
+    })
 }
 
 #[cfg(test)]

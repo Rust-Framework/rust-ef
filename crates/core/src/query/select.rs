@@ -11,7 +11,12 @@ use std::sync::Arc;
 use crate::entity::IEntityType;
 use crate::error::EFResult;
 use crate::provider::{DbValue, DbValueConvertError, IDatabaseProvider};
+use crate::row::IRow;
 
+use super::ast::{OrderBy, OrderDirection};
+use super::compile::resolve_state_subqueries;
+use super::expr::SelectItem;
+use super::having_expr::HavingExpr;
 use super::state::QueryState;
 
 /// A query builder for projected column results.
@@ -25,12 +30,117 @@ pub struct SelectQueryBuilder<T: IEntityType> {
 impl<T: IEntityType> SelectQueryBuilder<T> {
     /// Returns the generated SQL.
     pub fn to_sql(&self) -> String {
+        let resolved = self.resolved_state();
         if let Some(provider) = &self.provider {
             let gen = provider.sql_generator();
-            self.state.to_sql_with(gen)
+            resolved.to_sql_with(gen)
         } else {
-            self.state.to_sql()
+            resolved.to_sql()
         }
+    }
+
+    /// Query state with correlated subqueries resolved from `T`'s navigation
+    /// metadata (a projected query can still carry an `EXISTS`/`IN (SELECT ...)`
+    /// predicate; without this resolution those subqueries would compile with
+    /// empty table names).
+    fn resolved_state(&self) -> QueryState {
+        let mut state = self.state.clone();
+        resolve_state_subqueries::<T>(&mut state);
+        state
+    }
+
+    // -------------------------------------------------------------------
+    // Clause methods (runtime report API)
+    //
+    // `group_by`/`select_item(s)`/`having`/`order_by(_desc)`/`take`/`skip`/
+    // `distinct` also exist on `QueryBuilder`, so a clause chain may put
+    // `group_by`/`having`/`order_by`/`take`/`skip`/`distinct` before *or*
+    // after the `select` step.
+    // -------------------------------------------------------------------
+
+    /// Replaces the GROUP BY columns.
+    pub fn group_by(mut self, columns: &[&str]) -> Self {
+        self.state.group_bys = columns.iter().map(|c| c.to_string()).collect();
+        self
+    }
+
+    /// Appends one typed SELECT-list projection.
+    pub fn select_item(mut self, item: SelectItem) -> Self {
+        self.state.projections.push(item);
+        self
+    }
+
+    /// Appends typed SELECT-list projections in the given order.
+    pub fn select_items(mut self, items: &[SelectItem]) -> Self {
+        self.state.projections.extend(items.iter().cloned());
+        self
+    }
+
+    /// Adds a HAVING condition (`AND`-joined with previous ones).
+    pub fn having(mut self, expr: HavingExpr) -> Self {
+        self.state.havings.push(expr);
+        self
+    }
+
+    /// Adds an ascending ORDER BY column (may reference a projection alias).
+    pub fn order_by(mut self, column: &str) -> Self {
+        self.state
+            .orderings
+            .push(OrderBy::new(column, OrderDirection::Ascending));
+        self
+    }
+
+    /// Adds a descending ORDER BY column (may reference a projection alias).
+    pub fn order_by_desc(mut self, column: &str) -> Self {
+        self.state
+            .orderings
+            .push(OrderBy::new(column, OrderDirection::Descending));
+        self
+    }
+
+    /// Takes the specified number of rows.
+    pub fn take(mut self, count: usize) -> Self {
+        self.state.limit = Some(count);
+        self
+    }
+
+    /// Skips the specified number of rows.
+    pub fn skip(mut self, count: usize) -> Self {
+        self.state.offset = Some(count);
+        self
+    }
+
+    /// Marks this query as `SELECT DISTINCT`.
+    pub fn distinct(mut self) -> Self {
+        self.state.distinct = true;
+        self
+    }
+
+    // `#[doc(hidden)]` aliases kept for the existing `linq!` expansion, which
+    // emits these names regardless of clause order.
+
+    /// `#[doc(hidden)]` — `linq!(group_by ...)` compatibility alias.
+    #[doc(hidden)]
+    pub fn group_by_internal(self, columns: &'static [&'static str]) -> Self {
+        self.group_by(columns)
+    }
+
+    /// `#[doc(hidden)]` — `linq!(having ...)` compatibility alias.
+    #[doc(hidden)]
+    pub fn having_expr_internal(self, expr: HavingExpr) -> Self {
+        self.having(expr)
+    }
+
+    /// `#[doc(hidden)]` — `linq!(order_by ...)` compatibility alias.
+    #[doc(hidden)]
+    pub fn order_by_column(self, column: &str) -> Self {
+        self.order_by(column)
+    }
+
+    /// `#[doc(hidden)]` — `linq!(order_by descending ...)` compatibility alias.
+    #[doc(hidden)]
+    pub fn order_by_desc_column(self, column: &str) -> Self {
+        self.order_by_desc(column)
     }
 
     /// Executes the projection query and returns raw column values per row.
@@ -40,11 +150,24 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
                 "No provider attached to SelectQueryBuilder.".to_string(),
             )
         })?;
+        let resolved = self.resolved_state();
         let gen = provider.sql_generator();
-        let sql = self.state.to_sql_with(gen);
-        let params = self.state.all_params();
+        let sql = resolved.to_sql_with(gen);
+        let params = resolved.all_params();
         let mut conn = provider.get_connection().await?;
         conn.query(&sql, &params).await
+    }
+
+    /// Executes the projection query and materializes each row into `R` via
+    /// [`IRow`].
+    ///
+    /// Use this with a `#[derive(FromRow)]` struct or a 1..=12-element tuple
+    /// when the fixed-arity `to_list_typed_*` terminals are not enough. The
+    /// mapping is positional: the `SELECT` list order must match the struct
+    /// field / tuple element order.
+    pub async fn to_list_rows<R: IRow>(self) -> EFResult<Vec<R>> {
+        let rows = self.to_list().await?;
+        crate::row::materialize_rows(&rows)
     }
 
     // -------------------------------------------------------------------

@@ -49,6 +49,7 @@ pub mod provider;
 pub mod query;
 pub mod registration;
 pub mod relations;
+pub mod row;
 pub mod schema;
 pub(crate) mod session;
 pub mod tracking;
@@ -58,7 +59,7 @@ pub use async_trait;
 
 pub use inventory;
 
-pub use rust_ef_macros::{column, entity, linq, DbContextKey, DbEnum, EntityType};
+pub use rust_ef_macros::{column, entity, linq, DbContextKey, DbEnum, EntityType, FromRow};
 
 /// Re-exports of the most commonly used types.
 pub mod prelude {
@@ -98,6 +99,7 @@ pub mod prelude {
     };
     pub use crate::registration::{EntityConfigRegistration, EntityRegistration};
     pub use crate::relations::{BelongsTo, DeleteBehavior, HasMany, HasOne};
+    pub use crate::row::{materialize_rows, IRow};
     pub use crate::tracking::ChangeTracker;
     pub use crate::transaction::{DbTransaction, ITransaction};
     pub use rust_ef_macros::column;
@@ -106,4 +108,5 @@ pub mod prelude {
     pub use rust_ef_macros::DbContextKey;
     pub use rust_ef_macros::DbEnum;
     pub use rust_ef_macros::EntityType;
+    pub use rust_ef_macros::FromRow;
 }

@@ -8,6 +8,7 @@ mod db_context_key;
 mod db_enum;
 mod entity;
 mod entity_config;
+mod from_row;
 mod linq;
 
 use proc_macro::TokenStream;
@@ -92,6 +93,34 @@ pub fn derive_db_context_key(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(DbEnum, attributes(db_value))]
 pub fn derive_db_enum(input: TokenStream) -> TokenStream {
     db_enum::expand_db_enum(input)
+}
+
+/// Derive positional row materialization for a named-field struct.
+///
+/// Generates `impl rust_ef::row::IRow for Struct`: fields are mapped in
+/// declaration order onto the positional column values, each converted with
+/// `TryFrom<DbValue>`. Use it for projection / raw-SQL result rows that are not
+/// entities (entities get `IRow` automatically through the blanket impl on
+/// `IFromRow`).
+///
+/// Mapping is positional, so the `SELECT` list order must match the field
+/// declaration order. A short row reports a typed `EFError::TypeConversion`
+/// naming the missing field and column index.
+///
+/// ```ignore
+/// #[derive(FromRow)]
+/// struct SalesRow {
+///     category: String,
+///     total: i64,
+/// }
+///
+/// let rows: Vec<SalesRow> = ctx
+///     .sql_query_rows("SELECT category, SUM(amount) FROM orders GROUP BY category", &[])
+///     .await?;
+/// ```
+#[proc_macro_derive(FromRow)]
+pub fn derive_from_row(input: TokenStream) -> TokenStream {
+    from_row::expand_from_row(input)
 }
 
 /// Compile-time LINQ-to-SQL.

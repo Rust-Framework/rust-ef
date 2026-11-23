@@ -22,7 +22,6 @@ fn test_pg_having_uses_dollar_n_placeholder() {
         op: CompareOp::Gt,
         value: DbValue::I32(1),
     });
-    state.parameters.push(DbValue::I32(1));
 
     let sql = state.to_sql_with(&PgLikeGenerator);
     assert!(
@@ -45,7 +44,6 @@ fn test_sqlite_having_uses_question_mark_placeholder() {
         op: CompareOp::Gt,
         value: DbValue::I32(1),
     });
-    state.parameters.push(DbValue::I32(1));
 
     let sql = state.to_sql_with(&SqliteLikeGenerator);
     assert!(
@@ -64,7 +62,6 @@ fn test_mysql_having_uses_question_mark_placeholder() {
         op: CompareOp::Gt,
         value: DbValue::I32(1),
     });
-    state.parameters.push(DbValue::I32(1));
 
     let sql = state.to_sql_with(&MySqlLikeGenerator);
     assert!(
@@ -82,7 +79,6 @@ fn test_pg_having_index_continues_from_where() {
     // WHERE category = $1 GROUP BY ... HAVING COUNT(blog_id) > $2
     // The HAVING placeholder must be $2 (continuing from WHERE's $1), not $1.
     let mut state = QueryState::new("blogs");
-    state.parameters.push(DbValue::I32(1));
     state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
         "category",
         "=",
@@ -127,7 +123,6 @@ fn test_pg_having_index_continues_through_and_combination() {
             value: DbValue::I32(100),
         }),
     );
-    state.parameters.extend(expr.collect_params());
     state.havings.push(expr);
 
     let sql = state.to_sql_with(&PgLikeGenerator);
@@ -161,7 +156,6 @@ fn test_pg_having_index_continues_through_or_with_where() {
             value: DbValue::I32(100),
         }),
     );
-    state.parameters.extend(having.collect_params());
     state.havings.push(having);
 
     let sql = state.to_sql_with(&PgLikeGenerator);
@@ -186,7 +180,6 @@ fn test_pg_having_not_preserves_index() {
         op: CompareOp::Gt,
         value: DbValue::I32(1),
     }));
-    state.parameters.extend(having.collect_params());
     state.havings.push(having);
 
     let sql = state.to_sql_with(&PgLikeGenerator);
@@ -237,8 +230,6 @@ fn test_pg_having_multiple_clauses_join_with_and() {
         op: CompareOp::Gt,
         value: DbValue::I32(100),
     });
-    state.parameters.push(DbValue::I32(1));
-    state.parameters.push(DbValue::I32(100));
 
     let sql = state.to_sql_with(&PgLikeGenerator);
     assert!(
