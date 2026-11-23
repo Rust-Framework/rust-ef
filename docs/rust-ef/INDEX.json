@@ -10,7 +10,7 @@
     "demoUrl": "",
     "featured": true,
     "sortOrder": 1,
-    "version": "2.6.0",
+    "version": "2.7.0",
     "language": "zh-CN",
     "author": "RF Team",
     "foreword": "FOREWORD.md",
@@ -207,7 +207,7 @@
         {
           "id": "06-advanced-query",
           "title": "高级查询",
-          "subtitle": "聚合、分组、JOIN 与全局过滤器",
+          "subtitle": "聚合、分组投影、JOIN 与全局过滤器",
           "sections": [
             {
               "id": "aggregation",
@@ -219,8 +219,15 @@
             {
               "id": "group-by-having",
               "title": "GROUP BY 与 HAVING",
-              "summary": "分组查询与条件过滤",
+              "summary": "分组报表：组键 + 聚合 + HAVING + 排序限量",
               "readingTime": 10,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "typed-projections",
+              "title": "类型化投影与报表行",
+              "summary": "SelectItem/SqlExpr、别名、COALESCE/CASE、IRow 与 FromRow",
+              "readingTime": 14,
               "difficulty": "intermediate"
             },
             {

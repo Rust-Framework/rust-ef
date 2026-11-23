@@ -31,7 +31,7 @@ let ctx: Arc<DbContext> = scope.get()?;
 // 同一 scope 内多次 get 返回同一实例
 ```
 
-### 反模式：Arc<Mutex<DbContext>>
+### 反模式：`Arc<Mutex<DbContext>>`
 
 ```rust,ignore
 // ❌ 错误：共享会导致跟踪污染

@@ -2,7 +2,6 @@
 title = "Rust Entity Framework 开发者手册"
 authors = ["Start"]
 language = "zh"
-multilingual = false
 src = "."
 
 [output.html]

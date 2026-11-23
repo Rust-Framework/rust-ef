@@ -48,6 +48,7 @@
 - [第六章 高级查询](./06-advanced-query/INDEX.md)
   - [聚合函数：SUM / AVG / MIN / MAX](./06-advanced-query/aggregation.md)
   - [GROUP BY 与 HAVING](./06-advanced-query/group-by-having.md)
+  - [类型化投影与报表行](./06-advanced-query/typed-projections.md)
   - [JOIN 查询](./06-advanced-query/join-queries.md)
   - [CTE 与 Window 函数](./06-advanced-query/cte-window-functions.md)
   - [全局查询过滤器](./06-advanced-query/global-query-filters.md)

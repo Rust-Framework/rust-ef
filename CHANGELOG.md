@@ -9,6 +9,201 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.0] — 2026-11-23 — 报表查询与集合写：类型化分组聚合、表达式更新、复合 JOIN、结果行物化
+
+> **English** · **简体中文**
+>
+> Additive minor release. Reporting queries can now be expressed end-to-end in the
+> object API (GROUP BY + aggregates + `COALESCE`/`CASE` + typed rows), bulk updates
+> can assign column expressions (`col = col + ?`), JOINs support composite and
+> chained ON keys, and projection/raw-SQL results materialize into plain structs
+> and tuples without a keyless entity. The exported builders are unchanged; three
+> observable changes (two public-struct shapes and the `QueryState::params()`
+> boundary) are listed under **Changed**.
+
+#### English
+
+**Added — typed report projections**
+
+- **`query::SelectItem` / `query::SqlExpr`** — provider-neutral SELECT-list
+  expressions: columns, `SUM/AVG/MIN/MAX/COUNT` aggregates (`COUNT(*)`,
+  `COUNT(col)`), `COALESCE(expr, ?)`, `CASE WHEN <filter> THEN <expr> ... END`,
+  bound literals, and `+`/`-` arithmetic. `SelectItem` carries the output alias
+  (defaults: the column name, `sum_<column>`, `count`, ...; override with
+  `.alias(...)`). Parameters are bound and ordered with the rest of the query.
+- **`SelectQueryBuilder` report terminal** — `group_by`, `select_item`,
+  `select_items`, `having`, `order_by`, `order_by_desc`, `take`, `skip`,
+  `distinct`, and `to_list_rows::<R: IRow>()`; the existing `to_list` /
+  `to_list_typed_1..4` terminals are unchanged. A grouped report returns one
+  typed row per group; `linq!(...; group_by ...; select (key, sum(col), count()))`
+  works with the aggregate items in the `select` tuple.
+- **`QueryBuilder` runtime entry points** — `group_by(&[&str])`,
+  `select(&[&str])`, `select_items(&[SelectItem])` for dynamically assembled
+  reports (the `linq!` macro remains the typed surface).
+
+**Added — exact aggregate types**
+
+- **`sum_as::<V>()`, `sum_i64()`, `avg_as::<V>()`** — aggregates decode into the
+  caller's type through `TryFrom<DbValue>`; integer minor units and `Decimal`
+  totals no longer pass through `f64`. Empty/NULL input yields the target type's
+  zero (the EF-17 neutral-value rule). `sum()`/`avg()` keep returning `f64` for
+  compatibility; `linq!(...; sum_i64 amount)` is the new macro terminal.
+  PostgreSQL `SUM(bigint)` / `AVG(int)` return `NUMERIC`: whole-number cells now
+  decode into integer targets (a fractional value decoded into `i64` is a typed
+  `TypeConversion`, never a silent truncation), and `f64`/`Decimal` targets accept
+  the fractional result.
+
+**Added — typed result rows without an entity**
+
+- **`row::IRow`**, **`row::materialize_rows`**, tuple impls for 1..=12 elements,
+  **`#[derive(FromRow)]`**, and **`DbContext::sql_query_rows::<R: IRow>()`** —
+  report/raw-SQL rows materialize positionally into plain structs and tuples;
+  entities keep using `IFromRow` (blanket `impl<T: IFromRow> IRow for T`). A cell
+  can be SQL `NULL`: every supported cell type has an `Option<T>` decoding (`NULL`
+  -> `None`), so LEFT JOIN misses and nullable report columns map directly.
+  The mapping is strictly positional: a longer row is rejected too (a drifted
+  `SELECT` list must not be silently truncated). `sql_query::<T>` (entity) is
+  unchanged.
+
+**Added — composite and chained JOIN**
+
+- **`JoinKind` / `JoinKey` / `JoinSpec`** expose the ON clause as equality keys
+  (`ON a.x = b.x AND a.y = b.y`), and `QueryBuilder::join::<J>(kind, on)` /
+  `join_from::<J, L>(kind, on)` build typed joins whose table names come from the
+  entity types (chained joins continue from a previously joined table).
+- **`QueryBuilder::filter_joined::<J>(predicate)`** qualifies a typed predicate
+  with `J`'s table so joined-table filters no longer need hand-written column
+  strings.
+- **`linq!`** joins accept `a.x == b.x && a.y == b.y` composite conditions and
+  consecutive join clauses form a chain; the legacy `*_join_internal` entry points
+  keep their exact SQL.
+- Known boundaries (documented): self-joins are not aliased (use raw SQL +
+  `IRow`), and a join that starts from a CTE must use `join_from` for the second
+  hop.
+
+**Added — expression updates**
+
+- **`query::ColumnExpr` + `ExecuteUpdateBuilder::{set_column_expr, increment,
+  decrement}`** — set-based `UPDATE ... SET col = col + ?` / `col = ? - col`
+  without raw SQL. `linq!` expands `set b.col, b.col + 1`, `b.col - x`, or
+  `b.col, other.col` to the expression form; plain values keep the old
+  `set_column` path. One statement, so it composes with the version/CAS
+  `WHERE` guard.
+
+**Changed**
+
+- **`JoinSpec` is now `{ kind: JoinKind, table: String, keys: Vec<JoinKey> }`**
+  (was `{ join_type: String, table: String, on_clause: String }`). Build joins
+  through the builders; the generated SQL of the legacy internal methods is
+  unchanged.
+- **`QueryState` gains the public `projections: Vec<SelectItem>` field**; struct
+  literals must add it (use `QueryState::new`).
+- **HAVING parameters are derived from the stored `HavingExpr` nodes at
+  `all_params()` time** (instead of being appended when the clause is
+  registered). Generated SQL and parameter vectors are unchanged for existing
+  `linq!` usage and now stay correct when a filter is added after a HAVING
+  clause. Full parameter order is documented as
+  CTE → SELECT projections → WHERE → HAVING → set operations.
+- **`QueryState::params()` now returns WHERE parameters only.** In 2.6 it also
+  contained HAVING values; from 2.7 they are collected by `all_params()` in SQL
+  order. Use `all_params()` whenever a query carries HAVING (the built-in
+  terminals already do); the generated SQL and execution behavior are unchanged.
+
+**Verification**
+
+- `cargo test --workspace --all-features` green (existing suites + new suites:
+  grouped projections 14, typed aggregates 9, row mapping 12, composite/chained
+  JOIN 14, expression updates 9, `linq!` 2.7 syntax 12, projection subqueries 2,
+  nullable rows 3, parameter order 4, `DbValue` conversions 6).
+- SQL-shape assertions for SQLite/MySQL `?` and PostgreSQL `$N` placeholders,
+  parameter-order assertions, and SQLite end-to-end execution for every new
+  capability; `cargo clippy --workspace --all-targets --all-features -D warnings`
+  and rustdoc `-D warnings` clean.
+
+**Migration**
+
+- Additive for the documented builders; see
+  [v2.7 migration guide](docs/v2.7-migration-guide.md) for the two public-struct
+  shape changes and for replacing the last report/`col = col + 1` raw SQL.
+
+#### 简体中文
+
+**新增 — 类型化报表投影**
+
+- **`query::SelectItem` / `query::SqlExpr`**：provider 中立的 SELECT 表达式——
+  列、`SUM/AVG/MIN/MAX/COUNT`（含 `COUNT(*)`/`COUNT(col)`）、`COALESCE(expr, ?)`、
+  `CASE WHEN <条件> THEN <表达式> ... END`、绑定常量、`+`/`-` 算术；`SelectItem`
+  带输出别名（默认列名末段 / `sum_<列>` / `count` 等，可 `.alias(...)` 覆盖），
+  参数按 SQL 文本顺序绑定。
+- **`SelectQueryBuilder` 报表终端**：`group_by`、`select_item(s)`、`having`、
+  `order_by(_desc)`、`take`、`skip`、`distinct`、`to_list_rows::<R: IRow>()`；
+  既有 `to_list`/`to_list_typed_1..4` 不变。分组报表每组返回一行类型化结果，
+  `linq!(...; group_by ...; select (键, sum(列), count()))` 可直接使用。
+- **`QueryBuilder` 运行时入口**：`group_by(&[&str])`、`select(&[&str])`、
+  `select_items(&[SelectItem])`，用于动态拼装报表；`linq!` 仍是类型化主入口。
+
+**新增 — 精确聚合类型**
+
+- **`sum_as::<V>()` / `sum_i64()` / `avg_as::<V>()`**：聚合结果按调用方类型
+  `TryFrom<DbValue>` 解码，金额最小单位/库存整数/`Decimal` 不再经过 `f64`；
+  空集/NULL 返回目标类型的 0（沿用 EF-17 中性值规则）。`sum()`/`avg()` 仍返回
+  `f64` 以兼容；`linq!(...; sum_i64 amount)` 为新的宏终端。
+
+**新增 — 非实体结果行**
+
+- **`row::IRow`**、**`row::materialize_rows`**、1..=12 元组实现、
+  **`#[derive(FromRow)]`**、**`DbContext::sql_query_rows::<R: IRow>()`**：
+  报表/原生 SQL 结果按位置物化为普通结构体或元组；实体继续使用 `IFromRow`
+  （blanket `impl<T: IFromRow> IRow for T`）。`sql_query::<T>`（实体）不变。
+
+**新增 — 复合键与链式 JOIN**
+
+- **`JoinKind` / `JoinKey` / `JoinSpec`**：ON 子句表达为等值键列表
+  （`ON a.x = b.x AND a.y = b.y`）；`QueryBuilder::join::<J>(kind, on)` /
+  `join_from::<J, L>(kind, on)` 由实体类型自动取表名，链式连接从上一跳表继续。
+- **`QueryBuilder::filter_joined::<J>(predicate)`**：把 typed 谓词的列限定为
+  `J` 的表名，被 join 表过滤不再手写列名字符串。
+- **`linq!`** 的 join 支持 `a.x == b.x && a.y == b.y` 复合条件，连续多个 join
+  子句即链式连接；旧 `*_join_internal` 生成的 SQL 逐字符不变。
+- 已知边界（已写入文档）：同表自连接没有别名（用原生 SQL + `IRow`）；从 CTE
+  起步的 join 第二跳需显式 `join_from`。
+
+**新增 — 表达式更新**
+
+- **`query::ColumnExpr` + `ExecuteUpdateBuilder::{set_column_expr, increment,
+  decrement}`**：一条语句完成 `SET col = col + ?` / `col = ? - col`，可与
+  版本号/CAS 的 `WHERE` 守卫组合；`linq!` 把 `set b.col, b.col + 1`、
+  `b.col - x`、`b.col, other.col` 展开为表达式形式，普通值仍走 `set_column`。
+
+**变更**
+
+- **`JoinSpec` 公开字段改为 `{ kind: JoinKind, table: String, keys: Vec<JoinKey> }`**
+  （原 `{ join_type, table, on_clause }`）。请通过 builder 构造；旧内部方法的
+  生成 SQL 不变。
+- **`QueryState` 新增公开字段 `projections: Vec<SelectItem>`**；结构体字面量
+  构造需补该字段（推荐 `QueryState::new`）。
+- **HAVING 参数改为在 `all_params()` 时从 `HavingExpr` 节点现场收集**
+  （不再在注册子句时写入 `parameters`）。既有 `linq!` 用法的 SQL 与参数向量
+  不变，且「先 having 后 filter」的 builder 用法不再错位；完整参数顺序固定为
+  CTE → SELECT 投影 → WHERE → HAVING → 集合运算。
+
+**验证**
+
+- `cargo test --workspace --all-features` 全绿（既有套件 + 69 个新测试：分组投影
+  14、类型化聚合 9、行物化 11、复合/链式 JOIN 14、表达式更新 9、`linq!` 2.7
+  语法 12）。
+- 每项新能力都有 SQL 形状断言（SQLite/MySQL `?` 与 PostgreSQL `$N`）、参数顺序
+  断言与 SQLite 实跑；`cargo clippy --workspace --all-targets --all-features
+  -D warnings`、rustdoc `-D warnings` 干净。
+
+**迁移**
+
+- 文档中的 builder 用法均为加法；两个公开结构体形状变化与「删掉最后几条报表/
+  `col = col + 1` 原生 SQL」的步骤见
+  [v2.7 迁移指南](docs/v2.7-migration-guide.md)。
+
+---
+
 ## [2.6.0] — 2026-11-21 — 删除 webx feature：ORM 与 Web 框架彻底解耦
 
 > **English** · **简体中文**

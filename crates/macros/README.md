@@ -14,6 +14,7 @@ never depend on this crate directly.
 |-------|---------|
 | `#[derive(EntityType)]` | Generates `IEntityType`, `IFromRow`, `IGetKeyValues` and `IEntitySnapshot`; registers the entity for compile-time discovery |
 | `linq!(...)` | Typed query DSL: `linq!(\|b: T\| ...)` predicates, `order_by`, `skip`/`take`, `include`, joins, aggregation, CTEs, window functions, bulk `execute_update` / `execute_delete` |
+| `#[derive(FromRow)]` | Positional `IRow` mapping for non-entity report/raw-SQL rows (`Option<T>` fields accept SQL `NULL`) |
 | `column!(Entity::field)` | Resolves an entity field to its database column name at compile time |
 | `#[entity(Entity)]` / `#[entity(Entity, "context_key")]` | Applies an `IEntityTypeConfiguration<T>` implementation to the model (optionally per keyed context) |
 | `#[derive(DbContextKey)]` | Typed keyed-`DbContext` key: implements `IDbContextKey` and the rust-dix `From<Key> for ServiceKey` contract (for `#[inject(owned, key = Key::Read)]` and keyed registration) |

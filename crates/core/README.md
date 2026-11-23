@@ -97,6 +97,20 @@ let shared: Arc<DbContext> = scope.get().unwrap();
 
 See the handbook DI chapter and `docs/v2.1-migration-guide.md`.
 
+## What's new in 2.7
+
+- **Typed report projections**: `SelectItem` / `SqlExpr` (columns, aggregates,
+  `COALESCE`, `CASE`, literals), `SelectQueryBuilder::{group_by, select_items,
+  having, order_by, to_list_rows}` — grouped reports return typed rows per group.
+- **Exact aggregates**: `sum_as::<V>` / `sum_i64` / `avg_as::<V>` decode into the
+  caller's type (integer minor units, `Decimal`), no `f64` detour.
+- **Result rows without an entity**: `row::IRow`, `#[derive(FromRow)]`, tuple impls
+  and `DbContext::sql_query_rows`; nullable cells map to `Option<T>`.
+- **Composite / chained JOIN**: `JoinKind`/`JoinKey`, `QueryBuilder::{join,
+  join_from}`, `filter_joined`, and composite `linq!` join conditions.
+- **Expression updates**: `ColumnExpr`, `set_column_expr` / `increment` /
+  `decrement` (with the `linq!` `set` sugar) for `col = col + ?` in one statement.
+
 ## What's new in 2.2
 
 - **Composable predicates**: `linq!(|b: Blog| ...)` returns a typed `Predicate<Blog>`
@@ -148,7 +162,7 @@ let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 | Crate | Purpose |
 |-------|---------|
 | `rust-ef` | core: `DbContext`, `DbSet`, query builder, change tracking, migrations |
-| `rust-ef-macros` | `#[derive(EntityType)]`, `linq!`, `column!`, `#[entity]` |
+| `rust-ef-macros` | `#[derive(EntityType)]`, `#[derive(FromRow)]`, `linq!`, `column!`, `#[entity]` |
 | `rust-ef-sqlite` / `rust-ef-postgres` / `rust-ef-mysql` | database providers |
 | `rust-ef-cli` | migration / scaffold CLI (not published) |
 
@@ -165,7 +179,8 @@ registration.rs        compile-time entity / configuration registration (invento
 provider/              IDatabaseProvider, ISqlGenerator, IAsyncConnection, DbValue
 db_context/            DbContext, DbContextOptions, save pipeline
 db_set.rs              IDbSet<T>, DbSet<T>
-query/                 IQueryable<T>, QueryBuilder<T>, linq! internals
+query/                 IQueryable<T>, QueryBuilder<T>, SelectItem/SqlExpr, linq! internals
+row.rs                 IRow (non-entity result rows), #[derive(FromRow)] targets
 change_executor/       INSERT / UPDATE / DELETE execution
 model_builder.rs       ModelBuilder, IEntityTypeConfiguration<T>
 tracking.rs            ChangeTracker (property-level snapshots)
