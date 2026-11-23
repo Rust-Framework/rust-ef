@@ -5,12 +5,13 @@
 
 #[cfg(test)]
 mod sqlite_crud {
-    use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues};
+    use rust_ef::entity::{IEntitySnapshot, IEntityType, IGetKeyValues};
     use rust_ef::entity_snapshot::EntitySnapshot;
     use rust_ef::error::EFResult;
     use rust_ef::linq;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::provider::DbValue;
+    use rust_ef::row::IRow;
 
     fn make_ctx() -> rust_ef::db_context::DbContext {
         use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
@@ -129,7 +130,7 @@ mod sqlite_crud {
         }
     }
 
-    impl IFromRow for TestItem {
+    impl IRow for TestItem {
         fn from_row(values: &[DbValue]) -> EFResult<Self> {
             Ok(TestItem {
                 id: values

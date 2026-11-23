@@ -53,6 +53,7 @@ pub struct CaseArm {
 
 /// A provider-neutral SQL expression used in SELECT projections.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SqlExpr {
     /// A bare column name, or a `table.column` reference emitted verbatim.
     ///
@@ -127,6 +128,11 @@ impl SqlExpr {
         SqlExpr::aggregate(AggregateFunc::Count, Some(column.into()), false)
     }
 
+    /// `COUNT(DISTINCT column)`.
+    pub fn count_distinct(column: impl Into<String>) -> Self {
+        SqlExpr::aggregate(AggregateFunc::Count, Some(column.into()), true)
+    }
+
     /// A bound constant.
     pub fn literal(value: impl Into<DbValue>) -> Self {
         SqlExpr::Literal(value.into())
@@ -167,7 +173,7 @@ impl SqlExpr {
         }
     }
 
-    fn aggregate(func: AggregateFunc, column: Option<String>, distinct: bool) -> Self {
+    pub(crate) fn aggregate(func: AggregateFunc, column: Option<String>, distinct: bool) -> Self {
         SqlExpr::Aggregate {
             func,
             column,
@@ -175,12 +181,19 @@ impl SqlExpr {
         }
     }
 
-    /// Compiles the expression using the provider's placeholder syntax.
+    /// Compiles the expression and collects its bound values **in one pass**.
     ///
-    /// `param_idx` is advanced past every bound parameter in the same
-    /// left-to-right order as [`SqlExpr::collect_params`], so callers can keep
-    /// emitting contiguous placeholders (e.g. WHERE after SELECT projections).
-    pub(crate) fn to_sql(&self, gen: &dyn ISqlGenerator, param_idx: &mut usize) -> String {
+    /// `param_idx` is the 1-based index of the next placeholder and is advanced
+    /// past every emitted placeholder; `params` receives the bound values in
+    /// exactly the same left-to-right order. There is no separate
+    /// "collect parameters" traversal, so SQL text order and the parameter
+    /// vector cannot drift.
+    pub(crate) fn compile(
+        &self,
+        gen: &dyn ISqlGenerator,
+        param_idx: &mut usize,
+        params: &mut Vec<DbValue>,
+    ) -> String {
         match self {
             SqlExpr::Column(column) => column.clone(),
             SqlExpr::Aggregate {
@@ -193,76 +206,57 @@ impl SqlExpr {
                     format!("{}({}{})", func.sql_name(), distinct_kw, column)
                 }
                 // Column-less aggregates are always `COUNT(*)`; `COUNT(DISTINCT *)`
-                // is not valid SQL, so `distinct` is ignored here.
+                // is not valid SQL, so `distinct` is ignored here (the builder
+                // reports a configuration error for `SELECT DISTINCT` + COUNT).
                 None => format!("{}(*)", func.sql_name()),
             },
-            SqlExpr::Coalesce(expr, _fallback) => {
-                let expr_sql = expr.to_sql(gen, param_idx);
+            SqlExpr::Coalesce(expr, fallback) => {
+                let expr_sql = expr.compile(gen, param_idx, params);
                 let placeholder = gen.parameter_placeholder(*param_idx);
                 *param_idx += 1;
+                params.push(fallback.clone());
                 format!("COALESCE({expr_sql}, {placeholder})")
             }
             SqlExpr::Case { arms, otherwise } => {
                 let mut sql = String::from("CASE");
                 for arm in arms {
-                    let placeholders: Vec<String> = (0..arm.condition.param_count())
-                        .map(|i| gen.parameter_placeholder(*param_idx + i))
-                        .collect();
-                    *param_idx += arm.condition.param_count();
                     sql.push_str(" WHEN ");
-                    sql.push_str(&arm.condition.to_sql(&placeholders));
+                    sql.push_str(&arm.condition.compile(gen, param_idx, params));
                     sql.push_str(" THEN ");
-                    sql.push_str(&arm.result.to_sql(gen, param_idx));
+                    sql.push_str(&arm.result.compile(gen, param_idx, params));
                 }
                 if let Some(otherwise) = otherwise {
                     sql.push_str(" ELSE ");
-                    sql.push_str(&otherwise.to_sql(gen, param_idx));
+                    sql.push_str(&otherwise.compile(gen, param_idx, params));
                 }
                 sql.push_str(" END");
                 sql
             }
-            SqlExpr::Literal(_) => {
+            SqlExpr::Literal(value) => {
                 let placeholder = gen.parameter_placeholder(*param_idx);
                 *param_idx += 1;
+                params.push(value.clone());
                 placeholder
             }
             SqlExpr::Binary { left, op, right } => format!(
                 "({} {} {})",
-                left.to_sql(gen, param_idx),
+                left.compile(gen, param_idx, params),
                 op.sql_operator(),
-                right.to_sql(gen, param_idx)
+                right.compile(gen, param_idx, params)
             ),
         }
     }
 
-    /// Collects the bound values in the same order [`SqlExpr::to_sql`] emits
-    /// their placeholders.
-    pub(crate) fn collect_params(&self) -> Vec<DbValue> {
-        match self {
-            SqlExpr::Column(_) | SqlExpr::Aggregate { .. } => Vec::new(),
-            SqlExpr::Coalesce(expr, fallback) => {
-                let mut values = expr.collect_params();
-                values.push(fallback.clone());
-                values
-            }
-            SqlExpr::Case { arms, otherwise } => {
-                let mut values = Vec::new();
-                for arm in arms {
-                    values.extend(arm.condition.values().iter().cloned());
-                    values.extend(arm.result.collect_params());
-                }
-                if let Some(otherwise) = otherwise {
-                    values.extend(otherwise.collect_params());
-                }
-                values
-            }
-            SqlExpr::Literal(value) => vec![value.clone()],
-            SqlExpr::Binary { left, right, .. } => {
-                let mut values = left.collect_params();
-                values.extend(right.collect_params());
-                values
-            }
-        }
+    /// Number of bound values carried by this expression.
+    pub(crate) fn param_count(&self) -> usize {
+        let mut index = 1usize;
+        let mut params = Vec::new();
+        let _ = self.compile(
+            &crate::query::compile::PortablePlaceholderGenerator,
+            &mut index,
+            &mut params,
+        );
+        params.len()
     }
 }
 
@@ -288,6 +282,14 @@ pub(crate) fn debug_assert_identifier(text: &str, context: &str) {
             }),
         "{context} must be an SQL identifier (`col` or `table.col`), got {text:?}; \n         runtime identifier APIs must never receive request data"
     );
+}
+
+/// Debug-only validation for a plain runtime column list.
+pub(crate) fn debug_assert_identifier_columns(columns: &[&str], context: &str) {
+    debug_assert!(!columns.is_empty(), "{context} needs at least one column");
+    for column in columns {
+        debug_assert_identifier(column, context);
+    }
 }
 
 /// One SELECT-list projection: an expression plus its output alias.
@@ -386,6 +388,17 @@ impl SelectItem {
         }
     }
 
+    /// Projects `COUNT(DISTINCT column)` with alias `count_<column>`.
+    pub fn count_distinct(column: impl Into<String>) -> Self {
+        let column = column.into();
+        debug_assert_identifier(&column, "SelectItem::count_distinct");
+        let alias = format!("count_{}", last_segment(&column));
+        Self {
+            expr: SqlExpr::count_distinct(column),
+            alias,
+        }
+    }
+
     /// Projects a bound constant with an explicit alias, e.g.
     /// `'TENANT' AS grant_scope`.
     pub fn literal(value: impl Into<DbValue>, alias: impl Into<String>) -> Self {
@@ -435,14 +448,32 @@ impl SelectItem {
         &self.alias
     }
 
-    /// Compiles this projection as `<expr> AS <alias>`.
-    pub(crate) fn to_sql(&self, gen: &dyn ISqlGenerator, param_idx: &mut usize) -> String {
-        format!("{} AS {}", self.expr.to_sql(gen, param_idx), self.alias)
+    /// Compiles this projection as `<expr> AS <alias>`, collecting its bound
+    /// values into `params` in placeholder order.
+    pub(crate) fn compile(
+        &self,
+        gen: &dyn ISqlGenerator,
+        param_idx: &mut usize,
+        params: &mut Vec<DbValue>,
+    ) -> String {
+        format!(
+            "{} AS {}",
+            self.expr.compile(gen, param_idx, params),
+            self.alias
+        )
     }
 
     /// Collects this projection's bound values in placeholder order.
+    #[cfg(test)]
     pub(crate) fn params(&self) -> Vec<DbValue> {
-        self.expr.collect_params()
+        let mut index = 1usize;
+        let mut params = Vec::new();
+        let _ = self.compile(
+            &crate::query::compile::PortablePlaceholderGenerator,
+            &mut index,
+            &mut params,
+        );
+        params
     }
 }
 
@@ -452,65 +483,68 @@ mod tests {
 
     use crate::query::compile::PortablePlaceholderGenerator;
 
+    /// Compiles with the portable generator and returns `(sql, params)`.
+    fn compile(expr: &SqlExpr) -> (String, Vec<DbValue>) {
+        let mut index = 1usize;
+        let mut params = Vec::new();
+        let sql = expr.compile(&PortablePlaceholderGenerator, &mut index, &mut params);
+        assert_eq!(
+            index - 1,
+            params.len(),
+            "every placeholder must collect exactly one value"
+        );
+        (sql, params)
+    }
+
     #[test]
     fn column_alias_is_the_last_name_segment() {
         let item = SelectItem::column("o.amount");
-        let mut idx = 1usize;
-        let sql = item.to_sql(&PortablePlaceholderGenerator, &mut idx);
+        let mut index = 1usize;
+        let mut params = Vec::new();
+        let sql = item.compile(&PortablePlaceholderGenerator, &mut index, &mut params);
         assert_eq!(sql, "o.amount AS amount");
-        assert_eq!(idx, 1, "plain columns bind nothing");
+        assert_eq!(index, 1, "plain columns bind nothing");
+        assert!(params.is_empty());
     }
 
     #[test]
     fn aggregate_aliases_use_the_function_prefix() {
-        let mut idx = 1usize;
         let gen = PortablePlaceholderGenerator;
-        assert_eq!(
-            SelectItem::sum("o.amount").to_sql(&gen, &mut idx),
-            "SUM(o.amount) AS sum_amount"
-        );
-        assert_eq!(
-            SelectItem::avg("rating").to_sql(&gen, &mut idx),
-            "AVG(rating) AS avg_rating"
-        );
-        assert_eq!(
-            SelectItem::min("price").to_sql(&gen, &mut idx),
-            "MIN(price) AS min_price"
-        );
-        assert_eq!(
-            SelectItem::max("price").to_sql(&gen, &mut idx),
-            "MAX(price) AS max_price"
-        );
-        assert_eq!(
-            SelectItem::count().to_sql(&gen, &mut idx),
-            "COUNT(*) AS count"
-        );
-        assert_eq!(
-            SelectItem::count_column("b.id").to_sql(&gen, &mut idx),
-            "COUNT(b.id) AS count_id"
-        );
-        assert_eq!(idx, 1);
+        for (item, expected) in [
+            (SelectItem::sum("o.amount"), "SUM(o.amount) AS sum_amount"),
+            (SelectItem::avg("rating"), "AVG(rating) AS avg_rating"),
+            (SelectItem::min("price"), "MIN(price) AS min_price"),
+            (SelectItem::max("price"), "MAX(price) AS max_price"),
+            (SelectItem::count(), "COUNT(*) AS count"),
+            (SelectItem::count_column("b.id"), "COUNT(b.id) AS count_id"),
+            (
+                SelectItem::count_distinct("b.id"),
+                "COUNT(DISTINCT b.id) AS count_id",
+            ),
+        ] {
+            let mut index = 1usize;
+            let mut params = Vec::new();
+            assert_eq!(item.compile(&gen, &mut index, &mut params), expected);
+            assert_eq!(index, 1);
+        }
     }
 
     #[test]
     fn coalesce_projection_binds_the_fallback_after_the_expression() {
         let item = SelectItem::sum("amount").coalesce(0i64);
-        let mut idx = 1usize;
-        let sql = item.to_sql(&PortablePlaceholderGenerator, &mut idx);
-        assert_eq!(sql, "COALESCE(SUM(amount), ?) AS sum_amount");
         assert_eq!(item.params(), vec![DbValue::I64(0)]);
-        assert_eq!(idx, 2);
     }
 
     #[test]
     fn literal_projection_binds_its_value() {
         let item = SelectItem::literal("TENANT", "grant_scope");
-        let mut idx = 1usize;
+        let mut index = 1usize;
+        let mut params = Vec::new();
         assert_eq!(
-            item.to_sql(&PortablePlaceholderGenerator, &mut idx),
+            item.compile(&PortablePlaceholderGenerator, &mut index, &mut params),
             "? AS grant_scope"
         );
-        assert_eq!(item.params(), vec![DbValue::String("TENANT".into())]);
+        assert_eq!(params, vec![DbValue::String("TENANT".into())]);
     }
 
     #[test]
@@ -525,37 +559,48 @@ mod tests {
             ),
             "size",
         );
-        let mut idx = 1usize;
-        let sql = item.to_sql(&PortablePlaceholderGenerator, &mut idx);
+        let mut index = 1usize;
+        let mut params = Vec::new();
+        let sql = item.compile(&PortablePlaceholderGenerator, &mut index, &mut params);
         assert_eq!(sql, "CASE WHEN amount > ? THEN ? ELSE ? END AS size");
         assert_eq!(
-            item.params(),
+            params,
             vec![
                 DbValue::I64(100),
                 DbValue::String("big".into()),
                 DbValue::String("small".into()),
             ]
         );
-        assert_eq!(idx, 4);
+        assert_eq!(index, 4);
     }
 
     #[test]
     fn binary_expression_compiles_with_parentheses() {
         let expr = SqlExpr::column("amount").sub(SqlExpr::literal(5i64));
-        let mut idx = 1usize;
-        let sql = expr.to_sql(&PortablePlaceholderGenerator, &mut idx);
+        let (sql, params) = compile(&expr);
         assert_eq!(sql, "(amount - ?)");
-        assert_eq!(expr.collect_params(), vec![DbValue::I64(5)]);
-        assert_eq!(idx, 2);
+        assert_eq!(params, vec![DbValue::I64(5)]);
+        assert_eq!(expr.param_count(), 1);
     }
 
     #[test]
     fn alias_override_keeps_the_expression() {
         let item = SelectItem::sum("amount").alias("total");
-        let mut idx = 1usize;
+        let mut index = 1usize;
+        let mut params = Vec::new();
         assert_eq!(
-            item.to_sql(&PortablePlaceholderGenerator, &mut idx),
+            item.compile(&PortablePlaceholderGenerator, &mut index, &mut params),
             "SUM(amount) AS total"
         );
+    }
+
+    #[test]
+    fn parameter_order_matches_sql_text_in_depth() {
+        // Binary(Column, Add, Coalesce(Literal, Literal)) must collect the
+        // literals in the exact order their placeholders appear.
+        let expr = SqlExpr::column("a").add(SqlExpr::literal(1i64).coalesce(2i64));
+        let (sql, params) = compile(&expr);
+        assert_eq!(sql, "(a + COALESCE(?, ?))");
+        assert_eq!(params, vec![DbValue::I64(1), DbValue::I64(2)]);
     }
 }

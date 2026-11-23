@@ -37,7 +37,7 @@ predicate = predicate.and_opt(
 let query = ctx.set::<Product>().query().filter(predicate);
 let total = query.clone().count().await?;                 // 与列表共用同一份条件
 let rows = query
-    .order_by_desc_column(column!(Product::created_at))
+    .order_by_desc(column!(Product::created_at))
     .take(20)
     .to_list()
     .await?;

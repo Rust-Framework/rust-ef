@@ -6,10 +6,11 @@
 //! Mutations (`add`, `attach`, `update`, `upsert`, `remove`) go through
 //! `DbContext` methods which coordinate DbSet + ChangeTracker.
 
-use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use crate::entity::{IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
 use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 use crate::query::{BoolExpr, IQueryable, Predicate, QueryBuilder};
+use crate::row::IRow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -168,11 +169,7 @@ impl<T: IEntityType + IEntitySnapshot> DbSet<T> {
     /// Checks whether an entity with the given key values exists in the database.
     pub async fn exists_by_id(&self, key_values: HashMap<String, DbValue>) -> EFResult<bool>
     where
-        T: IFromRow
-            + INavigationSetter
-            + IGetKeyValues
-            + IEntitySnapshot
-            + crate::entity::ILazyInit,
+        T: IRow + INavigationSetter + IGetKeyValues + IEntitySnapshot + crate::entity::ILazyInit,
     {
         let pairs: Vec<(&str, DbValue)> = key_values
             .iter()

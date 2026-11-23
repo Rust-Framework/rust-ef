@@ -164,7 +164,7 @@ let rows: Vec<CategoryTotal> = ctx
 - **可空单元格用 `Option<T>`**：SQL `NULL` 解码为 `None`（`Option<i64>`/`Option<String>`/…），
   LEFT JOIN 未命中行、可空报表列可直接映射；非空列请用裸类型，让 `NULL` 成为显式错误。
 - 元组 1..=12 元素也可用：`.to_list_rows::<(String, i64)>()`；元组要求行列数完全一致。
-- 实体自动实现 `IRow`（`T: IFromRow` 的 blanket impl），但只有列数与实体属性顺序一致时才能读取；
+- 实体由 `#[derive(EntityType)]` 生成 `impl IRow`（`entity::IFromRow` 是兼容别名路径），但只有列数与实体属性顺序一致时才能读取；
   报表行不需要 `EntityType`。同一个结构体不要再 derive `EntityType` + `FromRow`（两个 `IRow` 实现会冲突）。
 - `SelectQueryBuilder::to_list()`（`Vec<Vec<DbValue>>`）与 `to_list_typed_1..4` 仍保留，适合无需命名结构体的简单场景。
 
@@ -192,7 +192,7 @@ let rows: Vec<SalesRow> = ctx
 ## 安全边界：标识符来自代码常量，值走参数
 
 `SelectItem::column/sum/...` 的列名、`SelectItem::alias`、`SelectQueryBuilder::order_by(_desc)`
-都会作为 SQL **标识符原样输出**（与既有 `order_by_column` / `group_by` 运行时 API 一致）。
+都会作为 SQL **标识符原样输出**（与既有 `order_by` / `order_by_desc` / `group_by` 运行时 API 一致）。
 因此：
 
 - 列名/别名只能来自实体 `COLUMN_*` 常量或硬编码白名单；**绝不能**直接拼接请求参数
@@ -205,9 +205,9 @@ let rows: Vec<SalesRow> = ctx
 
 ## 内省与编译产物
 
-- `SelectQueryBuilder::compile_sql() -> (String, Vec<DbValue>)`：与 `QueryBuilder` 一致，返回 SQL 与按文本顺序的参数（日志、审计、SQL 形状断言）；
+- `SelectQueryBuilder::compile_sql() -> EFResult<(String, Vec<DbValue>)>`：与 `QueryBuilder` 一致，单遍编译 SQL 并按文本顺序收集参数（日志、审计、SQL 形状断言）；非法查询状态返回 typed `EFError::Configuration`；
 - `SelectQueryBuilder::state()`、`SelectItem::expression()` / `alias_name()`：报表运行时内省（例如动态 OpenAPI/导出适配器）；
-- `QueryState::compile_sql_with::<T>(gen)`：手写 `QueryState` 时的唯一正确入口（会解析相关子查询并使用正确占位符），不要自己 `to_sql_with` + `params()` 拼参数。
+- `QueryState::compile_sql_with::<T>(gen) -> EFResult<(String, Vec<DbValue>)>`：手写 `QueryState` 时的唯一正确入口（解析相关子查询、校验后单遍编译），不要自己用 `to_sql_with`/`all_params()` 拼参数（二者只是兼容包装）；`select_list()` 返回唯一 SELECT 形状（`SelectList`）。
 
 ## 参数顺序
 

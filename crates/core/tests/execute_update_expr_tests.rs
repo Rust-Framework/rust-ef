@@ -80,7 +80,7 @@ async fn set_column_expr_builds_arithmetic_set() {
         .to_sql();
 
     assert_eq!(
-        sql, "UPDATE eu_counters SET views = views + ? WHERE id = ?",
+        sql, "UPDATE eu_counters SET views = (views + ?) WHERE id = ?",
         "SET expression SQL shape"
     );
 }
@@ -101,12 +101,12 @@ async fn increment_and_decrement_build_arithmetic_set() {
 
     assert_eq!(
         update.to_sql(),
-        "UPDATE eu_counters SET status = ?, version = version + ?, stock = stock - ? \
+        "UPDATE eu_counters SET status = ?, version = (version + ?), stock = (stock - ?) \
          WHERE version = ?"
     );
     // SET parameters first (assignment order), then WHERE parameters.
     assert_eq!(
-        update.params(),
+        update.params().expect("params"),
         vec![
             DbValue::from("paid"),
             DbValue::from(1_i32),
@@ -139,12 +139,12 @@ async fn expression_params_precede_where_params() {
     let sql = update.to_sql();
     assert_eq!(
         sql,
-        "UPDATE eu_counters SET views = ? + views, stock = stock - ? \
+        "UPDATE eu_counters SET views = (? + views), stock = (stock - ?) \
          WHERE (id = ?) AND (version = ?)"
     );
     assert_eq!(sql.matches('?').count(), 4);
     assert_eq!(
-        update.params(),
+        update.params().expect("params"),
         vec![
             DbValue::from(7_i64),
             DbValue::from(3_i64),
@@ -172,9 +172,9 @@ async fn nested_subtraction_is_parenthesized_and_params_stay_ordered() {
 
     assert_eq!(
         update.to_sql(),
-        "UPDATE eu_counters SET stock = stock - (reserved + ?)"
+        "UPDATE eu_counters SET stock = (stock - (reserved + ?))"
     );
-    assert_eq!(update.params(), vec![DbValue::from(1_i64)]);
+    assert_eq!(update.params().expect("params"), vec![DbValue::from(1_i64)]);
 }
 
 #[tokio::test]
@@ -195,7 +195,7 @@ async fn set_column_still_binds_a_single_value_per_assignment() {
         "UPDATE eu_counters SET status = ?, views = ? WHERE id = ?"
     );
     assert_eq!(
-        update.params(),
+        update.params().expect("params"),
         vec![
             DbValue::from("closed"),
             DbValue::from(99_i64),

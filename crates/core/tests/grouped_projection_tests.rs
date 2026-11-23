@@ -198,16 +198,15 @@ fn sql_shape_for_coalesce_literal_and_case_projections() {
 fn params_follow_sql_text_order_projection_where_having() {
     let mut state = QueryState::new("grp_sales");
     state.group_bys = vec!["category".to_string()];
-    state.projections = vec![
+    state.set_projections(vec![
         SelectItem::literal("TENANT", "grant_scope"),
         SelectItem::sum("amount"),
-    ];
+    ]);
     state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
         "quantity",
         ">",
         vec![DbValue::I32(1)],
     )));
-    state.parameters.push(DbValue::I32(1));
     state.havings.push(HavingExpr::Compare {
         agg: AggKind::Sum,
         col: "amount".to_string(),
@@ -255,7 +254,7 @@ fn case_projection_params_are_ordered_condition_then_result() {
     );
 
     let mut state = QueryState::new("grp_sales");
-    state.projections = vec![item];
+    state.set_projections(vec![item]);
 
     assert_eq!(
         state.to_sql(),
@@ -575,7 +574,7 @@ fn plain_columns_and_typed_items_compose_instead_of_dropping_columns() {
             .query()
             .select_items(&[SelectItem::sum(Sale::COLUMN_AMOUNT)])
             .state()
-            .projections
+            .projections()
             .len(),
         1,
         "state() exposes the typed projections"

@@ -29,7 +29,7 @@ pub use helpers::*;
 pub use predicate::Predicate;
 pub use select::SelectQueryBuilder;
 pub use source::*;
-pub use state::QueryState;
+pub use state::{QueryState, SelectList};
 pub use window::*;
 
 // crate-internal helpers (used by change_executor / lazy / navigation_loader)

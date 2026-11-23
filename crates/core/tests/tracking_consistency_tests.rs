@@ -87,7 +87,7 @@ impl IEntityType for Item {
     }
 }
 
-impl rust_ef::entity::IFromRow for Item {
+impl rust_ef::row::IRow for Item {
     fn from_row(values: &[rust_ef::provider::DbValue]) -> EFResult<Self> {
         Ok(Item {
             id: values

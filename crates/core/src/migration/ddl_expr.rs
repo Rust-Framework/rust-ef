@@ -40,6 +40,9 @@ pub(super) fn render_filter(expr: &BoolExpr, dialect: MigrationDialect) -> Strin
         BoolExpr::InSubquery(_) | BoolExpr::NotInSubquery(_) => {
             panic!("subquery predicates are not supported in index filters")
         }
+        BoolExpr::Compare { .. } => {
+            panic!("scalar comparison predicates are not supported in index filters")
+        }
     }
 }
 

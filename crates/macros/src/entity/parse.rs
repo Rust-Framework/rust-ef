@@ -258,7 +258,7 @@ pub(super) fn parse_fields<'a>(
                         if field == #field_name_str {
                             let items: #ef::error::EFResult<Vec<#inner_type>> = rows
                                 .iter()
-                                .map(|r| <#inner_type as #ef::entity::IFromRow>::from_row(r))
+                                .map(|r| <#inner_type as #ef::row::IRow>::from_row(r))
                                 .collect();
                             self.#field_name = #ef::relations::HasMany::with(items?);
                             return Ok(());
@@ -315,7 +315,7 @@ pub(super) fn parse_fields<'a>(
                     ctx.reference_setter_arms.push(quote! {
                         if field == #field_name_str {
                             self.#field_name = #ef::relations::BelongsTo::with(
-                                <#inner_type as #ef::entity::IFromRow>::from_row(row)?,
+                                <#inner_type as #ef::row::IRow>::from_row(row)?,
                             );
                             return Ok(());
                         }
@@ -365,7 +365,7 @@ pub(super) fn parse_fields<'a>(
                     ctx.reference_setter_arms.push(quote! {
                         if field == #field_name_str {
                             self.#field_name = #ef::relations::HasOne::with(
-                                <#inner_type as #ef::entity::IFromRow>::from_row(row)?,
+                                <#inner_type as #ef::row::IRow>::from_row(row)?,
                             );
                             return Ok(());
                         }

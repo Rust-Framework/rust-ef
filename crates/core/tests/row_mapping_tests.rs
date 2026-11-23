@@ -78,7 +78,7 @@ fn derived_from_row_maps_values_in_declaration_order() {
 
 #[test]
 fn field_order_is_positional() {
-    let direct = Pair::from_values(&[DbValue::I32(10), DbValue::I32(20)]).expect("pair");
+    let direct = Pair::from_row(&[DbValue::I32(10), DbValue::I32(20)]).expect("pair");
     assert_eq!(
         direct,
         Pair {
@@ -87,7 +87,7 @@ fn field_order_is_positional() {
         }
     );
 
-    let swapped = Pair::from_values(&[DbValue::I32(20), DbValue::I32(10)]).expect("pair");
+    let swapped = Pair::from_row(&[DbValue::I32(20), DbValue::I32(10)]).expect("pair");
     assert_eq!(
         swapped,
         Pair {
@@ -99,8 +99,18 @@ fn field_order_is_positional() {
 }
 
 #[test]
+fn from_values_remains_a_compatibility_alias_for_from_row() {
+    // 2.8 merged the row-materialization traits; `from_values` survives as a
+    // delegating alias of the canonical `from_row`.
+    let alias = <Pair as rust_ef::row::IRow>::from_values(&[DbValue::I32(1), DbValue::I32(2)])
+        .expect("compatibility alias");
+    let canonical = Pair::from_row(&[DbValue::I32(1), DbValue::I32(2)]).expect("canonical");
+    assert_eq!(alias, canonical);
+}
+
+#[test]
 fn short_row_reports_the_missing_field_name_and_index() {
-    let err = CategoryTotal::from_values(&[DbValue::String("books".to_string())])
+    let err = CategoryTotal::from_row(&[DbValue::String("books".to_string())])
         .expect_err("short row must fail");
     match err {
         EFError::TypeConversion(message, _) => {
@@ -123,7 +133,7 @@ fn short_row_reports_the_missing_field_name_and_index() {
 
 #[test]
 fn unconvertible_cell_reports_the_field_name_and_index() {
-    let err = Pair::from_values(&[DbValue::I32(1), DbValue::String("nope".to_string())])
+    let err = Pair::from_row(&[DbValue::I32(1), DbValue::String("nope".to_string())])
         .expect_err("bad cell must fail");
     match err {
         EFError::TypeConversion(message, _) => {
@@ -142,22 +152,22 @@ fn unconvertible_cell_reports_the_field_name_and_index() {
 
 #[test]
 fn tuples_implement_row_for_fixed_arities() {
-    let two = <(String, i64)>::from_values(&[DbValue::String("toys".to_string()), DbValue::I64(7)])
+    let two = <(String, i64)>::from_row(&[DbValue::String("toys".to_string()), DbValue::I64(7)])
         .expect("two-tuple");
     assert_eq!(two, ("toys".to_string(), 7));
 
-    let one = <(i64,)>::from_values(&[DbValue::I64(42)]).expect("one-tuple");
+    let one = <(i64,)>::from_row(&[DbValue::I64(42)]).expect("one-tuple");
     assert_eq!(one.0, 42);
 
     type Twelve = (i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32);
     let values: Vec<DbValue> = (1..=12).map(DbValue::I32).collect();
-    let twelve = <Twelve>::from_values(&values).expect("twelve-tuple");
+    let twelve = <Twelve>::from_row(&values).expect("twelve-tuple");
     assert_eq!(twelve, (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12));
 }
 
 #[test]
 fn tuple_arity_mismatch_is_a_typed_error() {
-    let short = <(i32, i32)>::from_values(&[DbValue::I32(1)]).expect_err("short tuple");
+    let short = <(i32, i32)>::from_row(&[DbValue::I32(1)]).expect_err("short tuple");
     match short {
         EFError::TypeConversion(message, _) => {
             assert!(message.contains("needs exactly 2"), "unexpected: {message}");
@@ -165,7 +175,7 @@ fn tuple_arity_mismatch_is_a_typed_error() {
         other => panic!("expected TypeConversion, got {other:?}"),
     }
 
-    let long = <(i32,)>::from_values(&[DbValue::I32(1), DbValue::I32(2)]).expect_err("long tuple");
+    let long = <(i32,)>::from_row(&[DbValue::I32(1), DbValue::I32(2)]).expect_err("long tuple");
     assert!(matches!(long, EFError::TypeConversion(..)));
 }
 
@@ -220,7 +230,7 @@ async fn sql_query_rows_supports_parameters_and_tuple_targets() {
 }
 
 #[tokio::test]
-async fn entities_are_valid_row_targets_through_the_blanket_impl() {
+async fn entities_are_valid_row_targets_through_the_entity_derive() {
     let ctx = seeded_ctx().await;
 
     let entities: Vec<RowItem> = ctx
@@ -290,7 +300,7 @@ fn derived_rows_reject_extra_columns_instead_of_ignoring_them() {
         second: String,
     }
 
-    let too_long = <TwoColumnRow as rust_ef::row::IRow>::from_values(&[
+    let too_long = <TwoColumnRow as rust_ef::row::IRow>::from_row(&[
         DbValue::I32(1),
         DbValue::String("two".to_string()),
         DbValue::I32(3),
@@ -303,11 +313,44 @@ fn derived_rows_reject_extra_columns_instead_of_ignoring_them() {
         "unexpected error: {message}"
     );
 
-    let exact = <TwoColumnRow as rust_ef::row::IRow>::from_values(&[
+    let exact = <TwoColumnRow as rust_ef::row::IRow>::from_row(&[
         DbValue::I32(1),
         DbValue::String("two".to_string()),
     ])
     .expect("exact row");
     assert_eq!(exact.first, 1);
     assert_eq!(exact.second, "two");
+}
+
+#[test]
+fn entity_positional_mapping_tolerates_trailing_join_columns() {
+    // `SELECT * FROM items JOIN ...` appends the joined table's columns; entity
+    // materialization maps the leading entity columns and ignores the tail.
+    let entity = RowItem::from_row(&[
+        DbValue::I32(1),
+        DbValue::String("books".to_string()),
+        DbValue::I64(10),
+        DbValue::I64(999),
+    ])
+    .expect("entity rows may carry trailing columns");
+    assert_eq!(entity.id, 1);
+    assert_eq!(entity.category, "books");
+    assert_eq!(entity.amount, 10);
+}
+
+#[test]
+fn report_row_mappings_are_width_strict() {
+    let too_wide = CategoryTotal::from_row(&[
+        DbValue::String("books".to_string()),
+        DbValue::I64(150),
+        DbValue::I64(0),
+    ]);
+    assert!(
+        too_wide.is_err(),
+        "report structs must reject extra columns"
+    );
+
+    let too_wide_tuple =
+        <(i32, i64)>::from_row(&[DbValue::I32(1), DbValue::I64(2), DbValue::I64(3)]);
+    assert!(too_wide_tuple.is_err(), "tuples must reject extra columns");
 }

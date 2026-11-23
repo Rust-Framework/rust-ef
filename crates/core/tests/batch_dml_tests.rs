@@ -7,12 +7,13 @@
 //! for bulk operations.
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
-use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use rust_ef::entity::{IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
 use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
 use rust_ef::provider::DbValue;
 use rust_ef::query::{BoolExpr, FilterCondition};
+use rust_ef::row::IRow;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 // ---------------------------------------------------------------------------
@@ -146,7 +147,7 @@ impl IEntityType for BatchItem {
     }
 }
 
-impl IFromRow for BatchItem {
+impl IRow for BatchItem {
     fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(BatchItem {
             id: values

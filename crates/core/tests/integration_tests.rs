@@ -56,7 +56,7 @@ mod tests {
     #[test]
     fn test_query_state_to_sql_count() {
         let mut state = QueryState::new("posts");
-        state.is_count = true;
+        state.set_count();
         let sql = state.to_sql();
         assert!(sql.contains("SELECT COUNT(*)"));
     }

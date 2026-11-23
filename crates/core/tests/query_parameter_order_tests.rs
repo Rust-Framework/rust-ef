@@ -61,10 +61,11 @@ async fn having_added_before_the_filter_keeps_sql_parameter_order() {
     let query = ctx
         .set::<PoSale>()
         .query()
-        .having_expr_internal(having)
+        .having(having)
         .filter(linq!(|s: PoSale| s.amount > 10));
 
-    let (sql, params) = query.compile_sql();
+    let sql = query.to_sql();
+    let params = query.state().all_params();
     assert_eq!(
         sql,
         "SELECT * FROM po_sales WHERE amount > ? HAVING COUNT(id) > ?"
@@ -96,13 +97,11 @@ async fn cte_plus_projection_parameters_follow_sql_text_order() {
     // API, so clone the accumulated state and append the projection items
     // exactly like `select_items` does.
     let mut state = query.state().clone();
-    state.projections.push(SelectItem::literal(
+    state.push_projection(SelectItem::literal(
         DbValue::String("REPORT".to_string()),
         "grant_scope",
     ));
-    state
-        .projections
-        .push(SelectItem::column(PoSale::COLUMN_ID));
+    state.push_projection(SelectItem::column(PoSale::COLUMN_ID));
 
     let sql = state.to_sql_with(&PgLikeGenerator);
     assert_eq!(
@@ -162,10 +161,10 @@ async fn expression_updates_bind_set_values_before_the_where_clause() {
 
     assert_eq!(
         update.to_sql(),
-        "UPDATE po_sales SET amount = ?, amount = amount + ? WHERE id = ?"
+        "UPDATE po_sales SET amount = ?, amount = (amount + ?) WHERE id = ?"
     );
     assert_eq!(
-        update.params(),
+        update.params().expect("params"),
         vec![DbValue::I64(100), DbValue::I32(5), DbValue::I32(7)]
     );
 }
@@ -189,7 +188,8 @@ async fn a_projection_compiles_its_params_in_sql_order() {
             SelectItem::column(PoSale::COLUMN_ID),
         ]);
 
-    let (sql, params) = query.compile_sql();
+    let sql = query.to_sql();
+    let params = query.state().all_params();
     assert!(
         sql.starts_with("WITH rich AS (SELECT * FROM \"po_sales\" WHERE amount > ?)"),
         "unexpected SQL: {sql}"

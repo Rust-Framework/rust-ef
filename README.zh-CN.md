@@ -16,8 +16,8 @@
 
 ```toml
 [dependencies]
-rust-ef = "2.6"
-rust-ef-sqlite = "2.6"
+rust-ef = "2.8"
+rust-ef-sqlite = "2.8"
 rust-dix = "1.0"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // 2. 以 owned DbContext 解析（&mut self 访问，无需锁）
-    //    rust-dix 0.10：get_owned() 返回 Result<T, RdiError>，且允许从根 provider 解析
+    //    rust-dix 1.0：get_owned() 返回 Result<T, RdiError>，且允许从根 provider 解析
     //    （实例归调用方所有，容器不缓存）。
     let mut ctx: DbContext = provider.get_owned()?;
 
@@ -123,7 +123,7 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// rust-dix 0.10：Scoped DbContext 不能从根 provider 共享解析，需先建 scope
+// rust-dix 1.0：Scoped DbContext 不能从根 provider 共享解析，需先建 scope
 // （owned 解析仍可从根进行）。
 let scope = provider.scope();
 let primary: Arc<DbContext> = scope.get_keyed("primary").unwrap();
@@ -299,7 +299,7 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // 每个请求都会创建一个 scope（rust-webx 按 HTTP 请求自动创建）。
-// rust-dix 0.10：从该 scope 解析 Scoped DbContext。
+// rust-dix 1.0：从该 scope 解析 Scoped DbContext。
 let scope = provider.scope();
 let mut ctx: DbContext = scope.get_owned().unwrap();
 

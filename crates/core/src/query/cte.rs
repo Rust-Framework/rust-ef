@@ -22,9 +22,9 @@ use super::ast::BoolExpr;
 /// ## Modes
 ///
 /// - **Raw mode** (via `with_cte_internal`): `sql` is non-empty, `table` and
-///   `where_expr` are empty. The SQL is emitted verbatim. Placeholders use
-///   the `?` style and are **not** converted to provider-specific syntax —
-///   suitable for SQLite/MySQL but may produce incorrect `$N` on PostgreSQL.
+///   `where_expr` are empty. The SQL may use `?` placeholders (adapted to the
+///   provider's syntax at compile time) or already-provider-compiled `$N`
+///   placeholders (renumbered past the preceding statement parameters).
 ///
 /// - **Typed mode** (via `with_cte_typed`, used by `linq!(with ...)`): `table`
 ///   is non-empty, `where_expr` is `Some(...)`, `sql` is empty. The CTE body

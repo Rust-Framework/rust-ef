@@ -1,6 +1,6 @@
 # 定义第一个实体
 
-实体是 ORM 的核心。`#[derive(EntityType)]` 自动实现 `IEntityType`、`IFromRow`、`IGetKeyValues` 等必要 trait。
+实体是 ORM 的核心。`#[derive(EntityType)]` 自动实现 `IEntityType`、`IRow`（`IFromRow` 为其兼容别名）、`IGetKeyValues` 等必要 trait。
 
 ## 最小实体
 

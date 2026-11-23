@@ -40,7 +40,7 @@ let rows = conn
     )
     .await?;
 
-// 结果映射为实体（T: IFromRow + IEntityType）
+// 结果映射为实体（T: IEntityType + IRow；IFromRow 是 IRow 的兼容别名）
 let blogs: Vec<Blog> = ctx
     .sql_query(
         "SELECT * FROM blogs WHERE rating > ? ORDER BY id",
@@ -51,11 +51,11 @@ let blogs: Vec<Blog> = ctx
 
 - 值一律通过 `DbValue` 参数绑定，禁止 `format!` 拼接用户输入。
 - 列名/表名只能来自代码常量；请求字段决定列名/排序字段是禁止项。
-- `ctx.sql_query::<T>(...)` 要求 `T: IFromRow + IEntityType`（实体）；结果映射按实体属性位置。
+- `ctx.sql_query::<T>(...)` 要求 `T: IEntityType + IRow`（实体）；结果映射按实体属性位置。
 
 ### 报表行：`sql_query_rows` + `IRow`
 
-报表结果不是实体时，用 `DbContext::sql_query_rows` 把行物化为任意 `IRow`：`#[derive(FromRow)]` 结构体、1..=12 元组、或实体（实体经 blanket impl 自动实现 `IRow`）。
+报表结果不是实体时，用 `DbContext::sql_query_rows` 把行物化为任意 `IRow`：`#[derive(FromRow)]` 结构体、1..=12 元组、或实体（实体由 `#[derive(EntityType)]` 生成 `impl IRow`，`entity::IFromRow` 为兼容别名路径）。
 
 ```rust
 use rust_ef::FromRow;
@@ -88,7 +88,7 @@ let pairs: Vec<(i32, String)> = ctx
 
 ### 实体行物化：位置版 vs 按列名版
 
-框架默认查询路径（`to_list()`、`ctx.sql_query::<T>()`）用**位置版** `IFromRow::from_row`：
+框架默认查询路径（`to_list()`、`ctx.sql_query::<T>()`）用**位置版** `IRow::from_row`：
 要求结果行顺序与实体属性顺序一致（模型声明顺序，即 `SELECT *` 的列顺序）。
 
 视图、迁移重排过的列、或手写 `SELECT` 的列顺序与模型不一致时，用**按列名版**避免静默错位：

@@ -27,6 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # cargo-semver-checks needs the release tag it compares against.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -62,11 +65,52 @@ jobs:
             fi
           done
 
+      # The release preflight deliberately mirrors the `lint`/`docs` jobs of
+      # ci.yml: a commit that cannot pass CI must never reach crates.io (a
+      # published version can only be yanked, never replaced).
       - name: Format check
         run: cargo fmt --all -- --check
 
+      - name: Clippy (default features)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Clippy (chrono/uuid/decimal features)
+        run: cargo clippy --workspace --all-targets --features chrono,uuid,decimal -- -D warnings
+
       - name: Clippy (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Check single rust-dix version
+        run: |
+          set -euo pipefail
+          count="$(cargo tree -i rust-dix | grep -c '^rust-dix v')"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::expected exactly one rust-dix version, found $count"
+            cargo tree -i rust-dix
+            exit 1
+          fi
+
+      - name: Rustdoc (warnings as errors)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --no-deps --all-features
+
+      - name: SemVer (public API vs v2.6.0)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+      - name: Check rust-ef public API against v2.6.0
+        run: cargo semver-checks --package rust-ef --baseline-rev v2.6.0
+
+      - name: Install mdBook
+        run: |
+          mkdir mdbook
+          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz -o mdbook.tar.gz
+          tar -xzf mdbook.tar.gz -C mdbook
+          chmod +x mdbook/mdbook
+          echo "$PWD/mdbook" >> "$GITHUB_PATH"
+      - name: Build mdBook
+        run: mdbook build docs/rust-ef
 
       - name: Tests (SQLite; PG/MySQL run in CI matrix)
         run: cargo test --workspace --all-features -- --skip postgres --skip mysql

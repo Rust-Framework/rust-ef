@@ -114,7 +114,7 @@ impl IEntityType for TenantItem {
     }
 }
 
-impl rust_ef::entity::IFromRow for TenantItem {
+impl rust_ef::row::IRow for TenantItem {
     fn from_row(values: &[DbValue]) -> rust_ef::error::EFResult<Self> {
         Ok(TenantItem {
             id: values

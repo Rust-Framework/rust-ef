@@ -469,7 +469,8 @@ struct OrderEnum {
 
 #[test]
 fn db_enum_maps_to_string_values() {
-    use rust_ef::entity::{IEntitySnapshot, IFromRow};
+    use rust_ef::entity::IEntitySnapshot;
+    use rust_ef::row::IRow;
 
     assert_eq!(
         DbValue::from(OrderStatus::Paid),

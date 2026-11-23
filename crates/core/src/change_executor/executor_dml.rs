@@ -9,6 +9,18 @@ use crate::query::{collect_bool_expr_values, compile_bool_expr, BoolExpr};
 
 use super::executor::ChangeExecutor;
 
+/// Collects a filter's bound values and asserts they match the placeholder
+/// count of the SQL produced by the same compiler.
+fn filter_values_checked(filter: &BoolExpr) -> Vec<DbValue> {
+    let values = collect_bool_expr_values(filter);
+    debug_assert_eq!(
+        values.len(),
+        filter.total_param_count(),
+        "DML filter placeholder/value mismatch"
+    );
+    values
+}
+
 impl ChangeExecutor {
     /// Executes UPDATE statements for all modified entities.
     ///
@@ -85,7 +97,7 @@ impl ChangeExecutor {
 
         // Filter params are constant across batches.
         let filter_params: Vec<DbValue> = match query_filter {
-            Some(filter) => collect_bool_expr_values(filter),
+            Some(filter) => filter_values_checked(filter),
             None => Vec::new(),
         };
 
@@ -249,7 +261,7 @@ impl ChangeExecutor {
             if let Some(filter) = query_filter {
                 let mut idx = set_cols.len() + where_params.len() + 1;
                 let filter_sql = compile_bool_expr(filter, gen, &mut idx);
-                where_params.extend(collect_bool_expr_values(filter));
+                where_params.extend(filter_values_checked(filter));
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
 
@@ -331,7 +343,7 @@ impl ChangeExecutor {
         // For `?` dialects (SQLite/MySQL), the filter SQL is index-independent
         // and can be compiled once and reused.
         let filter_params: Vec<DbValue> = match query_filter {
-            Some(filter) => collect_bool_expr_values(filter),
+            Some(filter) => filter_values_checked(filter),
             None => Vec::new(),
         };
         let cached_filter_sql: Option<String> = if !gen.uses_numbered_placeholders() {
@@ -423,7 +435,7 @@ impl ChangeExecutor {
             if let Some(filter) = query_filter {
                 let mut idx = where_params.len() + 1;
                 let filter_sql = compile_bool_expr(filter, gen, &mut idx);
-                where_params.extend(collect_bool_expr_values(filter));
+                where_params.extend(filter_values_checked(filter));
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
 

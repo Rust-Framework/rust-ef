@@ -6,7 +6,7 @@
 
 An **EF Core-inspired ORM for Rust** — `DbContext` / `DbSet<T>` / `IEntityType`,
 the `linq!` macro, change tracking, transactions, migrations, and multi-database
-support, with first-class [`rust-dix` 0.9](https://crates.io/crates/rust-dix)
+support, with first-class [`rust-dix` 1.0](https://crates.io/crates/rust-dix)
 dependency-injection integration.
 
 Full handbook: <https://rust-framework.github.io/rust-ef/>
@@ -17,9 +17,9 @@ Full handbook: <https://rust-framework.github.io/rust-ef/>
 
 ```toml
 [dependencies]
-rust-ef = "2.2"
-rust-ef-sqlite = "2.2"          # one provider: sqlite / postgres / mysql
-rust-dix = "0.10"                # DI container
+rust-ef = "2.8"
+rust-ef-sqlite = "2.8"          # one provider: sqlite / postgres / mysql
+rust-dix = "1.0"                # DI container
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -48,7 +48,7 @@ pub struct Blog {
 `#[derive(EntityType)]` registers the entity at compile time; `DbContext::from_options()`
 discovers it automatically — no manual `discover_entities()` call.
 
-## Register a `DbContext` (rust-dix 0.10)
+## Register a `DbContext` (rust-dix 1.0)
 
 ```rust
 use std::sync::Arc;
@@ -69,7 +69,7 @@ let provider = ServiceCollection::new()
 let mut ctx: DbContext = provider.get_owned().unwrap();
 
 // Shared resolution: Arc<DbContext>, &self access, one instance per scope.
-// rust-dix 0.10 enables strict scope validation by default, so create a scope.
+// rust-dix 1.0 enables strict scope validation by default, so create a scope.
 let scope = provider.scope();
 let shared: Arc<DbContext> = scope.get().unwrap();
 ```
@@ -83,7 +83,7 @@ let shared: Arc<DbContext> = scope.get().unwrap();
 ### More registration variants (2.1)
 
 - **Typed keys**: `#[derive(DbContextKey)]` generates `IDbContextKey` and the
-  rust-dix 0.10 `From<Key> for ServiceKey` contract, so registration,
+  rust-dix 1.0 `From<Key> for ServiceKey` contract, so registration,
   `DbContextResolver` and `#[inject(owned, key = Db::Read)]` all use the same
   typed key.
 - **Dynamic tenant/sharded contexts**: `add_dbcontext_anykey(|key, options| ...)`
@@ -97,7 +97,7 @@ let shared: Arc<DbContext> = scope.get().unwrap();
 
 See the handbook DI chapter and `docs/v2.1-migration-guide.md`.
 
-## What's new in 2.7
+## What's new in 2.8
 
 - **Typed report projections**: `SelectItem` / `SqlExpr` (columns, aggregates,
   `COALESCE`, `CASE`, literals), `SelectQueryBuilder::{group_by, select_items,
@@ -153,7 +153,7 @@ let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 | Query | `linq!` expression trees, composable `Predicate<T>` filters, join/group_by/aggregation, CTEs, window functions, lazy loading (opt-in) |
 | Persistence | `save_changes()`, parameterized SQL, transactions and savepoints, cascade delete, bulk `execute_update` / `execute_delete` |
 | Migrations | model diff, Up/Down SQL, migration history, composite/partial/expression indexes, composite FKs, `CHECK`, column defaults/comments/computed columns, MySQL table options, schema-qualified tables, views |
-| DI | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_anykey` / async variants on rust-dix 0.10 (Scoped, owned + shared resolution, typed keys, dynamic contexts) |
+| DI | `add_dbcontext` / `add_dbcontext_keyed` / `add_dbcontext_anykey` / async variants on rust-dix 1.0 (Scoped, owned + shared resolution, typed keys, dynamic contexts) |
 | Interceptors | before/after/failure hooks around `save_changes()` |
 | Observability | optional `tracing` spans and slow-query warnings |
 
@@ -191,7 +191,7 @@ cascade.rs             cascade save / delete
 transaction.rs         context-scoped transactions and savepoints
 interceptor.rs         ISaveChangesInterceptor pipeline
 migration/             MigrationEngine, diffing, history
-di.rs                  rust-dix 0.10 integration
+di.rs                  rust-dix 1.0 integration
 ```
 
 ## Cargo features

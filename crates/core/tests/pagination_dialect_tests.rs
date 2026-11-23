@@ -142,7 +142,6 @@ fn test_pg_full_query_where_having_pagination() {
     // Full query: WHERE category = $1 GROUP BY ... HAVING COUNT(id) > $2
     //             OFFSET 10 LIMIT 5
     let mut state = QueryState::new("blogs");
-    state.parameters.push(DbValue::I32(1));
     state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
         "category",
         "=",
@@ -176,7 +175,6 @@ fn test_mysql_full_query_where_having_pagination() {
     // MySQL: WHERE category = ? GROUP BY ... HAVING COUNT(id) > ?
     //        LIMIT 5 OFFSET 10
     let mut state = QueryState::new("blogs");
-    state.parameters.push(DbValue::I32(1));
     state.where_expr = Some(BoolExpr::Filter(FilterCondition::with_values(
         "category",
         "=",
@@ -198,5 +196,16 @@ fn test_mysql_full_query_where_having_pagination() {
     assert!(
         sql.contains("LIMIT 5 OFFSET 10"),
         "MySQL pagination should be LIMIT then OFFSET: {sql}"
+    );
+}
+
+#[test]
+fn sqlite_offset_only_emits_a_real_offset() {
+    let mut state = QueryState::new("items");
+    state.offset = Some(10);
+    let sql = state.to_sql_with(&SqliteLikeGenerator);
+    assert!(
+        sql.contains("LIMIT -1 OFFSET 10"),
+        "offset-only pagination must not be dropped on SQLite: {sql}"
     );
 }

@@ -5,8 +5,7 @@
 //! Covered here:
 //! - the public method builds the expected `UPDATE ... SET ... WHERE ...` SQL;
 //! - a compare-and-swap guard (status/version) plus version bump is a single
-//!   statement, and a stale guard reports `0` affected rows;
-//! - the deprecated `set_column_internal` alias still works for one release.
+//!   statement, and a stale guard reports `0` affected rows.
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::prelude::*;
@@ -106,31 +105,4 @@ async fn cas_guard_and_version_bump_are_one_statement() {
         .expect("order 1 exists");
     assert_eq!(order.status, "paid");
     assert_eq!(order.version, 2);
-}
-
-#[tokio::test]
-#[allow(deprecated)]
-async fn deprecated_set_column_internal_alias_still_works() {
-    let mut ctx = seed().await;
-
-    let affected = ctx
-        .set::<Ef3Order>()
-        .query()
-        .filter(linq!(|o: Ef3Order| o.id == 2))
-        .execute_update()
-        .set_column_internal(Ef3Order::COLUMN_STATUS, "alias")
-        .execute()
-        .await
-        .unwrap();
-    assert_eq!(affected, 1);
-
-    let order = ctx
-        .set::<Ef3Order>()
-        .query()
-        .filter(linq!(|o: Ef3Order| o.id == 2))
-        .first_or_default()
-        .await
-        .unwrap()
-        .expect("order 2 exists");
-    assert_eq!(order.status, "alias");
 }

@@ -2,7 +2,7 @@
 //!
 //! The derive macro entry point lives in `expand.rs`; field parsing and
 //! `EntityContext` construction in `parse.rs`; impl generation (`IEntityType`,
-//! `IGetKeyValues`, `IEntitySnapshot`, `IFromRow`, `INavigationSetter`,
+//! `IGetKeyValues`, `IEntitySnapshot`, `IRow`, `INavigationSetter`,
 //! `ILazyInit`) in `gen.rs`; and attribute extraction / navigation detection
 //! helpers in `helpers.rs`.
 

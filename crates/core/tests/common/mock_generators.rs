@@ -115,7 +115,8 @@ impl ISqlGenerator for SqliteLikeGenerator {
         match (skip, take) {
             (Some(s), Some(t)) => format!("LIMIT {} OFFSET {}", t, s),
             (None, Some(t)) => format!("LIMIT {}", t),
-            _ => String::new(),
+            (Some(s), None) => format!("LIMIT -1 OFFSET {}", s),
+            (None, None) => String::new(),
         }
     }
     fn parameter_placeholder(&self, _: usize) -> String {

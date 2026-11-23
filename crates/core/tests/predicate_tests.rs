@@ -35,7 +35,7 @@ fn always_seed_adds_no_sql() {
         QueryBuilder::<Product>::new("predicate_products").filter(Predicate::<Product>::always());
 
     assert_eq!(query.to_sql(), "SELECT * FROM predicate_products");
-    assert!(query.compile_sql().1.is_empty());
+    assert!(query.compile_sql().expect("compile").1.is_empty());
 }
 
 #[test]
@@ -51,7 +51,8 @@ fn or_group_keeps_its_parentheses_and_value_order() {
 
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
         .filter(predicate)
-        .compile_sql();
+        .compile_sql()
+        .expect("compile");
 
     assert!(
         sql.contains("(name LIKE ?) OR (description LIKE ?)"),
@@ -77,7 +78,8 @@ fn never_seed_disappears_from_an_or_chain() {
 
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
         .filter(predicate)
-        .compile_sql();
+        .compile_sql()
+        .expect("compile");
 
     assert!(!sql.contains("1=0"), "seed must not leak into SQL: {sql}");
     assert!(
@@ -91,7 +93,8 @@ fn never_seed_disappears_from_an_or_chain() {
 fn never_applied_on_its_own_matches_nothing() {
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
         .filter(Predicate::<Product>::never())
-        .compile_sql();
+        .compile_sql()
+        .expect("compile");
 
     assert!(sql.contains("1=0"), "{sql}");
     assert!(params.is_empty());
@@ -103,7 +106,7 @@ fn where_appends_to_conditions_added_earlier() {
         .filter(linq!(|p: Product| p.price > 1.0))
         .filter(linq!(|p: Product| p.name.contains("x")));
 
-    let (sql, params) = query.compile_sql();
+    let (sql, params) = query.compile_sql().expect("compile");
 
     assert!(sql.contains("(price > ?) AND (name LIKE ?)"), "{sql}");
     assert_eq!(
@@ -118,7 +121,8 @@ fn empty_in_list_matches_no_rows() {
     let ids: Vec<i32> = Vec::new();
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
         .filter(linq!(|p: Product| ids.contains(p.id)))
-        .compile_sql();
+        .compile_sql()
+        .expect("compile");
 
     assert_eq!(sql, "SELECT * FROM predicate_products WHERE 1 = 0");
     assert!(params.is_empty());
@@ -144,10 +148,12 @@ fn identity_predicates_are_reduced_away() {
 
     let (and_sql, and_params) = QueryBuilder::<Product>::new("predicate_products")
         .filter(with_always)
-        .compile_sql();
+        .compile_sql()
+        .expect("compile");
     let (or_sql, or_params) = QueryBuilder::<Product>::new("predicate_products")
         .filter(with_never)
-        .compile_sql();
+        .compile_sql()
+        .expect("compile");
 
     assert_eq!(and_sql, or_sql);
     assert_eq!(and_sql, "SELECT * FROM predicate_products WHERE price > ?");
@@ -172,7 +178,8 @@ fn identity_flags_and_option_combinators() {
 
     let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
         .filter(predicate)
-        .compile_sql();
+        .compile_sql()
+        .expect("compile");
     assert_eq!(sql, "SELECT * FROM predicate_products WHERE price > ?");
     assert_eq!(params, vec![DbValue::F64(1.0)]);
 }

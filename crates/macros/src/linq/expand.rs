@@ -147,14 +147,14 @@ fn expand_clauses(
             LinqClause::OrderBy { field, descending } => {
                 let col = extract_field(&ctx, field)?;
                 if *descending {
-                    chain = quote! { #chain .order_by_desc_column(#col) };
+                    chain = quote! { #chain .order_by_desc(#col) };
                 } else {
-                    chain = quote! { #chain .order_by_column(#col) };
+                    chain = quote! { #chain .order_by(#col) };
                 }
             }
             LinqClause::GroupBy { fields } => {
                 let cols = extract_field_array(&ctx, fields)?;
-                chain = quote! { #chain .group_by_internal(#cols) };
+                chain = quote! { #chain .group_by(#cols) };
             }
             LinqClause::Select { fields } => {
                 // Plain column lists keep the 2.6 SQL shape (`SELECT a, b`,
@@ -168,7 +168,7 @@ fn expand_clauses(
                 });
                 if plain_columns {
                     let cols = extract_field_array(&ctx, fields)?;
-                    chain = quote! { #chain .select_internal(#cols) };
+                    chain = quote! { #chain .select_columns(#cols) };
                 } else {
                     let items = expand_select_items(&ctx, fields, ef)?;
                     chain = quote! { #chain .select_items(&[#(#items),*]) };
@@ -177,7 +177,7 @@ fn expand_clauses(
             LinqClause::HavingExpr { expr } => {
                 let having_code = compile_having_expr(expr, &ctx, ef)?;
                 chain = quote! {
-                    #chain .having_expr_internal(#having_code)
+                    #chain .having(#having_code)
                 };
             }
             LinqClause::Distinct => {
@@ -316,7 +316,7 @@ fn expand_clauses(
             }
             LinqClause::Sum(field) => {
                 let col = extract_field(&ctx, field)?;
-                terminal = Some(quote! { .sum_internal(#col) });
+                terminal = Some(quote! { .sum_f64(#col) });
             }
             LinqClause::SumI64(field) => {
                 let col = extract_field(&ctx, field)?;
@@ -324,15 +324,15 @@ fn expand_clauses(
             }
             LinqClause::Avg(field) => {
                 let col = extract_field(&ctx, field)?;
-                terminal = Some(quote! { .avg_internal(#col) });
+                terminal = Some(quote! { .avg_f64(#col) });
             }
             LinqClause::Min(field) => {
                 let col = extract_field(&ctx, field)?;
-                terminal = Some(quote! { .min_internal(#col) });
+                terminal = Some(quote! { .min(#col) });
             }
             LinqClause::Max(field) => {
                 let col = extract_field(&ctx, field)?;
-                terminal = Some(quote! { .max_internal(#col) });
+                terminal = Some(quote! { .max(#col) });
             }
             LinqClause::Count => {
                 terminal = Some(quote! { .count() });

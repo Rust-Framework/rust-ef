@@ -2,7 +2,7 @@
 
 当需要按条件更新大量记录时，`ExecuteUpdate` 直接在数据库端执行 UPDATE，无需先加载实体到内存。普通场景用 `linq!` 宏的 `set` + `execute_update` 子句表达（`set b.rating, 3` 编译期解析为 `Blog::COLUMN_RATING`）；动态列或 CAS（条件更新）用公开的 `ExecuteUpdateBuilder::set_column`，二者最终生成同一条 UPDATE。
 
-2.7 起，`SET` 的右侧可以是**表达式**：另一列（`col = other_col`）或列算术（`col = col + ?`），用于原子增量/减量和 CAS 版本号自增，不需要「先读后写」。
+2.8 起，`SET` 的右侧可以是**表达式**：另一列（`col = other_col`）或列算术（`col = col + ?`），用于原子增量/减量和 CAS 版本号自增，不需要「先读后写」。
 
 ## 基本用法
 
@@ -34,7 +34,7 @@ UPDATE blogs SET rating = ? WHERE rating < ?
 
 多个 `set` 子句生成 `SET col1 = ?, col2 = ?`。
 
-## 表达式更新：列 = 列 ± 表达式（2.7+）
+## 表达式更新：列 = 列 ± 表达式（2.8+）
 
 `set` 的右侧识别三种形态：
 
@@ -103,7 +103,7 @@ if affected == 0 {
 ```
 
 - `set_column` 自 2.3.0 起是公开、受 semver 覆盖的入口（用于动态列/CAS；普通写路径仍推荐 `linq! set`）。
-- 旧名 `set_column_internal` 保留一版 `#[deprecated]` 别名，新代码不要使用。
+- 2.8.0 已删除 2.3 的历史别名 `set_column_internal`；统一使用 `set_column` / `set_column_expr`。
 
 ## CAS + 原子自增：`increment` / `decrement`
 

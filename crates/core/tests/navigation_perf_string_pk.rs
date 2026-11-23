@@ -7,16 +7,17 @@
 //! while `db_value_key` produced quoted output, causing String PK include to
 //! silently return empty children.
 //!
-//! Entities use manual `IEntityType` / `IFromRow` / `INavigationSetter`
+//! Entities use manual `IEntityType` / `IRow` / `INavigationSetter`
 //! impls (no derive macro) for test isolation.
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
-use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use rust_ef::entity::{IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
 use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta, PropertyMeta};
 use rust_ef::provider::DbValue;
 use rust_ef::relations::HasMany;
+use rust_ef::row::IRow;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 // ---------------------------------------------------------------------------
@@ -118,7 +119,7 @@ impl IEntityType for StringPkParent {
     }
 }
 
-impl IFromRow for StringPkParent {
+impl IRow for StringPkParent {
     fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(StringPkParent {
             code: values
@@ -154,7 +155,7 @@ impl INavigationSetter for StringPkParent {
         if field == "children" {
             let items: EFResult<Vec<StringPkChild>> = rows
                 .iter()
-                .map(|r| <StringPkChild as IFromRow>::from_row(r))
+                .map(|r| <StringPkChild as IRow>::from_row(r))
                 .collect();
             self.children = HasMany::with(items?);
             return Ok(());
@@ -279,7 +280,7 @@ impl IEntityType for StringPkChild {
     }
 }
 
-impl IFromRow for StringPkChild {
+impl IRow for StringPkChild {
     fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(StringPkChild {
             id: values

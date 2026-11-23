@@ -262,3 +262,21 @@ async fn test_not_all_published() {
     assert!(urls.contains(&"https://b1.example".to_string()));
     assert!(urls.contains(&"https://b3.example".to_string()));
 }
+
+#[tokio::test]
+async fn typed_cte_with_exists_predicate_is_resolved() {
+    // Regression (2.8 review): typed CTE bodies compile through the same
+    // pipeline, so their correlated subqueries must be resolved as well.
+    let mut ctx = seed().await;
+    let filtered = linq!(|b: SubBlog| b.posts.any(|p: SubPost| p.published)).into_expr();
+
+    let blogs = ctx
+        .set::<SubBlog>()
+        .query()
+        .with_cte_typed("active_blogs", SubBlog::TABLE, filtered)
+        .from_cte("active_blogs")
+        .to_list()
+        .await
+        .expect("typed CTE with EXISTS must execute");
+    assert_eq!(blogs.len(), 2, "only blogs with a published post");
+}

@@ -42,16 +42,15 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     /// Returns the generated SQL and its bound parameters in SQL text order.
     ///
     /// Same contract as [`QueryBuilder::compile_sql`](super::QueryBuilder::compile_sql):
-    /// parameters follow `all_params()` (CTE -> projections -> WHERE -> HAVING ->
-    /// set operations). Useful for logging, SQL-shape assertions and custom
-    /// execution wrappers; the terminals already bind the same vector.
-    pub fn compile_sql(&self) -> (String, Vec<DbValue>) {
+    /// parameters follow SQL text order (CTE -> projections -> WHERE -> HAVING
+    /// -> set operations), produced in one pass. Invalid query states are typed
+    /// errors.
+    pub fn compile_sql(&self) -> EFResult<(String, Vec<DbValue>)> {
         let resolved = self.resolved_state();
-        let sql = match &self.provider {
-            Some(provider) => resolved.to_sql_with(provider.sql_generator()),
-            None => resolved.to_sql(),
-        };
-        (sql, resolved.all_params())
+        match &self.provider {
+            Some(provider) => resolved.try_compile_with(provider.sql_generator()),
+            None => resolved.try_compile_with(&super::compile::PortablePlaceholderGenerator),
+        }
     }
 
     /// Query state with correlated subqueries resolved from `T`'s navigation
@@ -86,7 +85,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     /// order, so no column is silently dropped.
     pub fn select_item(mut self, item: SelectItem) -> Self {
         self.absorb_plain_columns();
-        self.state.projections.push(item);
+        self.state.push_projection(item);
         self
     }
 
@@ -101,15 +100,15 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
             "select_items needs at least one projection item"
         );
         self.absorb_plain_columns();
-        self.state.projections.extend(items.iter().cloned());
+        self.state.extend_projections(items.iter().cloned());
         self
     }
 
     /// Folds a plain `select(&[...])` column list into typed projections so a
     /// later `select_item(s)` call appends instead of discarding it.
     fn absorb_plain_columns(&mut self) {
-        if let Some(columns) = self.state.projected_columns.take() {
-            self.state.projections.extend(
+        if let Some(columns) = self.state.take_projected_columns() {
+            self.state.extend_projections(
                 columns
                     .into_iter()
                     .map(SelectItem::column)
@@ -174,31 +173,26 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         self
     }
 
-    // `#[doc(hidden)]` aliases kept for the existing `linq!` expansion, which
-    // emits these names regardless of clause order.
-
-    /// `#[doc(hidden)]` — `linq!(group_by ...)` compatibility alias.
-    #[doc(hidden)]
-    pub fn group_by_internal(self, columns: &'static [&'static str]) -> Self {
-        self.group_by(columns)
-    }
-
-    /// `#[doc(hidden)]` — `linq!(having ...)` compatibility alias.
-    #[doc(hidden)]
-    pub fn having_expr_internal(self, expr: HavingExpr) -> Self {
-        self.having(expr)
-    }
-
-    /// `#[doc(hidden)]` — `linq!(order_by ...)` compatibility alias.
-    #[doc(hidden)]
-    pub fn order_by_column(self, column: &str) -> Self {
-        self.order_by(column)
-    }
-
-    /// `#[doc(hidden)]` — `linq!(order_by descending ...)` compatibility alias.
-    #[doc(hidden)]
-    pub fn order_by_desc_column(self, column: &str) -> Self {
-        self.order_by_desc(column)
+    /// Projects a plain runtime column list.
+    ///
+    /// Used by `linq!(select (...))` for plain-column projections when the chain
+    /// is already a projection builder. Mixing with `select_item(s)` keeps both:
+    /// the plain columns are appended as `SelectItem::column` projections.
+    pub fn select_columns(mut self, columns: &[&str]) -> Self {
+        super::expr::debug_assert_identifier_columns(columns, "select columns");
+        self.absorb_plain_columns();
+        if self.state.projections().is_empty() {
+            self.state.set_projected_columns(
+                columns.iter().map(|column| (*column).to_string()).collect(),
+            );
+        } else {
+            self.state.extend_projections(
+                columns
+                    .iter()
+                    .map(|column| SelectItem::column((*column).to_string())),
+            );
+        }
+        self
     }
 
     /// Executes the projection query and returns raw column values per row.
@@ -209,9 +203,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
             )
         })?;
         let resolved = self.resolved_state();
-        let gen = provider.sql_generator();
-        let sql = resolved.to_sql_with(gen);
-        let params = resolved.all_params();
+        let (sql, params) = resolved.try_compile_with(provider.sql_generator())?;
         let mut conn = provider.get_connection().await?;
         conn.query(&sql, &params).await
     }
@@ -240,6 +232,19 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         self.to_list().await
     }
 
+    /// Rejects a row whose column count differs from the typed terminal arity.
+    fn ensure_row_width(row: &[DbValue], expected: usize) -> EFResult<()> {
+        if row.len() == expected {
+            Ok(())
+        } else {
+            Err(crate::error::EFError::type_conversion(format!(
+                "projection returned {} columns but the typed terminal expects {};                  the SELECT list and the typed arity must match",
+                row.len(),
+                expected
+            )))
+        }
+    }
+
     /// Single-column typed projection → `Vec<V0>`.
     pub async fn to_list_typed_1<V0>(self) -> EFResult<Vec<V0>>
     where
@@ -248,6 +253,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         let rows = self.fetch_rows().await?;
         rows.into_iter()
             .map(|row| {
+                Self::ensure_row_width(&row, 1)?;
                 let cell = row
                     .first()
                     .ok_or_else(|| crate::error::EFError::query("projection row has no columns"))?;
@@ -268,6 +274,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
                 let c0 = row.first().ok_or_else(|| {
                     crate::error::EFError::query("projection row missing column 0")
                 })?;
+                Self::ensure_row_width(&row, 2)?;
                 let c1 = row.get(1).ok_or_else(|| {
                     crate::error::EFError::query("projection row missing column 1")
                 })?;
@@ -289,6 +296,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         let rows = self.fetch_rows().await?;
         rows.into_iter()
             .map(|row| {
+                Self::ensure_row_width(&row, 3)?;
                 let c0 = row.first().ok_or_else(|| {
                     crate::error::EFError::query("projection row missing column 0")
                 })?;
@@ -318,6 +326,7 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         let rows = self.fetch_rows().await?;
         rows.into_iter()
             .map(|row| {
+                Self::ensure_row_width(&row, 4)?;
                 let c0 = row.first().ok_or_else(|| {
                     crate::error::EFError::query("projection row missing column 0")
                 })?;

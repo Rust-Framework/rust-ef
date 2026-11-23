@@ -60,11 +60,7 @@ async fn test_query_builder_clone_compiles_and_runs() {
 async fn test_clone_preserves_state() {
     // A clone inherits filters, ordering, and pagination from the original.
     let mut ctx = seed().await;
-    let base = ctx
-        .set::<CloneItem>()
-        .query()
-        .order_by_column("value")
-        .take(3);
+    let base = ctx.set::<CloneItem>().query().order_by("value").take(3);
     let copy = base.clone();
     // Both should return the same 3 rows (first three by value ascending).
     let original_rows = base.to_list().await.unwrap();
@@ -116,7 +112,7 @@ async fn test_select_query_builder_clone() {
     let select = ctx
         .set::<CloneItem>()
         .query()
-        .select_internal(&[CloneItem::COLUMN_ID, CloneItem::COLUMN_VALUE]);
+        .select_columns(&[CloneItem::COLUMN_ID, CloneItem::COLUMN_VALUE]);
     let _copy = select.clone();
     let rows = select.to_list().await.unwrap();
     assert_eq!(rows.len(), 5);

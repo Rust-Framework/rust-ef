@@ -74,7 +74,7 @@ async fn sum_as_i64_is_exact_beyond_f64_precision() {
     let lossy: f64 = ctx
         .set::<Amount>()
         .query()
-        .sum_internal("amount")
+        .sum_f64("amount")
         .await
         .expect("f64 SUM");
     assert_ne!(
@@ -117,7 +117,7 @@ async fn sum_as_f64_matches_the_legacy_f64_contract() {
     let legacy: f64 = ctx
         .set::<Amount>()
         .query()
-        .sum_internal("amount")
+        .sum_f64("amount")
         .await
         .expect("sum_internal");
 
@@ -244,13 +244,13 @@ async fn min_and_max_keep_their_option_signature() {
     let min: Option<i64> = ctx
         .set::<Amount>()
         .query()
-        .min_internal("amount")
+        .min("amount")
         .await
         .expect("MIN");
     let max: Option<i64> = ctx
         .set::<Amount>()
         .query()
-        .max_internal("amount")
+        .max("amount")
         .await
         .expect("MAX");
     assert_eq!(min, Some(5));
@@ -268,7 +268,7 @@ async fn min_and_max_keep_their_option_signature() {
     let empty_min: Option<i64> = empty
         .set::<Amount>()
         .query()
-        .min_internal("amount")
+        .min("amount")
         .await
         .expect("empty MIN");
     assert_eq!(empty_min, None);

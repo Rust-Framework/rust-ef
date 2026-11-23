@@ -1,10 +1,11 @@
 //! Eager-loading of navigation properties via secondary queries.
 
-use crate::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use crate::entity::{IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
 use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta};
 use crate::provider::{DbValue, DbValueKey, IDatabaseProvider, ISqlGenerator};
 use crate::query::{compile_bool_expr, CompiledFilter, IncludePath};
+use crate::row::IRow;
 use std::collections::{HashMap, HashSet};
 
 /// Appends a query filter (e.g. tenant_id = ?) to a navigation SQL statement.
@@ -66,7 +67,7 @@ pub async fn load_includes<T>(
     filter_map: Option<&HashMap<String, CompiledFilter>>,
 ) -> EFResult<()>
 where
-    T: IEntityType + IFromRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
+    T: IEntityType + IRow + INavigationSetter + IGetKeyValues + IEntitySnapshot,
 {
     if entities.is_empty() || includes.is_empty() {
         return Ok(());

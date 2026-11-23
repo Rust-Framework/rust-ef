@@ -4,10 +4,15 @@
 //! declaration order onto the positional column values (`values[0]`,
 //! `values[1]`, ...). Each field is converted with `TryFrom<DbValue>`.
 //!
+//! Use this derive for report/raw-SQL rows that are **not** entities. Entities
+//! get their `IRow` implementation from `#[derive(EntityType)]` (they also
+//! support name-based materialization via `IRow::from_row_named` when column
+//! order is not deterministic); deriving both on one struct would produce two
+//! `IRow` implementations and does not compile.
+//!
 //! Mapping is positional because providers return `Vec<DbValue>` rows without
 //! column names: the `SELECT` list order must match the field declaration
-//! order (use `IFromRow::from_row_named` for entities when the order is not
-//! deterministic).
+//! order.
 //!
 //! A row whose length differs from the field count (too short **or** too long) is
 //! rejected with a typed `EFError::TypeConversion`
@@ -62,7 +67,7 @@ pub fn expand_from_row(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl #ef::row::IRow for #struct_ident {
-            fn from_values(values: &[#ef::provider::DbValue]) -> #ef::error::EFResult<Self> {
+            fn from_row(values: &[#ef::provider::DbValue]) -> #ef::error::EFResult<Self> {
                 const FIELD_COUNT: usize = #field_count;
                 const FIELD_NAMES: [&str; FIELD_COUNT] = [#(stringify!(#field_names)),*];
                 if values.len() > FIELD_COUNT {

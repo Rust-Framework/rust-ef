@@ -407,7 +407,7 @@ async fn filter_joined_qualifies_columns_with_the_joined_table() {
         ),
         "the joined-entity predicate must filter the joined table"
     );
-    let (_, params) = query.compile_sql();
+    let (_, params) = query.compile_sql().expect("compile");
     assert_eq!(params, vec![DbValue::from("UPS")]);
 }
 
@@ -503,17 +503,9 @@ fn a_join_without_keys_emits_a_valid_on_clause() {
     // the statement valid instead of a dangling `JOIN t ON`. The runtime
     // builder also debug-asserts non-empty keys, so this asserts the compiled
     // shape of the public `JoinSpec` directly.
-    let spec = rust_ef::query::JoinSpec {
-        kind: JoinKind::Inner,
-        table: "jc_shipments".to_string(),
-        keys: Vec::new(),
-    };
+    let spec = rust_ef::query::JoinSpec::new(JoinKind::Inner, "jc_shipments", Vec::new());
     assert_eq!(spec.to_sql(), "INNER JOIN jc_shipments ON 1 = 1");
 
-    let cross = rust_ef::query::JoinSpec {
-        kind: JoinKind::Cross,
-        table: "jc_shipments".to_string(),
-        keys: Vec::new(),
-    };
+    let cross = rust_ef::query::JoinSpec::new(JoinKind::Cross, "jc_shipments", Vec::new());
     assert_eq!(cross.to_sql(), "CROSS JOIN jc_shipments");
 }

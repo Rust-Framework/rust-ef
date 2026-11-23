@@ -7,16 +7,24 @@ use super::super::predicate::Predicate;
 use super::core::QueryBuilder;
 
 impl<T: IEntityType> QueryBuilder<T> {
-    #[doc(hidden)]
-    pub fn order_by_column(mut self, column: &str) -> Self {
+    /// Adds an ascending ORDER BY column.
+    ///
+    /// `column` is an SQL identifier / entity `COLUMN_*` constant and is emitted
+    /// verbatim; never pass request data.
+    pub fn order_by(mut self, column: &str) -> Self {
+        super::super::expr::debug_assert_identifier(column, "ORDER BY column");
         self.state
             .orderings
             .push(OrderBy::new(column, OrderDirection::Ascending));
         self
     }
 
-    #[doc(hidden)]
-    pub fn order_by_desc_column(mut self, column: &str) -> Self {
+    /// Adds a descending ORDER BY column.
+    ///
+    /// `column` is an SQL identifier / entity `COLUMN_*` constant and is emitted
+    /// verbatim; never pass request data.
+    pub fn order_by_desc(mut self, column: &str) -> Self {
+        super::super::expr::debug_assert_identifier(column, "ORDER BY column");
         self.state
             .orderings
             .push(OrderBy::new(column, OrderDirection::Descending));
@@ -79,10 +87,20 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Only plain filter columns are qualified: `EXISTS` / `IN (SELECT ...)`
     /// subquery nodes and raw fragments keep their own table scope, and a
     /// column that already carries a `.` qualifier is left untouched.
-    pub fn filter_joined<J: IEntityType>(self, predicate: impl Into<Predicate<J>>) -> Self {
+    pub fn filter_joined<J: IEntityType>(mut self, predicate: impl Into<Predicate<J>>) -> Self {
         let table = J::entity_meta().table_name.to_string();
         match predicate.into().into_where_expr() {
-            Some(expr) => self.apply_query_filter(qualify_bool_expr(expr, &table)),
+            Some(expr) => {
+                if super::super::compile::has_any_subquery(&expr) {
+                    self.state.set_validation_error(
+                        "filter_joined does not support EXISTS/IN subquery predicates: \
+                         the subquery is resolved against the root entity, not the joined \
+                         entity. Use a raw JOIN/filter on the root query instead",
+                    );
+                    return self;
+                }
+                self.apply_query_filter(qualify_bool_expr(expr, &table))
+            }
             None => self,
         }
     }

@@ -8,14 +8,13 @@ use crate::cascade::{
     resolve_delete_behavior, CascadeDeleteAction, CascadeDeleteDirective, DrainedChild,
 };
 use crate::db_set::DbSet;
-use crate::entity::{
-    EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
-};
+use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
 use crate::entity_snapshot::EntitySnapshot;
 use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, NavigationKind};
 use crate::provider::{IAsyncConnection, IDatabaseProvider};
 use crate::relations::DeleteBehavior;
+use crate::row::IRow;
 use crate::tracking::ChangeTracker;
 use std::any::{Any, TypeId};
 
@@ -167,7 +166,7 @@ where
     E: IEntityType
         + IEntitySnapshot
         + IGetKeyValues
-        + IFromRow
+        + IRow
         + INavigationSetter
         + Send
         + Sync

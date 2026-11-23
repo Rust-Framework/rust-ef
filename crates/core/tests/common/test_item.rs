@@ -2,11 +2,12 @@
 
 #![allow(dead_code)]
 
-use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use rust_ef::entity::{IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
 use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
 use rust_ef::provider::DbValue;
+use rust_ef::row::IRow;
 
 #[derive(Debug, Clone, Default)]
 pub struct TestItem {
@@ -113,7 +114,7 @@ impl IEntityType for TestItem {
     }
 }
 
-impl IFromRow for TestItem {
+impl IRow for TestItem {
     fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(TestItem {
             id: values

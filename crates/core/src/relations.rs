@@ -20,9 +20,10 @@
 //! `false`, matching the v1.0 semantics where cloning a navigation
 //! container yields an empty (unloaded) copy.
 
-use crate::entity::{IEntityType, IFromRow, ILazyInit};
+use crate::entity::{IEntityType, ILazyInit};
 use crate::error::{EFError, EFResult};
 use crate::lazy::{load_collection_lazy, load_scalar_lazy, LazyContext, MAX_LAZY_DEPTH};
+use crate::row::IRow;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -101,7 +102,7 @@ impl<T> BelongsTo<T> {
     /// no matching row was found).
     pub async fn load(&mut self) -> EFResult<()>
     where
-        T: IFromRow + IEntityType + ILazyInit,
+        T: IRow + IEntityType + ILazyInit,
     {
         if self.loaded {
             return Ok(());
@@ -236,7 +237,7 @@ impl<T, Join> HasMany<T, Join> {
     /// After this call, `items` returns the loaded collection.
     pub async fn load(&mut self) -> EFResult<()>
     where
-        T: IFromRow + IEntityType + ILazyInit,
+        T: IRow + IEntityType + ILazyInit,
         Join: 'static,
     {
         if self.loaded {
@@ -357,7 +358,7 @@ impl<T> HasOne<T> {
     /// Triggers lazy loading of this reference navigation.
     pub async fn load(&mut self) -> EFResult<()>
     where
-        T: IFromRow + IEntityType + ILazyInit,
+        T: IRow + IEntityType + ILazyInit,
     {
         if self.loaded {
             return Ok(());

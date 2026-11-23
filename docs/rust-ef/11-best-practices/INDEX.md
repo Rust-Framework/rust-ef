@@ -12,3 +12,7 @@
 ## 下一步
 
 从 [常见陷阱与排查](common-pitfalls.md) 开始。
+
+## 查询管线架构
+
+- [查询管线架构（2.8）](./query-pipeline-architecture.md)

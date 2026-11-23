@@ -206,14 +206,14 @@ let blogs = linq!(
 | 实践 | 说明 |
 |------|------|
 | **优先使用 typed 模式** | `linq!(with ...)` 语法糖自动处理占位符方言，三库通用 |
-| **raw 模式仅用于复杂场景** | 闭包无法表达的 CTE 才用 `with_cte_internal` |
+| **raw 模式仅用于复杂场景** | 闭包无法表达的 CTE 才用 `with_cte_internal`；`?` 会按 provider 适配 |
 | **Window 列不被 from_row 读取** | 需要窗口函数结果时用 `select` 获取原始行 |
 | **PostgreSQL 占位符** | typed 模式自动用 `$N`，raw 模式用 `?`（PG 不兼容） |
 | **SQLite 版本要求** | CTE 需 3.8.3+，Window 函数需 3.25+ |
 
 ## 限制
 
-- **raw CTE PostgreSQL 兼容性**：`with_cte_internal()` 的 SQL 使用 `?` 占位符，在 PostgreSQL 上不转换为 `$N`。推荐 typed 模式
+- **raw CTE 占位符**：`with_cte_internal()` 的 SQL 可以继续写 `?`；2.8 起编译时按 provider 转成 `$N`（PostgreSQL）或 `?`（SQLite/MySQL），同时支持直接传入 provider 编译后的 `$N` 片段（会按参数位置重编号）。typed 模式仍是首选
 - **Window 投影列读取**：`from_row` 忽略窗口函数列，需用 `select` 子句获取原始行
 - **CTE 嵌套**：当前不支持 CTE 内嵌套 CTE，每个 `with` 子句独立编译
 

@@ -68,7 +68,7 @@ async fn test_to_list_typed_1() {
     let rows: Vec<i32> = ctx
         .set::<ProjItem>()
         .query()
-        .select_internal(&[ProjItem::COLUMN_VALUE])
+        .select_columns(&[ProjItem::COLUMN_VALUE])
         .to_list_typed_1::<i32>()
         .await
         .unwrap();
@@ -84,8 +84,8 @@ async fn test_to_list_typed_2() {
     let rows: Vec<(i32, String)> = ctx
         .set::<ProjItem>()
         .query()
-        .order_by_column("id")
-        .select_internal(&[ProjItem::COLUMN_ID, ProjItem::COLUMN_NAME])
+        .order_by("id")
+        .select_columns(&[ProjItem::COLUMN_ID, ProjItem::COLUMN_NAME])
         .to_list_typed_2::<i32, String>()
         .await
         .unwrap();
@@ -101,8 +101,8 @@ async fn test_to_list_typed_3() {
     let rows: Vec<(i32, String, i32)> = ctx
         .set::<ProjItem>()
         .query()
-        .order_by_column("id")
-        .select_internal(&[
+        .order_by("id")
+        .select_columns(&[
             ProjItem::COLUMN_ID,
             ProjItem::COLUMN_NAME,
             ProjItem::COLUMN_VALUE,
@@ -122,8 +122,8 @@ async fn test_to_list_typed_4() {
     let rows: Vec<(i32, String, i32, bool)> = ctx
         .set::<ProjItem>()
         .query()
-        .order_by_column("id")
-        .select_internal(&[
+        .order_by("id")
+        .select_columns(&[
             ProjItem::COLUMN_ID,
             ProjItem::COLUMN_NAME,
             ProjItem::COLUMN_VALUE,
@@ -145,7 +145,7 @@ async fn test_typed_projection_with_filter() {
         .set::<ProjItem>()
         .query()
         .filter(linq!(|p: ProjItem| p.value > 150))
-        .select_internal(&[ProjItem::COLUMN_NAME, ProjItem::COLUMN_VALUE])
+        .select_columns(&[ProjItem::COLUMN_NAME, ProjItem::COLUMN_VALUE])
         .to_list_typed_2::<String, i32>()
         .await
         .unwrap();
@@ -174,7 +174,7 @@ async fn test_typed_projection_with_aggregate() {
     let rows: Vec<i64> = ctx
         .set::<ProjItem>()
         .query()
-        .select_internal(&["COUNT(*)"])
+        .select_columns(&["COUNT(*)"])
         .to_list_typed_1::<i64>()
         .await
         .unwrap();

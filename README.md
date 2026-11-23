@@ -16,8 +16,8 @@ An **EFCore-inspired ORM for Rust** — `DbContext` / `DbSet<T>` / `IEntityType`
 
 ```toml
 [dependencies]
-rust-ef = "2.6"
-rust-ef-sqlite = "2.6"
+rust-ef = "2.8"
+rust-ef-sqlite = "2.8"
 rust-dix = "1.0"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // 2. Resolve as owned DbContext (&mut self access, no locks)
-    //    rust-dix 0.10: get_owned() returns Result<T, RdiError> and is allowed
+    //    rust-dix 1.0: get_owned() returns Result<T, RdiError> and is allowed
     //    from the root provider (caller-owned, never cached).
     let mut ctx: DbContext = provider.get_owned()?;
 
@@ -123,7 +123,7 @@ let provider = ServiceCollection::new()
     .build()
     .unwrap();
 
-// rust-dix 0.10: Scoped DbContext is not resolvable from the root provider;
+// rust-dix 1.0: Scoped DbContext is not resolvable from the root provider;
 // shared resolution requires a scope (owned resolution works from the root).
 let scope = provider.scope();
 let primary: Arc<DbContext> = scope.get_keyed("primary").unwrap();
@@ -300,7 +300,7 @@ let provider = ServiceCollection::new()
     .unwrap();
 
 // Each request creates a scope (`rust-webx` does this automatically per HTTP request).
-// rust-dix 0.10: resolve the Scoped DbContext from that scope.
+// rust-dix 1.0: resolve the Scoped DbContext from that scope.
 let scope = provider.scope();
 let mut ctx: DbContext = scope.get_owned().unwrap();
 

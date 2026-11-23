@@ -127,7 +127,7 @@ fn test_pg_having_index_continues_through_and_combination() {
 
     let sql = state.to_sql_with(&PgLikeGenerator);
     assert!(
-        sql.contains("HAVING (COUNT(blog_id) > $1 AND SUM(views) > $2)"),
+        sql.contains("HAVING (COUNT(blog_id) > $1) AND (SUM(views) > $2)"),
         "HAVING AND should use $1 and $2, got: {sql}"
     );
 }
@@ -164,7 +164,7 @@ fn test_pg_having_index_continues_through_or_with_where() {
         "WHERE should use $1, got: {sql}"
     );
     assert!(
-        sql.contains("HAVING (COUNT(blog_id) > $2 OR SUM(views) > $3)"),
+        sql.contains("HAVING (COUNT(blog_id) > $2) OR (SUM(views) > $3)"),
         "HAVING OR should continue at $2 and $3, got: {sql}"
     );
 }
@@ -233,7 +233,7 @@ fn test_pg_having_multiple_clauses_join_with_and() {
 
     let sql = state.to_sql_with(&PgLikeGenerator);
     assert!(
-        sql.contains("HAVING COUNT(blog_id) > $1 AND SUM(views) > $2"),
+        sql.contains("HAVING (COUNT(blog_id) > $1) AND (SUM(views) > $2)"),
         "Multiple HAVING clauses should join with AND and continue indices, got: {sql}"
     );
 }

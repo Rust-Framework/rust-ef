@@ -46,6 +46,7 @@ docs/
 - [v2.3 迁移指南（运行时升级 + 三方言内省 + ConnectionString + 必填推断）](v2.3-migration-guide.md)
 - [v2.5 迁移指南（PG NULL / MySQL DDL / 网络 diff / 驱动诊断 / ADO.NET 连接串）](v2.5-migration-guide.md)
 - [v2.6 迁移指南（移除 webx feature，错误映射回到应用边界）](v2.6-migration-guide.md)
+- [v2.8 迁移指南（报表查询与集合写对象化，含已文档化的结构体 breaking，与 rust-webx 2.8.0 配对发布）](v2.8-migration-guide.md)
 
 - [rust-dix 0.10 能力评估与采纳矩阵](rust-dix-0.10-adoption.md)
 

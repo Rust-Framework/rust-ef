@@ -403,7 +403,7 @@ async fn test_union_clause() {
     let mut ctx = seed().await;
     // Main: all blogs (3 rows). Operand: all blogs (3 rows, identical).
     // UNION dedupes identical rows → 3 rows.
-    let op = ctx.set::<DslBlog>().query().compile_sql();
+    let op = ctx.set::<DslBlog>().query().compile_sql().expect("compile");
     let rows = linq!(ctx.set::<DslBlog>(); union op)
         .to_list()
         .await
@@ -416,7 +416,7 @@ async fn test_union_all_clause() {
     let mut ctx = seed().await;
     // Main: all blogs (3 rows). Operand: all blogs (3 rows, identical).
     // UNION ALL does not dedupe → 6 rows.
-    let op = ctx.set::<DslBlog>().query().compile_sql();
+    let op = ctx.set::<DslBlog>().query().compile_sql().expect("compile");
     let rows = linq!(ctx.set::<DslBlog>(); union_all op)
         .to_list()
         .await
@@ -429,7 +429,9 @@ async fn test_except_clause() {
     let mut ctx = seed().await;
     // Main: all blogs (3 rows). EXCEPT operand: tech blogs (2 rows).
     // Result: 1 row (Cooking, the food blog).
-    let op = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.category == "tech").compile_sql();
+    let op = linq!(ctx.set::<DslBlog>(), |b: DslBlog| b.category == "tech")
+        .compile_sql()
+        .expect("compile");
     let rows = linq!(ctx.set::<DslBlog>(); except op)
         .to_list()
         .await

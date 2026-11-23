@@ -15,9 +15,7 @@
 //! across threads (aligned with EFCore).
 
 use crate::db_set::DbSet;
-use crate::entity::{
-    EntityState, IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
-};
+use crate::entity::{EntityState, IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
 use crate::error::{EFError, EFResult};
 use crate::interceptor::InterceptorPipeline;
 use crate::metadata::EntityTypeMeta;
@@ -97,7 +95,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + Send
             + Sync
@@ -342,7 +340,7 @@ impl DbContext {
     ///     .sql_query("SELECT * FROM blogs WHERE id = ?", &[DbValue::I32(1)])
     ///     .await?;
     /// ```
-    pub async fn sql_query<T: IFromRow + IEntityType>(
+    pub async fn sql_query<T: IEntityType + IRow>(
         &self,
         sql: &str,
         params: &[DbValue],
@@ -520,7 +518,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + Send
             + Sync
@@ -547,7 +545,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + Send
             + Sync
@@ -567,7 +565,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + Send
             + Sync
@@ -592,7 +590,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + Send
             + Sync
@@ -611,7 +609,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + Send
             + Sync
@@ -630,7 +628,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + Send
             + Sync
@@ -651,7 +649,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + Send
             + Sync
@@ -671,7 +669,7 @@ impl DbContext {
         T: IEntityType
             + IEntitySnapshot
             + IGetKeyValues
-            + IFromRow
+            + IRow
             + INavigationSetter
             + crate::entity::ILazyInit
             + Send

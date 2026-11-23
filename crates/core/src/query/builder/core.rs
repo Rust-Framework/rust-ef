@@ -77,26 +77,26 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Applies a self-contained filter (a `BoolExpr` produced by
     /// `linq!(|b: T| ...)`, or a predicate's expression) to this query.
     ///
-    /// Inline values carried by the expression are appended to the query
-    /// parameters in tree order, so they line up with the generated
-    /// placeholders.
+    /// Inline values stay inside the expression tree; the compiler emits their
+    /// placeholders and collects the values in the same pass, so no separate
+    /// parameter bookkeeping can drift.
     ///
     /// # Panics
     ///
-    /// Panics when the expression reports more bound parameters than it
-    /// carries values. That can only happen with a hand-built condition
-    /// (`FilterCondition::new` with a non-zero parameter count), which would
-    /// otherwise reach the driver as a `?` with no value.
+    /// Panics when a hand-built condition declares a parameter count without
+    /// carrying the values (`FilterCondition::new` with a non-zero count), which
+    /// would otherwise reach the driver as a placeholder with no value.
     pub(crate) fn apply_query_filter(mut self, filter: BoolExpr) -> Self {
-        let values = collect_bool_expr_values(&filter);
+        let values = filter
+            .total_param_count()
+            .checked_sub(collect_bool_expr_values(&filter).len());
         assert_eq!(
-            filter.total_param_count(),
-            values.len(),
+            values,
+            Some(0),
             "self-contained BoolExpr is missing bound values: build conditions with \
              `linq!(|b: T| ...)` or `FilterCondition::with_values`, not \
              `FilterCondition::new`"
         );
-        self.state.parameters.extend(values);
         self.state.append_bool_expr(filter);
         self
     }

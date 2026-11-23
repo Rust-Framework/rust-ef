@@ -1,4 +1,4 @@
-//! EF-6: name-based row materialization (`IFromRow::from_row_named`).
+//! EF-6: name-based row materialization (`IRow::from_row_named`).
 //!
 //! The positional `from_row(&[DbValue])` assigns by index, so a row whose
 //! column order differs from the model order (a migration that reordered
@@ -8,10 +8,10 @@
 
 mod common;
 
-use rust_ef::entity::IFromRow;
 use rust_ef::error::EFError;
 use rust_ef::prelude::*;
 use rust_ef::provider::DbValue;
+use rust_ef::row::IRow;
 
 #[derive(Debug, Clone, EntityType)]
 #[table("ef6_plain")]
@@ -133,7 +133,7 @@ fn materialize_entities_named_rejects_short_rows() {
     assert!(matches!(err, EFError::TypeConversion(..)), "got {err:?}");
 }
 
-/// Manual `IFromRow` implementations (no derive) use the default
+/// Manual `IRow` implementations (no derive) use the default
 /// `from_row_named`, which reorders via `entity_meta()` property order.
 #[test]
 fn default_named_materialization_works_for_manual_impls() {
@@ -147,4 +147,36 @@ fn default_named_materialization_works_for_manual_impls() {
     assert_eq!(item.id, 42);
     assert_eq!(item.name, "named");
     assert_eq!(item.value, 12.5);
+}
+
+/// The pre-2.8 `rust_ef::entity::IFromRow` path is an alias of
+/// `rust_ef::row::IRow`: both bounds resolve to the merged trait and expose the
+/// same canonical entry points.
+#[test]
+fn legacy_i_from_row_path_is_the_same_trait() {
+    fn materialize_legacy<T: rust_ef::entity::IFromRow + rust_ef::entity::IEntityType>(
+        columns: &[(&str, DbValue)],
+    ) -> EFResult<T> {
+        T::from_row_named(columns)
+    }
+    fn materialize_modern<T: rust_ef::row::IRow + rust_ef::entity::IEntityType>(
+        columns: &[(&str, DbValue)],
+    ) -> EFResult<T> {
+        T::from_row_named(columns)
+    }
+
+    let legacy: PlainItem = materialize_legacy(&named(1, 2, 3)).expect("legacy path");
+    let modern: PlainItem = materialize_modern(&named(1, 2, 3)).expect("modern path");
+    assert_eq!(
+        (legacy.id, legacy.a, legacy.b),
+        (modern.id, modern.a, modern.b)
+    );
+
+    let positional = <PlainItem as rust_ef::entity::IFromRow>::from_row(&[
+        DbValue::I32(5),
+        DbValue::I32(6),
+        DbValue::I32(7),
+    ])
+    .expect("legacy positional");
+    assert_eq!((positional.id, positional.a, positional.b), (5, 6, 7));
 }

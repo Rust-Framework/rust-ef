@@ -4,7 +4,10 @@
 //! grouping, having, includes, joins, and supporting types used across
 //! the query builder and SQL compiler.
 
-use crate::provider::DbValue;
+use crate::provider::{DbValue, ISqlGenerator};
+
+use super::expr::SqlExpr;
+use super::having_expr::CompareOp;
 
 // Use the compile-module helper for inline value collection. Declared
 // here (not `super::compile::collect_bool_expr_values`) so `CompiledFilter::new`
@@ -93,6 +96,25 @@ impl FilterCondition {
         self.param_count
     }
 
+    /// Compiles this condition with provider-specific placeholders, advancing
+    /// `param_idx` and collecting its bound values into `params`.
+    ///
+    /// This is the single compiler used by WHERE, HAVING (via
+    /// `HavingExpr::into_bool_expr`) and `CASE WHEN` arms.
+    pub(crate) fn compile(
+        &self,
+        gen: &dyn ISqlGenerator,
+        param_idx: &mut usize,
+        params: &mut Vec<DbValue>,
+    ) -> String {
+        let placeholders: Vec<String> = (0..self.param_count)
+            .map(|offset| gen.parameter_placeholder(*param_idx + offset))
+            .collect();
+        *param_idx += self.param_count;
+        params.extend(self.values.iter().cloned());
+        self.to_sql(&placeholders)
+    }
+
     pub fn column(&self) -> &str {
         &self.column
     }
@@ -115,6 +137,7 @@ pub struct RawSql(pub(crate) String);
 
 /// Boolean expression AST for WHERE clauses.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BoolExpr {
     /// A single parameterized filter condition.
     Filter(FilterCondition),
@@ -136,6 +159,17 @@ pub enum BoolExpr {
     InSubquery(Box<InSubquerySpec>),
     /// `column NOT IN (SELECT projection FROM source_table [WHERE predicate])`
     NotInSubquery(Box<InSubquerySpec>),
+    /// A comparison between two scalar expressions, e.g.
+    /// `SUM(amount) > ?` (HAVING, lowered from [`HavingExpr`](super::having_expr::HavingExpr))
+    /// or `(amount - discount) >= ?`.
+    Compare {
+        /// Left operand.
+        left: Box<SqlExpr>,
+        /// Comparison operator.
+        op: CompareOp,
+        /// Right operand.
+        right: Box<SqlExpr>,
+    },
 }
 
 /// G5: Specification for a correlated subquery (`EXISTS` / `NOT EXISTS`).
@@ -241,10 +275,20 @@ impl BoolExpr {
         BoolExpr::Not(Box::new(self))
     }
 
+    /// Builds a scalar comparison node (`left op right`).
+    pub fn compare(left: SqlExpr, op: CompareOp, right: SqlExpr) -> Self {
+        BoolExpr::Compare {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        }
+    }
+
     pub fn total_param_count(&self) -> usize {
         match self {
             BoolExpr::Filter(f) => f.param_count(),
             BoolExpr::Raw(_) => 0,
+            BoolExpr::Compare { left, right, .. } => left.param_count() + right.param_count(),
             BoolExpr::And(a, b) | BoolExpr::Or(a, b) => {
                 a.total_param_count() + b.total_param_count()
             }
@@ -410,6 +454,7 @@ pub struct JoinKey {
 /// A composite key is represented as multiple [`JoinKey`]s joined with `AND`;
 /// `CROSS JOIN` carries no keys.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct JoinSpec {
     /// JOIN type.
     pub kind: JoinKind,
@@ -417,6 +462,21 @@ pub struct JoinSpec {
     pub table: String,
     /// Equality keys of the `ON` clause (empty for `CROSS JOIN`).
     pub keys: Vec<JoinKey>,
+}
+
+impl JoinSpec {
+    /// Creates a join specification.
+    ///
+    /// Prefer [`QueryBuilder::join`](crate::query::QueryBuilder::join) /
+    /// [`join_from`](crate::query::QueryBuilder::join_from), which resolve the
+    /// left table; this constructor exists for internal/codegen use and tests.
+    pub fn new(kind: JoinKind, table: impl Into<String>, keys: Vec<JoinKey>) -> Self {
+        Self {
+            kind,
+            table: table.into(),
+            keys,
+        }
+    }
 }
 
 impl JoinSpec {

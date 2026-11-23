@@ -3,7 +3,7 @@
 //! Produces `UPDATE <table> SET col = ?, ... WHERE <expr>` SQL with
 //! parameters ordered as: SET values first, then WHERE parameters.
 //!
-//! 2.7 adds expression right-hand sides ([`ColumnExpr`]): a `SET` value can be
+//! 2.8 adds expression right-hand sides ([`ColumnExpr`]): a `SET` value can be
 //! a column, a bound value, or column arithmetic (`col = col + ?`). That makes
 //! atomic increments/decrements and compare-and-swap version bumps possible
 //! without a read-modify-write round trip.
@@ -15,7 +15,8 @@ use crate::entity::IEntityType;
 use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
 
-use super::compile::{compile_bool_expr, PortablePlaceholderGenerator};
+use super::compile::{compile_bool_expr_into, PortablePlaceholderGenerator};
+use super::expr::SqlExpr;
 use super::state::QueryState;
 
 /// Expression used as the right-hand side of a `SET` assignment.
@@ -72,54 +73,30 @@ impl ColumnExpr {
         ColumnExpr::Sub(Box::new(self), Box::new(other.into()))
     }
 
-    /// Compiles the expression to SQL, advancing `param_idx` for each bound
-    /// value in left-to-right order (the same order as
-    /// [`collect_params`](Self::collect_params)).
-    pub(crate) fn to_sql(&self, gen: &dyn ISqlGenerator, param_idx: &mut usize) -> String {
+    /// Lowers the SET expression to the shared scalar expression algebra.
+    ///
+    /// `ColumnExpr` remains a restricted builder (`SET` accepts arithmetic but
+    /// never aggregates/COALESCE/CASE), yet compilation/parameter collection
+    /// goes through the same [`SqlExpr`](super::expr::SqlExpr) compiler as
+    /// SELECT projections and the WHERE/HAVING trees.
+    fn to_sql_expr(&self) -> SqlExpr {
         match self {
-            ColumnExpr::Column(column) => column.clone(),
-            ColumnExpr::Value(_) => {
-                let placeholder = gen.parameter_placeholder(*param_idx);
-                *param_idx += 1;
-                placeholder
-            }
-            ColumnExpr::Add(left, right) => {
-                // `a + (b - c)` must keep its parentheses: without them SQL
-                // evaluates `(a + b) - c`. `+` is associative on its own.
-                let left_sql = left.to_sql(gen, param_idx);
-                let right_sql = right.to_sql(gen, param_idx);
-                if matches!(**right, ColumnExpr::Sub(..)) {
-                    format!("{} + ({})", left_sql, right_sql)
-                } else {
-                    format!("{} + {}", left_sql, right_sql)
-                }
-            }
-            ColumnExpr::Sub(left, right) => {
-                // `a - (b + c)` / `a - (b - c)` need parentheses; a column or
-                // value operand is already atomic.
-                let left_sql = left.to_sql(gen, param_idx);
-                let right_sql = right.to_sql(gen, param_idx);
-                if matches!(**right, ColumnExpr::Add(..) | ColumnExpr::Sub(..)) {
-                    format!("{} - ({})", left_sql, right_sql)
-                } else {
-                    format!("{} - {}", left_sql, right_sql)
-                }
-            }
+            ColumnExpr::Column(column) => SqlExpr::column(column.clone()),
+            ColumnExpr::Value(value) => SqlExpr::literal(value.clone()),
+            ColumnExpr::Add(left, right) => left.to_sql_expr().add(right.to_sql_expr()),
+            ColumnExpr::Sub(left, right) => left.to_sql_expr().sub(right.to_sql_expr()),
         }
     }
 
-    /// Returns the bound parameter values carried by this expression, in the
-    /// same order as their placeholders in [`to_sql`](Self::to_sql).
-    pub(crate) fn collect_params(&self) -> Vec<DbValue> {
-        match self {
-            ColumnExpr::Column(_) => Vec::new(),
-            ColumnExpr::Value(value) => vec![value.clone()],
-            ColumnExpr::Add(left, right) | ColumnExpr::Sub(left, right) => {
-                let mut params = left.collect_params();
-                params.extend(right.collect_params());
-                params
-            }
-        }
+    /// Compiles the expression, advancing `param_idx` and collecting the bound
+    /// values in placeholder order.
+    pub(crate) fn compile(
+        &self,
+        gen: &dyn ISqlGenerator,
+        param_idx: &mut usize,
+        params: &mut Vec<DbValue>,
+    ) -> String {
+        self.to_sql_expr().compile(gen, param_idx, params)
     }
 }
 
@@ -239,40 +216,60 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
         self
     }
 
-    /// Deprecated alias for [`set_column`](Self::set_column), kept for one
-    /// release so existing callers keep compiling.
-    #[deprecated(
-        since = "2.3.0",
-        note = "renamed to `set_column`, which is now public and semver-stable"
-    )]
-    pub fn set_column_internal(self, column: &'static str, value: impl Into<DbValue>) -> Self {
-        self.set_column(column, value)
-    }
-
-    /// Returns the generated SQL.
+    /// Returns the generated SQL (unchecked) for logging/tests.
     ///
-    /// SET expression parameters are emitted in assignment order, then the
-    /// WHERE parameters; the same order [`params`](Self::params) returns.
+    /// Use [`compile_sql`](Self::compile_sql) when the parameters are needed or
+    /// the state must be validated.
     pub fn to_sql(&self) -> String {
-        let gen: &dyn crate::provider::ISqlGenerator = self
+        let gen: &dyn ISqlGenerator = self
             .provider
             .as_ref()
             .map(|p| p.sql_generator())
             .unwrap_or(&PortablePlaceholderGenerator);
+        let mut discarded = Vec::new();
+        self.compile_into(gen, &mut discarded).0
+    }
+
+    /// Returns the generated SQL and its bound parameters in one pass:
+    /// SET expression values in assignment order, then WHERE parameters.
+    pub fn compile_sql(&self) -> EFResult<(String, Vec<DbValue>)> {
+        self.state.validate_for_dml()?;
+        if self.updates.is_empty() {
+            return Err(crate::error::EFError::configuration(
+                "execute_update requires at least one set column (e.g. \
+                 `set_column`, `set_column_expr`, `increment`)"
+                    .to_string(),
+            ));
+        }
+        let gen: &dyn ISqlGenerator = self
+            .provider
+            .as_ref()
+            .map(|p| p.sql_generator())
+            .unwrap_or(&PortablePlaceholderGenerator);
+        let mut params = Vec::new();
+        let (sql, _) = self.compile_into(gen, &mut params);
+        Ok((sql, params))
+    }
+
+    /// Returns params for this bulk update, validating the query state.
+    pub fn params(&self) -> EFResult<Vec<DbValue>> {
+        self.compile_sql().map(|(_, params)| params)
+    }
+
+    fn compile_into(&self, gen: &dyn ISqlGenerator, params: &mut Vec<DbValue>) -> (String, ()) {
         let mut param_idx = 1usize;
         let sets: Vec<String> = self
             .updates
             .iter()
-            .map(|(column, expr)| format!("{} = {}", column, expr.to_sql(gen, &mut param_idx)))
+            .map(|(column, expr)| {
+                format!("{} = {}", column, expr.compile(gen, &mut param_idx, params))
+            })
             .collect();
         let where_clause = match &self.state.where_expr {
-            Some(expr) => {
-                let mut where_idx = param_idx;
-                compile_bool_expr(expr, gen, &mut where_idx)
-            }
+            Some(expr) => compile_bool_expr_into(expr, gen, &mut param_idx, params),
             None => String::new(),
         };
-        if where_clause.is_empty() {
+        let sql = if where_clause.is_empty() {
             format!("UPDATE {} SET {}", self.state.from, sets.join(", "))
         } else {
             format!(
@@ -281,18 +278,8 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
                 sets.join(", "),
                 where_clause
             )
-        }
-    }
-
-    /// Returns params for this bulk update: SET expression values first (in
-    /// assignment order), then WHERE parameters.
-    pub fn params(&self) -> Vec<DbValue> {
-        let mut params = Vec::new();
-        for (_, expr) in &self.updates {
-            params.extend(expr.collect_params());
-        }
-        params.extend_from_slice(&self.state.parameters);
-        params
+        };
+        (sql, ())
     }
 
     /// Executes the bulk update.
@@ -301,15 +288,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     /// when no `set` column was added — `UPDATE ... SET` without assignments is
     /// not valid SQL.
     pub async fn execute(self) -> EFResult<u64> {
-        if self.updates.is_empty() {
-            return Err(crate::error::EFError::configuration(
-                "execute_update requires at least one set column (e.g. \
-                 `set_column`)"
-                    .to_string(),
-            ));
-        }
-        let sql = self.to_sql();
-        let params = self.params();
+        let (sql, params) = self.compile_sql()?;
         let provider = self.provider.as_ref().ok_or_else(|| {
             crate::error::EFError::configuration(
                 "No provider attached to ExecuteUpdateBuilder.".to_string(),
@@ -325,32 +304,33 @@ mod tests {
     use super::*;
     use crate::query::compile::PortablePlaceholderGenerator;
 
-    fn sql(expr: &ColumnExpr) -> String {
+    fn compile(expr: &ColumnExpr) -> (String, Vec<DbValue>) {
         let mut idx = 1;
-        expr.to_sql(&PortablePlaceholderGenerator, &mut idx)
+        let mut params = Vec::new();
+        let sql = expr.compile(&PortablePlaceholderGenerator, &mut idx, &mut params);
+        (sql, params)
     }
 
     #[test]
-    fn nested_subtraction_keeps_its_parentheses() {
-        // `a + (b - c)` must not collapse to `a + b - c`; the right operand of
-        // `-` keeps parentheses when it is itself additive.
+    fn nested_expressions_keep_their_parentheses() {
+        // The shared SqlExpr compiler parenthesises every binary node, so the
+        // SET expression cannot be re-associated by SQL precedence.
         let add_sub =
             ColumnExpr::column("a").add(ColumnExpr::column("b").sub(ColumnExpr::column("c")));
-        assert_eq!(sql(&add_sub), "a + (b - c)");
+        assert_eq!(compile(&add_sub).0, "(a + (b - c))");
 
         let sub_add =
             ColumnExpr::column("a").sub(ColumnExpr::column("b").add(ColumnExpr::column("c")));
-        assert_eq!(sql(&sub_add), "a - (b + c)");
+        assert_eq!(compile(&sub_add).0, "(a - (b + c))");
 
-        // Associative shapes stay flat.
         let add_add =
             ColumnExpr::column("a").add(ColumnExpr::column("b").add(ColumnExpr::column("c")));
-        assert_eq!(sql(&add_add), "a + b + c");
+        assert_eq!(compile(&add_add).0, "(a + (b + c))");
 
         let chained = ColumnExpr::column("a")
             .sub(ColumnExpr::column("b").add(ColumnExpr::column("c")))
             .sub(ColumnExpr::column("d"));
-        assert_eq!(sql(&chained), "a - (b + c) - d");
+        assert_eq!(compile(&chained).0, "((a - (b + c)) - d)");
     }
 
     #[test]
@@ -358,15 +338,8 @@ mod tests {
         let expr = ColumnExpr::column("a")
             .add(ColumnExpr::value(1i64))
             .sub(ColumnExpr::value(2i64));
-        let mut idx = 1;
-        assert_eq!(
-            expr.to_sql(&PortablePlaceholderGenerator, &mut idx),
-            "a + ? - ?"
-        );
-        assert_eq!(
-            expr.collect_params(),
-            vec![DbValue::I64(1), DbValue::I64(2)]
-        );
-        assert_eq!(idx, 3);
+        let (sql, params) = compile(&expr);
+        assert_eq!(sql, "((a + ?) - ?)");
+        assert_eq!(params, vec![DbValue::I64(1), DbValue::I64(2)]);
     }
 }

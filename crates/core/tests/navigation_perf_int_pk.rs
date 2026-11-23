@@ -6,16 +6,17 @@
 //! a `HashSet`, so loading N parents × M children stays O(N + M) rather than
 //! O(N × M).
 //!
-//! Entities use manual `IEntityType` / `IFromRow` / `INavigationSetter`
+//! Entities use manual `IEntityType` / `IRow` / `INavigationSetter`
 //! impls (no derive macro) for test isolation.
 
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
-use rust_ef::entity::{IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter};
+use rust_ef::entity::{IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
 use rust_ef::entity_snapshot::EntitySnapshot;
 use rust_ef::error::EFResult;
 use rust_ef::metadata::{EntityTypeMeta, NavigationKind, NavigationMeta, PropertyMeta};
 use rust_ef::provider::DbValue;
 use rust_ef::relations::HasMany;
+use rust_ef::row::IRow;
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 
 // ---------------------------------------------------------------------------
@@ -118,7 +119,7 @@ impl IEntityType for PerfParent {
     }
 }
 
-impl IFromRow for PerfParent {
+impl IRow for PerfParent {
     fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(PerfParent {
             id: values
@@ -154,7 +155,7 @@ impl INavigationSetter for PerfParent {
         if field == "children" {
             let items: EFResult<Vec<PerfChild>> = rows
                 .iter()
-                .map(|r| <PerfChild as IFromRow>::from_row(r))
+                .map(|r| <PerfChild as IRow>::from_row(r))
                 .collect();
             self.children = HasMany::with(items?);
             return Ok(());
@@ -280,7 +281,7 @@ impl IEntityType for PerfChild {
     }
 }
 
-impl IFromRow for PerfChild {
+impl IRow for PerfChild {
     fn from_row(values: &[DbValue]) -> EFResult<Self> {
         Ok(PerfChild {
             id: values

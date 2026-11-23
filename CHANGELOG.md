@@ -9,37 +9,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.7.0] — 2026-11-23 — 报表查询与集合写：类型化分组聚合、表达式更新、复合 JOIN、结果行物化
+## [2.8.0] — 2026-11-23 — 报表查询与集合写：类型化分组聚合、表达式更新、复合 JOIN、结果行物化
 
 > **English** · **简体中文**
 >
-> Minor release. Reporting queries can now be expressed end-to-end in the object
+> Minor release, released in pair with **rust-webx 2.8.0** (the two are
+> version-locked for the rust-xazgo service stack; make sure both crates move
+> together). Reporting queries can now be expressed end-to-end in the object
 > API (GROUP BY + aggregates + `COALESCE`/`CASE` + typed rows), bulk updates can
 > assign column expressions (`col = col + ?`), JOINs support composite and chained
 > ON keys, and projection/raw-SQL results materialize into plain structs and tuples
 > without a keyless entity.
 >
 > **Breaking (documented, low-impact):** direct struct-literal construction of
-> `JoinSpec` and `QueryState` changed; see the **Breaking** section below. All
-> builder APIs are additive.
+> `JoinSpec` and `QueryState` changed (both are now `#[non_exhaustive]`, with
+> `JoinSpec::new` / `QueryState::new` as constructors), `BoolExpr` / `HavingExpr`
+> are now `#[non_exhaustive]`, the deprecated `set_column_internal` alias was
+> removed, `IRow`/`IFromRow` were unified, `compile_sql()` is now fallible
+> (`EFResult<(String, Vec<DbValue>)>`) and `ExecuteUpdateBuilder::params()` is
+> fallible, and `QueryState::parameters` / `QueryState::params()` were removed
+> (use `try_compile_with` / `compile_sql_with` for SQL + parameters, or
+> `where_params()`); see the **Breaking** section below. All builder APIs are
+> additive.
 
 #### English
 
 **Breaking**
 
-- **`JoinSpec` fields changed** from `{ join_type, table, on_clause }` to
-  `{ kind: JoinKind, table: String, keys: Vec<JoinKey> }`. Build joins through
-  `QueryBuilder::{join, join_from}` (or the `linq!` clauses); the legacy
-  `*_join_internal` entry points still generate byte-identical SQL. Code that
-  constructed `JoinSpec` literals must adopt the new fields.
-- **`QueryState` gained the public `projections: Vec<SelectItem>` field.**
-  Struct-literal construction must add it (recommended: `QueryState::new`).
-- **`QueryState::params()` returns WHERE parameters only.** In 2.6 it also
-  contained HAVING values (they were registered when the clause was added).
-  The generated SQL and all built-in terminals are unchanged; code that compiled
-  `QueryState` by hand must use `all_params()` — or the new
-  `QueryState::compile_sql_with::<T>(gen)` which also resolves correlated
-  subqueries.
+- **`JoinSpec` fields changed and the type is now `#[non_exhaustive]`** — from
+  `{ join_type, table, on_clause }` to `{ kind: JoinKind, table: String, keys: Vec<JoinKey> }`,
+  constructed through the new `JoinSpec::new(kind, table, keys)` (or the builders
+  below). Build joins through `QueryBuilder::{join, join_from}` (or the `linq!`
+  clauses); the legacy `*_join_internal` entry points still generate
+  byte-identical SQL. Code that constructed `JoinSpec` literals must adopt
+  `JoinSpec::new`.
+- **`QueryState` public shape changed and the type is now `#[non_exhaustive]`.**
+  The SELECT-list state is now the single `SelectList` enum (public type,
+  private `QueryState` field) and the struct gained two private invariant
+  fields (`validation_error`, `from_changed_after_join`), so `QueryState` can
+  no longer be built with a struct literal — use `QueryState::new(table)`. Removed public fields are
+  replaced by accessor methods: `projected_columns` → `projected_columns()`,
+  `is_count` → `is_count()`, `is_exists` → `is_exists()`, `aggregate` /
+  `aggregate_column` → `aggregate()`; typed projections are read with
+  `projections()` and built through the query builders (`select_items`,
+  `group_by`, …). Framework terminals are unchanged.
+- **`BoolExpr` / `HavingExpr` are now `#[non_exhaustive]`.** `BoolExpr` also
+  gained the `Compare { left, op, right }` variant (expression comparisons used
+  by lowered HAVING conditions and column-arithmetic predicates). Non-exhaustive
+  means exhaustive downstream `match` statements need a wildcard arm (`_`); the
+  one-time break makes future AST additions non-breaking.
+- **`ExecuteUpdateBuilder::set_column_internal` removed.** The alias has been
+  `#[deprecated]` since 2.3.0 (“renamed to `set_column`, kept for one release”);
+  use `set_column` (or `set_column_expr` for expression right-hand sides).
+- **`IRow` / `IFromRow` merged.** `row::IRow` is now the single
+  row-materialization trait and no longer has `IEntityType` as a supertrait, so
+  entities, `#[derive(FromRow)]` structs and 1..=12 tuples all implement it
+  (`from_row` is canonical, `from_values` stays as an alias). Entities get their
+  impl from `#[derive(EntityType)]` (the old blanket
+  `impl<T: IFromRow> IRow for T` is gone); `entity::IFromRow` remains as a
+  compatibility alias (`pub use`). Code with a bare `T: IFromRow` bound that
+  relied on entity members (e.g. `entity_meta()`, `from_row_named`) must add an
+  explicit `T: IEntityType` bound; no longer implied are also
+  `Send + Sync + 'static`.
+- **`QueryState::parameters` and `QueryState::params()` removed.** The
+  2.6 `pub parameters: Vec<DbValue>` field and the `params()` accessor are gone
+  (in 2.6 `params()` returned WHERE + HAVING values that were registered when
+  each clause was added). Parameters are now produced by the same single pass
+  that emits the SQL placeholders: use `try_compile_with(gen)` for the checked
+  SQL + full parameter vector (`CTE → SELECT projections → WHERE → HAVING →
+  set operations`), `compile_sql_with::<T>(gen)` when correlated subqueries
+  must be resolved first, or `where_params()` for just the WHERE values.
+  `all_params()` / `to_sql_with()` remain as compatibility wrappers. Generated
+  SQL and every built-in terminal are unchanged.
+- **`compile_sql()` is checked and returns `EFResult<(String, Vec<DbValue>)>`.**
+  In 2.6 `QueryBuilder::compile_sql()` returned the tuple directly and
+  parameters were re-derived from the accumulated `QueryState`; it now validates
+  the query state and emits SQL + parameters in one pass, so an invalid state
+  (e.g. `SELECT *` with `GROUP BY`) surfaces as a typed `EFError::Configuration`
+  instead of unchecked SQL. Add `?` at call sites.
+  `SelectQueryBuilder::compile_sql()` (new in 2.8) ships with the same checked
+  signature, and `ExecuteUpdateBuilder::compile_sql()` compiles SET → WHERE
+  parameter order in one pass as well.
+- **`ExecuteUpdateBuilder::params()` returns `EFResult<Vec<DbValue>>`.** The 2.6
+  accessor returned `Vec<DbValue>` and re-derived parameters independently of the
+  SQL pass, so an invalid builder (no SET column) silently produced an empty
+  vector. It now delegates to `compile_sql()` and returns the typed error;
+  `compile_sql()` (SQL + parameters) or `execute()` are the canonical entry
+  points, while `params()` remains for callers that only need the values.
 
 **Added — typed report projections**
 
@@ -78,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`row::IRow`**, **`row::materialize_rows`**, tuple impls for 1..=12 elements,
   **`#[derive(FromRow)]`**, and **`DbContext::sql_query_rows::<R: IRow>()`** —
   report/raw-SQL rows materialize positionally into plain structs and tuples;
-  entities keep using `IFromRow` (blanket `impl<T: IFromRow> IRow for T`). A cell
+  entities implement `IRow` through the `#[derive(EntityType)]`-generated impl
+  (`entity::IFromRow` is kept as a compatibility alias path). A cell
   can be SQL `NULL`: every supported cell type has an `Option<T>` decoding (`NULL`
   -> `None`), so LEFT JOIN misses and nullable report columns map directly.
   The mapping is strictly positional: a longer row is rejected too (a drifted
@@ -114,8 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Changed**
 
-- **HAVING parameters are derived from the stored `HavingExpr` nodes at
-  `all_params()` time** (instead of being appended when the clause is
+- **HAVING parameters are derived from the stored `HavingExpr` nodes during the
+  single compile pass** (instead of being appended when the clause is
   registered). Generated SQL and parameter vectors are unchanged for existing
   `linq!` usage and now stay correct when a filter is added after a HAVING
   clause. Full parameter order is documented as
@@ -149,7 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `cargo test --workspace --all-features` green (existing suites + new suites:
   grouped projections 16, typed aggregates 9, row mapping 12, composite/chained
-  JOIN 15, expression updates 9, `linq!` 2.7 syntax 13, projection subqueries 2,
+  JOIN 15, expression updates 9, `linq!` additions 13, projection subqueries 2,
   nullable rows 3, parameter order 6, `DbValue` conversions 6).
 - Real MySQL/PostgreSQL `#[ignore]` parity tests cover NUMERIC/NEWDECIMAL
   decoding, grouped projections (COALESCE/HAVING/ORDER BY), and expression
@@ -162,8 +219,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Migration**
 
 - Additive for the documented builders; see
-  [v2.7 migration guide](docs/v2.7-migration-guide.md) for the two public-struct
-  shape changes and for replacing the last report/`col = col + 1` raw SQL.
+  [v2.8 migration guide](docs/v2.8-migration-guide.md) for the documented
+  source-level shape changes and for replacing the last report/`col = col + 1` raw SQL.
 
 #### 简体中文
 
@@ -194,8 +251,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`row::IRow`**、**`row::materialize_rows`**、1..=12 元组实现、
   **`#[derive(FromRow)]`**、**`DbContext::sql_query_rows::<R: IRow>()`**：
-  报表/原生 SQL 结果按位置物化为普通结构体或元组；实体继续使用 `IFromRow`
-  （blanket `impl<T: IFromRow> IRow for T`）。`sql_query::<T>`（实体）不变。
+  报表/原生 SQL 结果按位置物化为普通结构体或元组；实体由
+  `#[derive(EntityType)]` 生成 `IRow` 实现（`entity::IFromRow` 保留为兼容别名路径）。
+  `sql_query::<T>`（实体）不变。
 
 **新增 — 复合键与链式 JOIN**
 
@@ -218,32 +276,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   版本号/CAS 的 `WHERE` 守卫组合；`linq!` 把 `set b.col, b.col + 1`、
   `b.col - x`、`b.col, other.col` 展开为表达式形式，普通值仍走 `set_column`。
 
+**破坏性变更**
+
+- **`QueryBuilder::compile_sql` 改为校验后返回 `EFResult<(String, Vec<DbValue>)>`**：
+  2.6 直接返回 `(String, Vec<DbValue>)`，且参数从累积的 `QueryState` 再派生；现在
+  校验查询状态并在同一遍编译中产出 SQL 与参数，非法状态（如 `SELECT *` 与
+  `GROUP BY` 并存）返回 typed `EFError::Configuration`，不再生成未校验 SQL。
+  调用点补 `?`。`SelectQueryBuilder::compile_sql`（2.8 新增）使用同样的校验后签名；
+  `ExecuteUpdateBuilder::compile_sql()` 同样为单遍校验（SET → WHERE 参数顺序）。
+- **`ExecuteUpdateBuilder::params()` 改为返回 `EFResult<Vec<DbValue>>`**：2.6 的
+  `Vec<DbValue>` 版本与 SQL 生成各自独立推导参数，非法 builder（无 SET 列）会静默
+  返回空向量；现在内部走 `compile_sql()` 并返回 typed error。规范入口为
+  `compile_sql()`（SQL + 参数）或 `execute()`，`params()` 保留给只需要参数值的调用点。
+- **`QueryState::parameters` 字段与 `QueryState::params()` 方法已完全删除**：
+  2.6 的 `pub parameters: Vec<DbValue>` 字段与 `params()` 访问器在 2.8 删除（2.6 的
+  `params()` 返回「注册子句时累积」的 WHERE+HAVING 混合参数）。参数由生成 SQL
+  占位符的同一次单遍编译产出：SQL + 完整参数用 `try_compile_with(gen)` 或
+  `compile_sql_with::<T>(gen)`（先解析相关子查询），只取 WHERE 参数用
+  `where_params()`；`all_params()` / `to_sql_with()` 保留为兼容包装。
+- **`JoinSpec` 公开字段改为 `{ kind: JoinKind, table: String, keys: Vec<JoinKey> }`**
+  （原 `{ join_type, table, on_clause }`），并标记 `#[non_exhaustive]`：
+  经新增的 `JoinSpec::new(kind, table, keys)`（或下述 builder）构造。旧内部方法的
+  生成 SQL 不变。
+- **`QueryState` 公开形状变化并标记 `#[non_exhaustive]`**：SELECT 形态收敛为单一 `SelectList` 公开枚举
+  `SelectList`，并新增 `validation_error` / `from_changed_after_join` 两个私有
+  不变量字段，因此 `QueryState` 不能再结构体字面量构造（改用
+  `QueryState::new(table)`）。被移除的公开字段改由同名访问器读取：
+  `projected_columns` → `projected_columns()`、`is_count` → `is_count()`、
+  `is_exists` → `is_exists()`、`aggregate`/`aggregate_column` → `aggregate()`；
+  类型化投影用 `projections()` 读取、经 builder（`select_items`/`group_by` …）
+  构造。框架终端行为不变。
+- **`BoolExpr` / `HavingExpr` 标记 `#[non_exhaustive]`**；`BoolExpr` 另新增
+  `Compare { left, op, right }` 变体（HAVING 下推与列算术谓词使用）。
+  下游穷举 `match` 需补 `_` 通配分支；这次一次性破坏换取后续 AST 变体新增
+  不再破坏 SemVer。
+- **移除 `ExecuteUpdateBuilder::set_column_internal`**：该别名自 2.3.0 起
+  `#[deprecated]`（“更名 `set_column`，保留一个版本”），2.8 正式删除；
+  改用 `set_column`（表达式右侧用 `set_column_expr`）。
+- **`IRow` / `IFromRow` 合并**：`row::IRow` 成为唯一行物化 trait，不再以
+  `IEntityType` 为 supertrait，实体、`#[derive(FromRow)]` 结构体与 1..=12 元组
+  都直接实现（`from_row` 为规范入口、`from_values` 为别名）。实体改为由
+  `#[derive(EntityType)]` 生成 `impl IRow`（原 blanket
+  `impl<T: IFromRow> IRow for T` 不再存在）；`entity::IFromRow` 保留为兼容别名
+  （`pub use`）。只有 `T: IFromRow` 裸 bound 且调用实体成员（`entity_meta()`、
+  `from_row_named`）的下游代码需补显式 `T: IEntityType`；`Send + Sync + 'static`
+  也不再隐含。
+
 **变更**
 
-- **`JoinSpec` 公开字段改为 `{ kind: JoinKind, table: String, keys: Vec<JoinKey> }`**
-  （原 `{ join_type, table, on_clause }`）。请通过 builder 构造；旧内部方法的
-  生成 SQL 不变。
-- **`QueryState` 新增公开字段 `projections: Vec<SelectItem>`**；结构体字面量
-  构造需补该字段（推荐 `QueryState::new`）。
-- **HAVING 参数改为在 `all_params()` 时从 `HavingExpr` 节点现场收集**
-  （不再在注册子句时写入 `parameters`）。既有 `linq!` 用法的 SQL 与参数向量
+- **HAVING 参数改为在单遍编译时从 `HavingExpr` 节点现场收集**
+  （不再在注册子句时写入 `parameters` 字段）。既有 `linq!` 用法的 SQL 与参数向量
   不变，且「先 having 后 filter」的 builder 用法不再错位；完整参数顺序固定为
   CTE → SELECT 投影 → WHERE → HAVING → 集合运算。
 
 **验证**
 
-- `cargo test --workspace --all-features` 全绿（既有套件 + 69 个新测试：分组投影
-  14、类型化聚合 9、行物化 11、复合/链式 JOIN 14、表达式更新 9、`linq!` 2.7
-  语法 12）。
+- `cargo test --workspace --all-features` 全绿（既有套件 + 91 个新测试：分组投影
+  16、类型化聚合 9、行物化 12、复合/链式 JOIN 15、表达式更新 9、`linq!` 新增
+  语法 13、投影子查询 2、可空行 3、参数顺序 6、`DbValue` 转换 6）。
 - 每项新能力都有 SQL 形状断言（SQLite/MySQL `?` 与 PostgreSQL `$N`）、参数顺序
   断言与 SQLite 实跑；`cargo clippy --workspace --all-targets --all-features
   -D warnings`、rustdoc `-D warnings` 干净。
 
 **迁移**
 
-- 文档中的 builder 用法均为加法；两个公开结构体形状变化与「删掉最后几条报表/
+- 文档中的 builder 用法均为加法；已文档化的源码级形状变化与「删掉最后几条报表/
   `col = col + 1` 原生 SQL」的步骤见
-  [v2.7 迁移指南](docs/v2.7-migration-guide.md)。
+  [v2.8 迁移指南](docs/v2.8-migration-guide.md)。
 
 ---
 

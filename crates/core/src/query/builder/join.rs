@@ -263,7 +263,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     }
 
     /// Pushes a legacy single-key JOIN whose left table is the current FROM
-    /// table (resolved at call time, exactly as the pre-2.7 code did).
+    /// table (resolved at call time, exactly as the previous implementation did).
     fn push_root_join(
         &mut self,
         kind: JoinKind,

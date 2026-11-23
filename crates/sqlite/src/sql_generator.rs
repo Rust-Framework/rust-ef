@@ -146,7 +146,9 @@ impl ISqlGenerator for SqliteSqlGenerator {
         match (skip, take) {
             (Some(s), Some(t)) => format!("LIMIT {} OFFSET {}", t, s),
             (None, Some(t)) => format!("LIMIT {}", t),
-            _ => String::new(),
+            // SQLite requires a LIMIT before OFFSET; -1 means "no limit".
+            (Some(s), None) => format!("LIMIT -1 OFFSET {}", s),
+            (None, None) => String::new(),
         }
     }
 

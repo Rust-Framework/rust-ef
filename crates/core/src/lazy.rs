@@ -281,7 +281,7 @@ fn apply_filter(
 /// `HasOne<T>::load()`.
 pub async fn load_scalar_lazy<T>(ctx: &dyn LazyContext) -> EFResult<Option<T>>
 where
-    T: IEntityType + crate::entity::IFromRow,
+    T: IEntityType + crate::row::IRow,
 {
     let nav = ctx.navigation();
     if nav.kind == NavigationKind::ManyToMany {
@@ -322,7 +322,7 @@ where
 /// This function is called by `HasMany<T>::load()`.
 pub async fn load_collection_lazy<T>(ctx: &dyn LazyContext) -> EFResult<Vec<T>>
 where
-    T: IEntityType + crate::entity::IFromRow,
+    T: IEntityType + crate::row::IRow,
 {
     let nav = ctx.navigation();
     if nav.kind == NavigationKind::ManyToMany {
@@ -355,7 +355,7 @@ where
 /// Executes a two-phase lazy-load for many-to-many navigations.
 async fn load_m2m_collection_lazy<T>(ctx: &dyn LazyContext) -> EFResult<Vec<T>>
 where
-    T: IEntityType + crate::entity::IFromRow,
+    T: IEntityType + crate::row::IRow,
 {
     let nav = ctx.navigation();
     let provider = ctx.provider();

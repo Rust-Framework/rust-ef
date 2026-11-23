@@ -3,14 +3,13 @@
 #[cfg(test)]
 mod production_tests {
     use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
-    use rust_ef::entity::{
-        IEntitySnapshot, IEntityType, IFromRow, IGetKeyValues, INavigationSetter,
-    };
+    use rust_ef::entity::{IEntitySnapshot, IEntityType, IGetKeyValues, INavigationSetter};
     use rust_ef::entity_snapshot::EntitySnapshot;
     use rust_ef::error::EFError;
     use rust_ef::metadata::{EntityTypeMeta, PropertyMeta};
     use rust_ef::migration::{MigrationDialect, MigrationEngine};
     use rust_ef::provider::{DbValue, IDatabaseProvider};
+    use rust_ef::row::IRow;
     use rust_ef_sqlite::SqliteProvider;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -130,7 +129,7 @@ mod production_tests {
         }
     }
 
-    impl IFromRow for VersionedItem {
+    impl IRow for VersionedItem {
         fn from_row(values: &[DbValue]) -> rust_ef::error::EFResult<Self> {
             Ok(Self {
                 id: values
@@ -419,7 +418,7 @@ mod production_tests {
             }
         }
 
-        impl IFromRow for UserRole {
+        impl IRow for UserRole {
             fn from_row(values: &[DbValue]) -> rust_ef::error::EFResult<Self> {
                 Ok(Self {
                     user_id: values

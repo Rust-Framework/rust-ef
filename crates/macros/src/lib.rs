@@ -100,8 +100,8 @@ pub fn derive_db_enum(input: TokenStream) -> TokenStream {
 /// Generates `impl rust_ef::row::IRow for Struct`: fields are mapped in
 /// declaration order onto the positional column values, each converted with
 /// `TryFrom<DbValue>`. Use it for projection / raw-SQL result rows that are not
-/// entities (entities get `IRow` automatically through the blanket impl on
-/// `IFromRow`).
+/// entities (entities get `IRow` from `#[derive(EntityType)]`; deriving both on
+/// one struct would emit two `IRow` implementations).
 ///
 /// Mapping is positional, so the `SELECT` list order must match the field
 /// declaration order. A short row reports a typed `EFError::TypeConversion`

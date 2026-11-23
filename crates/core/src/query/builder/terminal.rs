@@ -10,7 +10,7 @@ use crate::error::EFResult;
 use crate::provider::{DbValue, IDatabaseProvider};
 
 use super::super::ast::{BoolExpr, FilterCondition, OrderBy, OrderDirection};
-use super::super::compile::{compile_bool_expr, resolve_state_subqueries};
+use super::super::compile::resolve_state_subqueries;
 use super::super::execute_update::ExecuteUpdateBuilder;
 use super::super::state::QueryState;
 use super::core::QueryBuilder;
@@ -131,8 +131,17 @@ impl<T: IEntityType> QueryBuilder<T> {
         }
     }
 
-    pub fn compile_sql(&self) -> (String, Vec<DbValue>) {
-        (self.to_sql(), self.state.all_params())
+    /// Returns the generated SQL and its bound parameters in one pass.
+    ///
+    /// Parameters follow SQL text order (CTE -> projections -> WHERE -> HAVING
+    /// -> set operations). Invalid query states are reported as typed errors
+    /// instead of being compiled into invalid SQL.
+    pub fn compile_sql(&self) -> EFResult<(String, Vec<DbValue>)> {
+        let resolved = self.resolved_state();
+        match &self.provider {
+            Some(provider) => resolved.try_compile_with(provider.sql_generator()),
+            None => resolved.try_compile_with(&super::super::compile::PortablePlaceholderGenerator),
+        }
     }
 
     /// Snapshot of the query state with correlated subqueries resolved, ready
@@ -156,13 +165,15 @@ impl<T: IEntityType> QueryBuilder<T> {
         ))
     }
 
+    /// Compiles `state` with correlated subqueries resolved, returning SQL and
+    /// bound parameters from one pass.
     pub(super) fn compile_state_sql(
         state: &QueryState,
         provider: &Arc<dyn IDatabaseProvider>,
-    ) -> String {
+    ) -> EFResult<(String, Vec<DbValue>)> {
         let mut resolved = state.clone();
         resolve_state_subqueries::<T>(&mut resolved);
-        resolved.to_sql_with(provider.sql_generator())
+        resolved.try_compile_with(provider.sql_generator())
     }
 
     // -------------------------------------------------------------------
@@ -184,7 +195,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         Self::ensure_not_grouped(&self.state)?;
         let includes = self.state.includes.clone();
         let lazy_loading = self.lazy_loading_enabled;
-        let (sql, params) = self.compile_sql();
+        let (sql, params) = self.compile_sql()?;
         let provider = self.provider.as_ref().ok_or_else(|| {
             crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder. Use DbSet::query() or attach a provider."
@@ -248,14 +259,13 @@ impl<T: IEntityType> QueryBuilder<T> {
     pub async fn count(self) -> EFResult<i64> {
         Self::ensure_not_grouped(&self.state)?;
         let mut state = self.state.clone();
-        state.is_count = true;
+        state.set_count();
         let provider = self.provider.as_ref().ok_or_else(|| {
             crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
-        let sql = Self::compile_state_sql(&state, provider);
-        let params = state.all_params();
+        let (sql, params) = Self::compile_state_sql(&state, provider)?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         if let Some(first_row) = rows.first() {
@@ -277,15 +287,14 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Checks if any entities match the query.
     pub async fn any(self) -> EFResult<bool> {
         let mut state = self.state.clone();
-        state.is_exists = true;
+        state.set_exists();
         state.limit = Some(1);
         let provider = self.provider.as_ref().ok_or_else(|| {
             crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
-        let sql = Self::compile_state_sql(&state, provider);
-        let params = state.all_params();
+        let (sql, params) = Self::compile_state_sql(&state, provider)?;
         let mut conn = provider.get_connection().await?;
         let rows = conn.query(&sql, &params).await?;
         Ok(!rows.is_empty())
@@ -455,11 +464,16 @@ impl<T: IEntityType> QueryBuilder<T> {
         })?;
         let gen = provider.sql_generator();
         let resolved = self.resolved_state();
+        resolved.validate_for_dml()?;
+        let mut param_idx = 1usize;
+        let mut params = Vec::new();
         let where_clause = match &resolved.where_expr {
-            Some(expr) => {
-                let mut param_idx = 1usize;
-                compile_bool_expr(expr, gen, &mut param_idx)
-            }
+            Some(expr) => super::super::compile::compile_bool_expr_into(
+                expr,
+                gen,
+                &mut param_idx,
+                &mut params,
+            ),
             None => String::new(),
         };
         let sql = if where_clause.is_empty() {
@@ -467,7 +481,6 @@ impl<T: IEntityType> QueryBuilder<T> {
         } else {
             format!("DELETE FROM {} WHERE {}", self.state.from, where_clause)
         };
-        let params = self.state.all_params();
         let mut conn = provider.get_connection().await?;
         conn.execute(&sql, &params).await
     }

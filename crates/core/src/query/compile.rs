@@ -98,47 +98,70 @@ where
 // BoolExpr compilation
 // ---------------------------------------------------------------------------
 
-/// Compiles a `BoolExpr` tree into a SQL WHERE fragment using the provider's
-/// placeholder syntax. `param_idx` is advanced past each bound parameter in
-/// left-to-right order so callers can continue emitting contiguous
-/// placeholders (e.g. for HAVING after WHERE).
+/// Compiles a `BoolExpr` tree into a SQL fragment, advancing `param_idx` and
+/// collecting the bound values **in the same pass**.
+///
+/// This is the single boolean compiler for WHERE, HAVING (lowered from
+/// `HavingExpr`), CTE predicates, subquery predicates and DML filters: SQL text
+/// order and the parameter vector cannot drift because they are produced
+/// together.
+pub(crate) fn compile_bool_expr_into(
+    expr: &BoolExpr,
+    gen: &dyn crate::provider::ISqlGenerator,
+    param_idx: &mut usize,
+    params: &mut Vec<DbValue>,
+) -> String {
+    match expr {
+        BoolExpr::Filter(filter) => filter.compile(gen, param_idx, params),
+        BoolExpr::Raw(raw) => {
+            emit_raw_fragment(&raw.0, &[], gen, param_idx, params, "BoolExpr::Raw")
+        }
+        BoolExpr::And(a, b) => format!(
+            "({}) AND ({})",
+            compile_bool_expr_into(a, gen, param_idx, params),
+            compile_bool_expr_into(b, gen, param_idx, params)
+        ),
+        BoolExpr::Or(a, b) => format!(
+            "({}) OR ({})",
+            compile_bool_expr_into(a, gen, param_idx, params),
+            compile_bool_expr_into(b, gen, param_idx, params)
+        ),
+        BoolExpr::Not(inner) => format!(
+            "NOT ({})",
+            compile_bool_expr_into(inner, gen, param_idx, params)
+        ),
+        BoolExpr::Compare { left, op, right } => format!(
+            "{} {} {}",
+            left.compile(gen, param_idx, params),
+            op.sql_name(),
+            right.compile(gen, param_idx, params)
+        ),
+        BoolExpr::Exists(spec) => compile_subquery(spec, gen, param_idx, params, false),
+        BoolExpr::NotExists(spec) => compile_subquery(spec, gen, param_idx, params, true),
+        BoolExpr::InSubquery(spec) => compile_in_subquery(spec, gen, param_idx, params, false),
+        BoolExpr::NotInSubquery(spec) => compile_in_subquery(spec, gen, param_idx, params, true),
+    }
+}
+
+/// SQL-only compilation (no parameter values are returned). Prefer
+/// [`compile_bool_expr_into`] when the values are needed as well; this wrapper
+/// exists for call sites that render SQL only (lazy/navigation loaders, DDL
+/// expressions) and must not execute with placeholders.
 pub(crate) fn compile_bool_expr(
     expr: &BoolExpr,
     gen: &dyn crate::provider::ISqlGenerator,
     param_idx: &mut usize,
 ) -> String {
-    match expr {
-        BoolExpr::Filter(f) => {
-            let placeholders: Vec<String> = (0..f.param_count())
-                .map(|i| gen.parameter_placeholder(*param_idx + i))
-                .collect();
-            *param_idx += f.param_count();
-            f.to_sql(&placeholders)
-        }
-        BoolExpr::Raw(raw) => raw.0.clone(),
-        BoolExpr::And(a, b) => format!(
-            "({}) AND ({})",
-            compile_bool_expr(a, gen, param_idx),
-            compile_bool_expr(b, gen, param_idx)
-        ),
-        BoolExpr::Or(a, b) => format!(
-            "({}) OR ({})",
-            compile_bool_expr(a, gen, param_idx),
-            compile_bool_expr(b, gen, param_idx)
-        ),
-        BoolExpr::Not(inner) => format!("NOT ({})", compile_bool_expr(inner, gen, param_idx)),
-        BoolExpr::Exists(spec) => compile_subquery(spec, gen, param_idx, false),
-        BoolExpr::NotExists(spec) => compile_subquery(spec, gen, param_idx, true),
-        BoolExpr::InSubquery(spec) => compile_in_subquery(spec, gen, param_idx, false),
-        BoolExpr::NotInSubquery(spec) => compile_in_subquery(spec, gen, param_idx, true),
-    }
+    let mut discarded = Vec::new();
+    compile_bool_expr_into(expr, gen, param_idx, &mut discarded)
 }
 
-/// G5: Compiles a `SubquerySpec` into `EXISTS (SELECT 1 FROM ...)` SQL.
+/// G5: compiles a `SubquerySpec` into `EXISTS (SELECT 1 FROM ...)` SQL.
 fn compile_subquery(
     spec: &SubquerySpec,
     gen: &dyn crate::provider::ISqlGenerator,
     param_idx: &mut usize,
+    params: &mut Vec<DbValue>,
     negated: bool,
 ) -> String {
     let related_tbl = gen.quote_identifier(&spec.related_table);
@@ -153,19 +176,22 @@ fn compile_subquery(
     };
 
     if let Some(pred) = &spec.predicate {
-        let pred_sql = compile_bool_expr(pred, gen, param_idx);
-        sql.push_str(&format!(" AND {pred_sql}"));
+        let pred_sql = compile_bool_expr_into(pred, gen, param_idx, params);
+        // The predicate may be an OR tree; without parentheses the outer AND
+        // would re-associate as `(fk = outer AND a) OR b`.
+        sql.push_str(&format!(" AND ({pred_sql})"));
     }
     sql.push(')');
     sql
 }
 
-/// v1.1: Compiles an `InSubquerySpec` into
+/// Compiles an `InSubquerySpec` into
 /// `column IN (SELECT projection FROM source_table [WHERE predicate])` SQL.
 fn compile_in_subquery(
     spec: &InSubquerySpec,
     gen: &dyn crate::provider::ISqlGenerator,
     param_idx: &mut usize,
+    params: &mut Vec<DbValue>,
     negated: bool,
 ) -> String {
     let outer_col = gen.quote_identifier(&spec.outer_column);
@@ -176,38 +202,117 @@ fn compile_in_subquery(
     let mut sql = format!("{outer_col} {kw} (SELECT {proj_col} FROM {src_tbl}");
 
     if let Some(pred) = &spec.predicate {
-        let pred_sql = compile_bool_expr(pred, gen, param_idx);
+        let pred_sql = compile_bool_expr_into(pred, gen, param_idx, params);
         sql.push_str(&format!(" WHERE {pred_sql}"));
     }
     sql.push(')');
     sql
 }
 
-/// Walks a `BoolExpr` tree and collects inline parameter values carried by
-/// self-contained `FilterCondition`s (produced by `linq!(|b: T| ...)`).
-/// Returns an empty vec for expressions whose values are already tracked in
-/// `QueryState::parameters`.
+/// Collects the inline values of a self-contained `BoolExpr` in SQL text order.
+///
+/// Compatibility helper for call sites that only need the values (DTO/statement
+/// assembly); new code should prefer [`compile_bool_expr_into`], which produces
+/// SQL and values together.
 pub(crate) fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
-    match expr {
-        BoolExpr::Filter(f) => f.values().to_vec(),
-        BoolExpr::Raw(_) => Vec::new(),
-        BoolExpr::And(a, b) | BoolExpr::Or(a, b) => {
-            let mut v = collect_bool_expr_values(a);
-            v.extend(collect_bool_expr_values(b));
-            v
-        }
-        BoolExpr::Not(inner) => collect_bool_expr_values(inner),
-        BoolExpr::Exists(spec) | BoolExpr::NotExists(spec) => spec
-            .predicate
-            .as_ref()
-            .map(|p| collect_bool_expr_values(p))
-            .unwrap_or_default(),
-        BoolExpr::InSubquery(spec) | BoolExpr::NotInSubquery(spec) => spec
-            .predicate
-            .as_ref()
-            .map(|p| collect_bool_expr_values(p))
-            .unwrap_or_default(),
+    let mut param_idx = 1usize;
+    let mut params = Vec::new();
+    let _ = compile_bool_expr_into(
+        expr,
+        &PortablePlaceholderGenerator,
+        &mut param_idx,
+        &mut params,
+    );
+    params
+}
+
+/// Emits a pre-compiled SQL fragment and its parameter values, adapting
+/// placeholders to the provider.
+///
+/// Raw fragments may be written portably with `?` placeholders or compiled
+/// with an attached provider (`$N` on PostgreSQL). PostgreSQL numbers
+/// placeholders statement-globally, so `$N` fragments are shifted past the
+/// parameters already emitted; portable `?` fragments are substituted with the
+/// provider's placeholder syntax. SQLite/MySQL accept `?` verbatim.
+pub(crate) fn emit_raw_fragment(
+    sql: &str,
+    values: &[DbValue],
+    gen: &dyn crate::provider::ISqlGenerator,
+    param_idx: &mut usize,
+    params: &mut Vec<DbValue>,
+    context: &str,
+) -> String {
+    if !gen.uses_numbered_placeholders() {
+        *param_idx += values.len();
+        params.extend(values.iter().cloned());
+        return sql.to_string();
     }
+
+    if sql.contains('$') {
+        let offset = param_idx.saturating_sub(1);
+        *param_idx += values.len();
+        params.extend(values.iter().cloned());
+        return renumber_placeholders(sql, offset);
+    }
+
+    // Portable `?` fragment: substitute sequentially with the provider syntax.
+    let mut out = String::with_capacity(sql.len());
+    let mut used = 0usize;
+    for ch in sql.chars() {
+        if ch == '?' {
+            if used < values.len() {
+                out.push_str(&gen.parameter_placeholder(*param_idx));
+                *param_idx += 1;
+                params.push(values[used].clone());
+                used += 1;
+            } else {
+                out.push('?');
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    debug_assert_eq!(
+        used,
+        values.len(),
+        "{context}: raw SQL has fewer `?` placeholders than bound values"
+    );
+    out
+}
+
+/// Shifts every `$N` placeholder in a pre-compiled SQL fragment by `offset`.
+pub(crate) fn renumber_placeholders(sql: &str, offset: usize) -> String {
+    if offset == 0 {
+        return sql.to_string();
+    }
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '$' {
+            out.push(ch);
+            continue;
+        }
+        let mut digits = String::new();
+        while let Some(next) = chars.peek() {
+            if next.is_ascii_digit() {
+                digits.push(*next);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        match digits.parse::<usize>() {
+            Ok(index) => {
+                out.push('$');
+                out.push_str(&(index + offset).to_string());
+            }
+            Err(_) => {
+                out.push('$');
+                out.push_str(&digits);
+            }
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +340,22 @@ pub(crate) fn resolve_subqueries(expr: &mut BoolExpr, outer_meta: &EntityTypeMet
             }
         }
         _ => {}
+    }
+}
+
+/// Returns `true` if the expression tree contains any correlated subquery node
+/// (`EXISTS` / `IN (SELECT ...)`).
+pub(crate) fn has_any_subquery(expr: &BoolExpr) -> bool {
+    match expr {
+        BoolExpr::Exists(_)
+        | BoolExpr::NotExists(_)
+        | BoolExpr::InSubquery(_)
+        | BoolExpr::NotInSubquery(_) => true,
+        BoolExpr::And(a, b) | BoolExpr::Or(a, b) => has_any_subquery(a) || has_any_subquery(b),
+        BoolExpr::Not(inner) => has_any_subquery(inner),
+        // Scalar comparisons cannot contain subquery nodes.
+        BoolExpr::Compare { .. } => false,
+        BoolExpr::Filter(_) | BoolExpr::Raw(_) => false,
     }
 }
 
@@ -295,9 +416,32 @@ fn resolve_subquery_spec(spec: &mut SubquerySpec, outer_meta: &EntityTypeMeta) {
 /// through it. It is a no-op when the predicate has no subqueries, so entities
 /// whose `entity_meta()` is `unimplemented!()` remain usable for SQL-shape tests.
 pub(crate) fn resolve_state_subqueries<T: crate::entity::IEntityType>(state: &mut QueryState) {
+    let needs_outer_meta = state.where_expr.as_ref().is_some_and(has_subqueries)
+        || state
+            .ctes
+            .iter()
+            .filter(|cte| !cte.table.is_empty())
+            .filter_map(|cte| cte.where_expr.as_ref())
+            .any(has_subqueries);
+    if !needs_outer_meta {
+        return;
+    }
+    let outer_meta = T::entity_meta();
     if let Some(expr) = &mut state.where_expr {
         if has_subqueries(expr) {
-            resolve_subqueries(expr, &T::entity_meta());
+            resolve_subqueries(expr, &outer_meta);
+        }
+    }
+    // Typed CTE bodies are compiled by the same pipeline; their EXISTS/IN
+    // predicates must be resolved before compilation too.
+    for cte in &mut state.ctes {
+        if cte.table.is_empty() {
+            continue;
+        }
+        if let Some(expr) = &mut cte.where_expr {
+            if has_subqueries(expr) {
+                resolve_subqueries(expr, &outer_meta);
+            }
         }
     }
 }

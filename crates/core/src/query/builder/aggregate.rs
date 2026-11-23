@@ -7,7 +7,7 @@ use crate::error::EFResult;
 use crate::provider::{DbValue, DbValueConvertError};
 
 use super::super::ast::{BoolExpr, OrderDirection};
-use super::super::compile::{collect_bool_expr_values, convert_aggregate_cell};
+use super::super::compile::convert_aggregate_cell;
 use super::super::cte::{CteSpec, SetOpSpec, SetOperator};
 use super::super::expr::SelectItem;
 use super::super::having_expr::HavingExpr;
@@ -18,20 +18,11 @@ use super::core::QueryBuilder;
 impl<T: IEntityType> QueryBuilder<T> {
     /// Replaces the GROUP BY columns.
     ///
-    /// Runtime entry point for report queries; the existing `linq!(group_by ...)`
-    /// clause goes through [`group_by_internal`](Self::group_by_internal), which
-    /// delegates here.
+    /// Runtime entry point for report queries and for the `linq!(group_by ...)`
+    /// clause.
     pub fn group_by(mut self, columns: &[&str]) -> Self {
         self.state.group_bys = columns.iter().map(|s| s.to_string()).collect();
         self
-    }
-
-    /// Adds a GROUP BY clause.
-    ///
-    /// `#[doc(hidden)]` — called by `linq!(group_by (b.cat, b.author))` expansion.
-    #[doc(hidden)]
-    pub fn group_by_internal(self, columns: &'static [&'static str]) -> Self {
-        self.group_by(columns)
     }
 
     /// Adds a HAVING condition from a `HavingExpr` AST.
@@ -42,12 +33,11 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// AST node and compiled to SQL at `to_sql_with` time using the provider's
     /// placeholder syntax.
     ///
-    /// Bound values are *not* registered here: [`QueryState::all_params`]
+    /// Bound values are *not* registered here: [`QueryState::all_params`](crate::query::QueryState::all_params)
     /// collects them from the stored expression, so the values always follow
     /// the SQL text order (WHERE before HAVING) even when the caller adds a
     /// filter after the HAVING clause.
-    #[doc(hidden)]
-    pub fn having_expr_internal(mut self, expr: HavingExpr) -> Self {
+    pub fn having(mut self, expr: HavingExpr) -> Self {
         self.state.havings.push(expr);
         self
     }
@@ -144,9 +134,8 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// `to_sql_with` time using the provider's placeholder syntax, ensuring
     /// correct `$N` numbering on PostgreSQL and `?` on SQLite/MySQL.
     ///
-    /// Parameter values are extracted from `where_expr` via
-    /// `collect_bool_expr_values` and stored in `params` so that `all_params()`
-    /// returns them in the correct order (CTE params first).
+    /// Parameter values are collected in the same single-pass compilation as
+    /// the CTE body, so they stay in SQL text order (CTE params first).
     #[doc(hidden)]
     pub fn with_cte_typed(
         mut self,
@@ -155,13 +144,12 @@ impl<T: IEntityType> QueryBuilder<T> {
         where_expr: impl Into<BoolExpr>,
     ) -> Self {
         let where_expr = where_expr.into();
-        let params = collect_bool_expr_values(&where_expr);
         let cte = CteSpec {
             name: name.to_string(),
             sql: String::new(),
             table: table.to_string(),
             where_expr: Some(where_expr),
-            params,
+            params: Vec::new(),
             columns: Vec::new(),
             is_recursive: false,
             recursive_link: None,
@@ -189,13 +177,12 @@ impl<T: IEntityType> QueryBuilder<T> {
         where_expr: impl Into<BoolExpr>,
     ) -> Self {
         let where_expr = where_expr.into();
-        let params = collect_bool_expr_values(&where_expr);
         let cte = CteSpec {
             name: name.to_string(),
             sql: String::new(),
             table: table.to_string(),
             where_expr: Some(where_expr),
-            params,
+            params: Vec::new(),
             columns: Vec::new(),
             is_recursive: true,
             recursive_link: Some((link_fk.to_string(), link_pk.to_string())),
@@ -216,6 +203,9 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// ```
     #[doc(hidden)]
     pub fn from_cte(mut self, name: &str) -> Self {
+        if !self.state.joins.is_empty() {
+            self.state.mark_from_changed_after_join();
+        }
         self.state.from = name.to_string();
         self
     }
@@ -283,7 +273,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     ///
     /// `#[doc(hidden)]` — called by `linq!(sum b.views)` expansion.
     #[doc(hidden)]
-    pub async fn sum_internal(self, column: &'static str) -> EFResult<f64> {
+    pub async fn sum_f64(self, column: &'static str) -> EFResult<f64> {
         aggregate_f64_cell(self.fetch_scalar_aggregate("SUM", column).await?, "SUM")
     }
 
@@ -294,13 +284,13 @@ impl<T: IEntityType> QueryBuilder<T> {
     ///
     /// `#[doc(hidden)]` — called by `linq!(avg b.rating)` expansion.
     #[doc(hidden)]
-    pub async fn avg_internal(self, column: &'static str) -> EFResult<f64> {
+    pub async fn avg_f64(self, column: &'static str) -> EFResult<f64> {
         aggregate_f64_cell(self.fetch_scalar_aggregate("AVG", column).await?, "AVG")
     }
 
     /// Executes a SUM aggregation and decodes the result as `V`.
     ///
-    /// Unlike [`sum_internal`](Self::sum_internal), the result is not routed
+    /// Unlike [`sum_f64`](Self::sum_f64), the result is not routed
     /// through `f64`: integer columns stay integers, so `i64` sums above
     /// `2^53` are exact. Use `sum_as::<i64>` for money/counters stored as
     /// integers and `sum_as::<f64>` only when a floating result is wanted.
@@ -341,7 +331,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// `#[doc(hidden)]` — called by `linq!(min b.rating)` expansion. The target
     /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
     #[doc(hidden)]
-    pub async fn min_internal<V>(self, column: &'static str) -> EFResult<Option<V>>
+    pub async fn min<V>(self, column: &'static str) -> EFResult<Option<V>>
     where
         V: TryFrom<DbValue, Error = DbValueConvertError>,
     {
@@ -353,7 +343,7 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// `#[doc(hidden)]` — called by `linq!(max b.rating)` expansion. The target
     /// type `V` is inferred from the call site (e.g. `let v: i64 = ...`).
     #[doc(hidden)]
-    pub async fn max_internal<V>(self, column: &'static str) -> EFResult<Option<V>>
+    pub async fn max<V>(self, column: &'static str) -> EFResult<Option<V>>
     where
         V: TryFrom<DbValue, Error = DbValueConvertError>,
     {
@@ -371,15 +361,13 @@ impl<T: IEntityType> QueryBuilder<T> {
         column: &'static str,
     ) -> EFResult<Vec<Vec<DbValue>>> {
         let mut state = self.state.clone();
-        state.aggregate = Some(func.to_string());
-        state.aggregate_column = Some(column.to_string());
+        state.set_aggregate(func, Some(column.to_string()));
         let provider = self.provider.as_ref().ok_or_else(|| {
             crate::error::EFError::configuration(
                 "No provider attached to QueryBuilder.".to_string(),
             )
         })?;
-        let sql = Self::compile_state_sql(&state, provider);
-        let params = state.all_params();
+        let (sql, params) = Self::compile_state_sql(&state, provider)?;
         let mut conn = provider.get_connection().await?;
         conn.query(&sql, &params).await
     }
@@ -391,8 +379,12 @@ impl<T: IEntityType> QueryBuilder<T> {
     /// Projects to named columns (runtime API) and returns a
     /// [`SelectQueryBuilder`] over the plain `SELECT col, ...` list.
     pub fn select(self, columns: &[&str]) -> SelectQueryBuilder<T> {
+        debug_assert!(
+            !columns.is_empty(),
+            "select needs at least one column (an empty list would fall back to SELECT *)"
+        );
         let mut state = self.state.clone();
-        state.projected_columns = Some(columns.iter().map(|s| s.to_string()).collect());
+        state.set_projected_columns(columns.iter().map(|column| column.to_string()).collect());
         SelectQueryBuilder {
             state,
             provider: self.provider,
@@ -400,25 +392,14 @@ impl<T: IEntityType> QueryBuilder<T> {
         }
     }
 
+    /// Alias used by the `linq!(select (...))` plain-column clause; identical to
+    /// [`select`](Self::select).
+    pub fn select_columns(self, columns: &[&str]) -> SelectQueryBuilder<T> {
+        self.select(columns)
+    }
+
     /// Projects to typed [`SelectItem`]s (columns, aggregates, COALESCE/CASE,
     /// constants, ...) and returns a [`SelectQueryBuilder`].
-    ///
-    /// Projection items are appended in order and determine the result row
-    /// layout, so the group keys should be projected explicitly:
-    ///
-    /// ```ignore
-    /// let rows: Vec<(String, i64)> = ctx
-    ///     .set::<Order>()
-    ///     .query()
-    ///     .group_by(&["category"])
-    ///     .select_items(&[
-    ///         SelectItem::column("category"),
-    ///         SelectItem::sum("amount"),
-    ///     ])
-    ///     .order_by("sum_amount")
-    ///     .to_list_rows()
-    ///     .await?;
-    /// ```
     pub fn select_items(self, items: &[SelectItem]) -> SelectQueryBuilder<T> {
         debug_assert!(
             !items.is_empty(),
@@ -426,7 +407,7 @@ impl<T: IEntityType> QueryBuilder<T> {
              silently fall back to SELECT *)"
         );
         let mut state = self.state.clone();
-        state.projections = items.to_vec();
+        state.set_projections(items.to_vec());
         SelectQueryBuilder {
             state,
             provider: self.provider,
@@ -434,14 +415,9 @@ impl<T: IEntityType> QueryBuilder<T> {
         }
     }
 
-    /// Projects to named columns and returns raw row values.
-    ///
-    /// `#[doc(hidden)]` — called by `linq!(select (b.id, b.title))` expansion.
-    /// Keeps the existing plain `SELECT col, ...` semantics (no `AS` aliases)
-    /// and delegates to [`select`](Self::select).
-    #[doc(hidden)]
-    pub fn select_internal(self, columns: &'static [&'static str]) -> SelectQueryBuilder<T> {
-        self.select(columns)
+    /// Appends one typed projection (convenience for runtime report builders).
+    pub fn select_item(self, item: SelectItem) -> SelectQueryBuilder<T> {
+        self.select_items(&[item])
     }
 }
 

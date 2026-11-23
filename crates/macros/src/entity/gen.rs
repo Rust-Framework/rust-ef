@@ -244,7 +244,7 @@ pub(super) fn generate_impls(
             }
         }
 
-        impl #ef::entity::IFromRow for #struct_name {
+        impl #ef::row::IRow for #struct_name {
             fn from_row(values: &[#ef::provider::DbValue]) -> #ef::error::EFResult<Self> {
                 if values.len() < #field_count {
                     return Err(#ef::error::EFError::type_conversion(
@@ -264,7 +264,7 @@ pub(super) fn generate_impls(
                 let values: Vec<#ef::provider::DbValue> = vec![
                     #(#from_row_named_entries)*
                 ];
-                <Self as #ef::entity::IFromRow>::from_row(&values)
+                <Self as #ef::row::IRow>::from_row(&values)
             }
         }
 
