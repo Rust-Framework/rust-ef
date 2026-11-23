@@ -1,4 +1,4 @@
-//! `MigrationEngine` SQL generation 鈥?Up/Down DDL from `SchemaChange` lists.
+//! `MigrationEngine` SQL generation —Up/Down DDL from `SchemaChange` lists.
 
 use super::ddl_expr::quote_string;
 use super::dialect::MigrationDialect;

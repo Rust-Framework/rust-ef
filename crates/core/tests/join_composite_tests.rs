@@ -1,5 +1,5 @@
 //! Composite (multi-column) JOIN, chained JOIN, runtime `join`/`join_from` and
-//! `filter_joined` coverage (rust-ef 2.7 / EF-04).
+//! `filter_joined` coverage (rust-ef 2.8 / EF-04).
 //!
 //! Every JOIN test asserts both the generated SQL shape (`to_sql()`) and the
 //! actual SQLite result, so the SQL text and the runtime semantics cannot drift
@@ -357,7 +357,7 @@ async fn runtime_join_from_chains_off_a_joined_table() {
 // ---------------------------------------------------------------------------
 
 /// A JOIN that follows `from <cte>` must use the CTE name as its left table
-/// (the pre-2.7 behaviour), not the root entity's table name — the entity
+/// (the previous implementation), not the root entity's table name — the entity
 /// table is not in scope anymore.
 #[tokio::test]
 async fn join_after_from_cte_uses_the_cte_as_left_table() {

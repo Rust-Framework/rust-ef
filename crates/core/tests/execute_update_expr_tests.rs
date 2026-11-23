@@ -1,5 +1,5 @@
 //! Expression updates (`SET col = <expr>`) for `ExecuteUpdateBuilder`
-//! (rust-ef 2.7 / EF-03).
+//! (rust-ef 2.8 / EF-03).
 //!
 //! Covers the SQL shape and parameter order of `set_column_expr`,
 //! `increment`/`decrement`, and SQLite execution of atomic increments,

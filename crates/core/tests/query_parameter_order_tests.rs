@@ -1,4 +1,4 @@
-//! Parameter-order regressions for the 2.7 projection / HAVING / update paths.
+//! Parameter-order regressions for the 2.8 projection / HAVING / update paths.
 //!
 //! The SQL-dependent invariants are:
 //!
