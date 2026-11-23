@@ -5,21 +5,9 @@ use crate::entity_snapshot::EntitySnapshot;
 use crate::error::{EFError, EFResult};
 use crate::metadata::{EntityTypeMeta, PropertyMeta};
 use crate::provider::{DbValue, IAsyncConnection, IDatabaseProvider};
-use crate::query::{collect_bool_expr_values, compile_bool_expr, BoolExpr};
+use crate::query::{compile_bool_expr_into, BoolExpr};
 
 use super::executor::ChangeExecutor;
-
-/// Collects a filter's bound values and asserts they match the placeholder
-/// count of the SQL produced by the same compiler.
-fn filter_values_checked(filter: &BoolExpr) -> Vec<DbValue> {
-    let values = collect_bool_expr_values(filter);
-    debug_assert_eq!(
-        values.len(),
-        filter.total_param_count(),
-        "DML filter placeholder/value mismatch"
-    );
-    values
-}
 
 impl ChangeExecutor {
     /// Executes UPDATE statements for all modified entities.
@@ -95,22 +83,23 @@ impl ChangeExecutor {
             .map(|(e, _, _, _)| (e.snapshot(), e.key_values()))
             .collect();
 
-        // Filter params are constant across batches.
-        let filter_params: Vec<DbValue> = match query_filter {
-            Some(filter) => filter_values_checked(filter),
-            None => Vec::new(),
-        };
-
-        // For non-numbered placeholder dialects (SQLite/MySQL `?`), the filter
-        // SQL is index-independent — compile once and reuse across batches.
-        // PostgreSQL (`$N`) must recompile per batch because numbering shifts.
-        let cached_filter_sql: Option<String> = if !gen.uses_numbered_placeholders() {
-            query_filter.map(|f| {
-                let mut idx = 1;
-                compile_bool_expr(f, gen, &mut idx)
-            })
-        } else {
-            None
+        // A filter binds the same number of values in every batch. For
+        // non-numbered placeholder dialects (SQLite/MySQL `?`) both its SQL and
+        // values are compiled once and reused; PostgreSQL (`$N`) numbers
+        // placeholders per statement, so it is compiled per batch inside the
+        // loop below (SQL and values in the same pass).
+        let filter_param_count = query_filter
+            .map(|filter| filter.total_param_count())
+            .unwrap_or(0);
+        let (cached_filter_sql, filter_params): (Option<String>, Vec<DbValue>) = match query_filter
+        {
+            Some(filter) if !gen.uses_numbered_placeholders() => {
+                let mut idx = 1usize;
+                let mut params = Vec::new();
+                let sql = compile_bool_expr_into(filter, gen, &mut idx, &mut params);
+                (Some(sql), params)
+            }
+            _ => (None, Vec::new()),
         };
 
         // Each row consumes 2 * set_cols params (CASE WHEN pk/value pairs)
@@ -118,7 +107,7 @@ impl ChangeExecutor {
         const MAX_PARAMS: usize = 900;
         let params_per_row = 2 * set_cols.len() + 1;
         let batch_size =
-            ((MAX_PARAMS.saturating_sub(filter_params.len())) / params_per_row.max(1)).max(1);
+            ((MAX_PARAMS.saturating_sub(filter_param_count)) / params_per_row.max(1)).max(1);
 
         let mut updated = 0usize;
         let mut start = 0usize;
@@ -163,13 +152,17 @@ impl ChangeExecutor {
                 params.push(pk_val);
             }
 
-            // Append filter to WHERE clause.
+            // Append filter to WHERE clause. Portable (`?`) providers reuse
+            // the cached SQL/values; numbered providers compile SQL and values
+            // in one pass from the current placeholder index.
             if let Some(filter) = query_filter {
                 let filter_sql = match &cached_filter_sql {
-                    Some(cached) => cached.clone(),
-                    None => compile_bool_expr(filter, gen, &mut idx),
+                    Some(cached) => {
+                        params.extend(filter_params.iter().cloned());
+                        cached.clone()
+                    }
+                    None => compile_bool_expr_into(filter, gen, &mut idx, &mut params),
                 };
-                params.extend(filter_params.iter().cloned());
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
 
@@ -260,8 +253,7 @@ impl ChangeExecutor {
 
             if let Some(filter) = query_filter {
                 let mut idx = set_cols.len() + where_params.len() + 1;
-                let filter_sql = compile_bool_expr(filter, gen, &mut idx);
-                where_params.extend(filter_values_checked(filter));
+                let filter_sql = compile_bool_expr_into(filter, gen, &mut idx, &mut where_params);
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
 
@@ -338,24 +330,23 @@ impl ChangeExecutor {
             return Ok(0);
         }
 
-        // Filter params are constant across batches; their SQL is recomputed
-        // per batch for numbered-placeholder dialects (Postgres `$N`).
-        // For `?` dialects (SQLite/MySQL), the filter SQL is index-independent
-        // and can be compiled once and reused.
-        let filter_params: Vec<DbValue> = match query_filter {
-            Some(filter) => filter_values_checked(filter),
-            None => Vec::new(),
-        };
-        let cached_filter_sql: Option<String> = if !gen.uses_numbered_placeholders() {
-            query_filter.map(|f| {
-                let mut idx = 1;
-                compile_bool_expr(f, gen, &mut idx)
-            })
-        } else {
-            None
+        // See `execute_updates`: the filter's value count is batch-independent,
+        // and portable (`?`) providers reuse one compiled SQL/values pair.
+        let filter_param_count = query_filter
+            .map(|filter| filter.total_param_count())
+            .unwrap_or(0);
+        let (cached_filter_sql, filter_params): (Option<String>, Vec<DbValue>) = match query_filter
+        {
+            Some(filter) if !gen.uses_numbered_placeholders() => {
+                let mut idx = 1usize;
+                let mut params = Vec::new();
+                let sql = compile_bool_expr_into(filter, gen, &mut idx, &mut params);
+                (Some(sql), params)
+            }
+            _ => (None, Vec::new()),
         };
         const MAX_PARAMS: usize = 900;
-        let batch_size = MAX_PARAMS.saturating_sub(filter_params.len()).max(1);
+        let batch_size = MAX_PARAMS.saturating_sub(filter_param_count).max(1);
 
         let mut deleted = 0usize;
         let mut start = 0usize;
@@ -374,14 +365,14 @@ impl ChangeExecutor {
             );
             let mut params: Vec<DbValue> = batch.to_vec();
             if let Some(filter) = query_filter {
+                let mut idx = pk_count + 1;
                 let filter_sql = match &cached_filter_sql {
-                    Some(cached) => cached.clone(),
-                    None => {
-                        let mut idx = pk_count + 1;
-                        compile_bool_expr(filter, gen, &mut idx)
+                    Some(cached) => {
+                        params.extend(filter_params.iter().cloned());
+                        cached.clone()
                     }
+                    None => compile_bool_expr_into(filter, gen, &mut idx, &mut params),
                 };
-                params.extend(filter_params.iter().cloned());
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
 
@@ -434,8 +425,7 @@ impl ChangeExecutor {
 
             if let Some(filter) = query_filter {
                 let mut idx = where_params.len() + 1;
-                let filter_sql = compile_bool_expr(filter, gen, &mut idx);
-                where_params.extend(filter_values_checked(filter));
+                let filter_sql = compile_bool_expr_into(filter, gen, &mut idx, &mut where_params);
                 where_clause = format!("({}) AND ({})", where_clause, filter_sql);
             }
 

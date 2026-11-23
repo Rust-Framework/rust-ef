@@ -19,7 +19,9 @@ use crate::error::{EFError, EFResult};
 use crate::provider::{DbValue, ISqlGenerator};
 
 use super::ast::{BoolExpr, IncludePath, JoinSpec, OrderBy};
-use super::compile::{compile_bool_expr_into, emit_raw_fragment, PortablePlaceholderGenerator};
+use super::compile::{
+    compile_bool_expr_into, emit_raw_fragment, validate_raw_fragment, PortablePlaceholderGenerator,
+};
 use super::cte::{CteSpec, SetOpSpec, SetOperator};
 use super::expr::SelectItem;
 use super::having_expr::HavingExpr;
@@ -728,72 +730,4 @@ impl QueryState {
         );
         params
     }
-}
-
-/// Validates a pre-compiled raw SQL fragment against its parameter values.
-///
-/// Supported shapes: `?` placeholders (count must equal the value count) or a
-/// provider-compiled `$N` fragment whose highest index must equal the value
-/// count. Mixed `?`/`$N` fragments are rejected as ambiguous.
-fn validate_raw_fragment(
-    sql: &str,
-    values: &[crate::provider::DbValue],
-    context: &str,
-) -> EFResult<()> {
-    let has_numbered = sql.contains('$');
-    let has_portable = sql.contains('?');
-    if has_numbered && has_portable {
-        return Err(EFError::configuration(format!(
-            "{context} mixes `?` and `$N` placeholders; use one placeholder style"
-        )));
-    }
-    if has_numbered {
-        let highest = highest_numbered_placeholder(sql);
-        if highest != values.len() {
-            return Err(EFError::configuration(format!(
-                "{context} has {highest} numbered placeholder(s) but {} bound value(s)",
-                values.len()
-            )));
-        }
-        return Ok(());
-    }
-    if has_portable {
-        let count = sql.matches('?').count();
-        if count != values.len() {
-            return Err(EFError::configuration(format!(
-                "{context} has {count} `?` placeholder(s) but {} bound value(s)",
-                values.len()
-            )));
-        }
-    } else if !values.is_empty() {
-        return Err(EFError::configuration(format!(
-            "{context} binds {} value(s) but has no placeholders",
-            values.len()
-        )));
-    }
-    Ok(())
-}
-
-/// Highest `$N` index in `sql` (0 when there are none).
-fn highest_numbered_placeholder(sql: &str) -> usize {
-    let mut highest = 0usize;
-    let mut chars = sql.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '$' {
-            continue;
-        }
-        let mut digits = String::new();
-        while let Some(next) = chars.peek() {
-            if next.is_ascii_digit() {
-                digits.push(*next);
-                chars.next();
-            } else {
-                break;
-            }
-        }
-        if let Ok(index) = digits.parse::<usize>() {
-            highest = highest.max(index);
-        }
-    }
-    highest
 }

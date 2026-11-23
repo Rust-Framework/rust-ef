@@ -519,3 +519,60 @@ async fn bulk_dml_rejects_unsupported_clauses() {
         .expect_err("take in bulk DELETE must be rejected");
     assert!(matches!(error, EFError::Configuration(..)), "{error:?}");
 }
+
+#[test]
+fn raw_fragment_lexer_ignores_placeholders_inside_literals() {
+    // `?` and `$1` inside string literals/dollar-quoted strings must not be
+    // treated as placeholders.
+    let query = QueryBuilder::<QvRow>::new("qv_rows")
+        .with_cte_internal(
+            "lit",
+            "SELECT *, '?' AS q, $tag$ ? $tag$ AS d FROM qv_rows WHERE amount > ?",
+            vec![DbValue::I64(10)],
+            &[],
+        )
+        .from_cte("lit");
+    let (sql, params) = query
+        .state()
+        .compile_sql_with::<QvRow>(&PgLikeGenerator)
+        .expect("compile");
+    assert!(
+        sql.contains("SELECT *, '?' AS q, $tag$ ? $tag$ AS d FROM qv_rows WHERE amount > $1"),
+        "literals must stay untouched: {sql}"
+    );
+    assert_eq!(params, vec![DbValue::I64(10)]);
+}
+
+#[test]
+fn raw_fragment_double_question_mark_escapes_the_literal_operator() {
+    // PostgreSQL's `jsonb ?` operator is written as `??` in a raw fragment.
+    let query = QueryBuilder::<QvRow>::new("qv_rows")
+        .with_cte_internal(
+            "doc",
+            "SELECT * FROM qv_rows WHERE data ?? 'key'",
+            Vec::new(),
+            &[],
+        )
+        .from_cte("doc");
+    let (sql, params) = query
+        .state()
+        .compile_sql_with::<QvRow>(&PgLikeGenerator)
+        .expect("compile");
+    assert!(sql.contains("WHERE data ? 'key'"), "unexpected SQL: {sql}");
+    assert!(params.is_empty());
+}
+
+#[test]
+fn unterminated_raw_literal_is_a_typed_error() {
+    let query = QueryBuilder::<QvRow>::new("qv_rows").with_cte_internal(
+        "bad",
+        "SELECT * FROM qv_rows WHERE label = 'oops",
+        Vec::new(),
+        &[],
+    );
+    let error = query
+        .state()
+        .try_compile_with(&PgLikeGenerator)
+        .expect_err("unterminated literal must be rejected");
+    assert!(matches!(error, EFError::Configuration(..)), "{error:?}");
+}

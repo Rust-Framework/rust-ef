@@ -171,6 +171,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Changed**
 
+- **Raw SQL fragments use a placeholder lexer; DML filter values are collected in the
+  same pass as the SQL.** `?`/`$N` inside string literals, quoted identifiers,
+  dollar-quoted strings and comments no longer count as placeholders; `??` escapes a
+  literal `?` (e.g. PostgreSQL `jsonb ?`). Batch UPDATE/DELETE now compile each filter
+  once (portable `?` providers) or per statement (PostgreSQL `$N`) while collecting its
+  values in the same traversal, so SQL text and bound values cannot drift.
 - **HAVING parameters are derived from the stored `HavingExpr` nodes during the
   single compile pass** (instead of being appended when the clause is
   registered). Generated SQL and parameter vectors are unchanged for existing

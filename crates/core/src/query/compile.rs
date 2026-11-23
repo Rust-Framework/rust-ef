@@ -226,14 +226,213 @@ pub(crate) fn collect_bool_expr_values(expr: &BoolExpr) -> Vec<DbValue> {
     params
 }
 
+/// One lexed segment of a pre-compiled raw SQL fragment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RawSegment {
+    /// Verbatim SQL (string literals, quoted identifiers, comments and ordinary
+    /// text); `??` has already been decoded to a literal `?`.
+    Verbatim(String),
+    /// A `?` placeholder (`index == 0`) or a PostgreSQL `$N` placeholder.
+    Placeholder(usize),
+}
+
+/// Lexes a raw SQL fragment, distinguishing real placeholders from `?`/`$N`
+/// that appear inside string literals, quoted identifiers, dollar-quoted
+/// strings or comments.
+///
+/// `??` escapes a literal question mark (e.g. PostgreSQL's `jsonb ?` operator),
+/// and `????` escapes two literal question marks.
+fn lex_raw_fragment(sql: &str) -> EFResult<Vec<RawSegment>> {
+    let bytes = sql.as_bytes();
+    let mut segments: Vec<RawSegment> = Vec::new();
+    let mut text = String::new();
+    let mut i = 0usize;
+
+    fn flush(text: &mut String, segments: &mut Vec<RawSegment>) {
+        if !text.is_empty() {
+            segments.push(RawSegment::Verbatim(std::mem::take(text)));
+        }
+    }
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => {
+                let quote = bytes[i];
+                text.push(quote as char);
+                i += 1;
+                let mut closed = false;
+                while i < bytes.len() {
+                    if bytes[i] == quote {
+                        text.push(quote as char);
+                        i += 1;
+                        if i < bytes.len() && bytes[i] == quote {
+                            text.push(quote as char);
+                            i += 1;
+                            continue;
+                        }
+                        closed = true;
+                        break;
+                    }
+                    text.push(bytes[i] as char);
+                    i += 1;
+                }
+                if !closed {
+                    return Err(crate::error::EFError::configuration(
+                        "unterminated quoted literal in a raw SQL fragment".to_string(),
+                    ));
+                }
+            }
+            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    text.push(bytes[i] as char);
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                let mut depth = 1usize;
+                text.push_str("/*");
+                i += 2;
+                while i < bytes.len() && depth > 0 {
+                    if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                        depth += 1;
+                        text.push_str("/*");
+                        i += 2;
+                    } else if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        depth -= 1;
+                        text.push_str("*/");
+                        i += 2;
+                    } else {
+                        text.push(bytes[i] as char);
+                        i += 1;
+                    }
+                }
+                if depth != 0 {
+                    return Err(crate::error::EFError::configuration(
+                        "unterminated block comment in a raw SQL fragment".to_string(),
+                    ));
+                }
+            }
+            b'?' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'?' {
+                    // Escaped literal `?` (e.g. PostgreSQL `jsonb ?` operator).
+                    text.push('?');
+                    i += 2;
+                } else {
+                    flush(&mut text, &mut segments);
+                    segments.push(RawSegment::Placeholder(0));
+                    i += 1;
+                }
+            }
+            b'$' => {
+                // Dollar-quoted string (`$$...$$` / `$tag$...$tag$`)?
+                let mut tag_end = i + 1;
+                while tag_end < bytes.len()
+                    && (bytes[tag_end].is_ascii_alphanumeric() || bytes[tag_end] == b'_')
+                {
+                    tag_end += 1;
+                }
+                if tag_end < bytes.len() && bytes[tag_end] == b'$' {
+                    let tag = &sql[i..=tag_end];
+                    text.push_str(tag);
+                    i = tag_end + 1;
+                    let closing = tag.to_string();
+                    match sql[i..].find(&closing) {
+                        Some(pos) => {
+                            let end = i + pos + closing.len();
+                            text.push_str(&sql[i..end]);
+                            i = end;
+                        }
+                        None => {
+                            return Err(crate::error::EFError::configuration(
+                                "unterminated dollar-quoted string in a raw SQL fragment"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                } else if tag_end > i + 1 && tag_end <= bytes.len() {
+                    // A numeric placeholder: `$` followed by digits.
+                    match sql[i + 1..tag_end].parse::<usize>() {
+                        Ok(index) if index > 0 => {
+                            flush(&mut text, &mut segments);
+                            segments.push(RawSegment::Placeholder(index));
+                            i = tag_end;
+                        }
+                        _ => {
+                            text.push('$');
+                            i += 1;
+                        }
+                    }
+                } else {
+                    text.push('$');
+                    i += 1;
+                }
+            }
+            _ => {
+                let ch_len = sql[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                text.push_str(&sql[i..i + ch_len]);
+                i += ch_len;
+            }
+        }
+    }
+    flush(&mut text, &mut segments);
+    Ok(segments)
+}
+
+/// Validates a pre-compiled raw SQL fragment against its parameter values.
+///
+/// Placeholders are recognised outside literals/comments only (see
+/// [`lex_raw_fragment`]); `??` is a literal question mark. Supported shapes are
+/// `?` placeholders (count must equal the value count) or provider-compiled
+/// `$N` placeholders whose highest index must equal the value count. Mixing the
+/// two styles is rejected. A fragment without bound values may contain any text
+/// (e.g. a PostgreSQL `jsonb ?` operator written as `??` or a raw literal).
+pub(crate) fn validate_raw_fragment(sql: &str, values: &[DbValue], context: &str) -> EFResult<()> {
+    let segments = lex_raw_fragment(sql)?;
+    if values.is_empty() {
+        return Ok(());
+    }
+    let mut portable = 0usize;
+    let mut highest = 0usize;
+    let mut numbered = false;
+    for segment in &segments {
+        match segment {
+            RawSegment::Placeholder(0) => portable += 1,
+            RawSegment::Placeholder(index) => {
+                numbered = true;
+                highest = highest.max(*index);
+            }
+            RawSegment::Verbatim(_) => {}
+        }
+    }
+    if numbered && portable > 0 {
+        return Err(crate::error::EFError::configuration(format!(
+            "{context} mixes `?` and `$N` placeholders; use one placeholder style"
+        )));
+    }
+    if numbered {
+        if highest != values.len() {
+            return Err(crate::error::EFError::configuration(format!(
+                "{context} has {highest} numbered placeholder(s) but {} bound value(s)",
+                values.len()
+            )));
+        }
+    } else if portable != values.len() {
+        return Err(crate::error::EFError::configuration(format!(
+            "{context} has {portable} `?` placeholder(s) but {} bound value(s)",
+            values.len()
+        )));
+    }
+    Ok(())
+}
+
 /// Emits a pre-compiled SQL fragment and its parameter values, adapting
 /// placeholders to the provider.
 ///
-/// Raw fragments may be written portably with `?` placeholders or compiled
-/// with an attached provider (`$N` on PostgreSQL). PostgreSQL numbers
-/// placeholders statement-globally, so `$N` fragments are shifted past the
-/// parameters already emitted; portable `?` fragments are substituted with the
-/// provider's placeholder syntax. SQLite/MySQL accept `?` verbatim.
+/// The fragment is lexed so placeholders inside string literals, quoted
+/// identifiers, dollar-quoted strings and comments are left untouched. `??`
+/// decodes to a literal `?`. Portable `?` fragments are substituted with the
+/// provider's placeholder syntax; provider-compiled `$N` fragments are shifted
+/// past the parameters already emitted.
 pub(crate) fn emit_raw_fragment(
     sql: &str,
     values: &[DbValue],
@@ -242,75 +441,66 @@ pub(crate) fn emit_raw_fragment(
     params: &mut Vec<DbValue>,
     context: &str,
 ) -> String {
-    if !gen.uses_numbered_placeholders() {
-        *param_idx += values.len();
-        params.extend(values.iter().cloned());
-        return sql.to_string();
+    let segments = match lex_raw_fragment(sql) {
+        Ok(segments) => segments,
+        Err(error) => {
+            debug_assert!(false, "{context}: {error}");
+            return sql.to_string();
+        }
+    };
+    if values.is_empty() {
+        *param_idx += 0;
+        return segments
+            .into_iter()
+            .map(|segment| match segment {
+                RawSegment::Verbatim(text) => text,
+                RawSegment::Placeholder(0) => "?".to_string(),
+                RawSegment::Placeholder(index) => format!("${index}"),
+            })
+            .collect();
     }
 
-    if sql.contains('$') {
-        let offset = param_idx.saturating_sub(1);
-        *param_idx += values.len();
-        params.extend(values.iter().cloned());
-        return renumber_placeholders(sql, offset);
-    }
-
-    // Portable `?` fragment: substitute sequentially with the provider syntax.
     let mut out = String::with_capacity(sql.len());
     let mut used = 0usize;
-    for ch in sql.chars() {
-        if ch == '?' {
-            if used < values.len() {
-                out.push_str(&gen.parameter_placeholder(*param_idx));
-                *param_idx += 1;
-                params.push(values[used].clone());
-                used += 1;
-            } else {
-                out.push('?');
+    let numbered_offset = param_idx.saturating_sub(1);
+    for segment in segments {
+        match segment {
+            RawSegment::Verbatim(text) => out.push_str(&text),
+            RawSegment::Placeholder(0) => {
+                if used < values.len() {
+                    out.push_str(&gen.parameter_placeholder(*param_idx));
+                    *param_idx += 1;
+                    params.push(values[used].clone());
+                    used += 1;
+                } else {
+                    out.push('?');
+                }
             }
+            RawSegment::Placeholder(index) => {
+                if gen.uses_numbered_placeholders() {
+                    out.push('$');
+                    out.push_str(&(index + numbered_offset).to_string());
+                } else {
+                    // A `$N` fragment on a non-numbered provider is a caller
+                    // error; validation runs in the checked compile path.
+                    out.push('$');
+                    out.push_str(&index.to_string());
+                }
+            }
+        }
+    }
+    if gen.uses_numbered_placeholders() {
+        // A provider-compiled `$N` fragment: all values belong to it and were
+        // already shifted by `numbered_offset`.
+        if used == 0 {
+            *param_idx += values.len();
+            params.extend(values.iter().cloned());
         } else {
-            out.push(ch);
+            debug_assert_eq!(used, values.len(), "{context}: placeholder/value mismatch");
         }
-    }
-    debug_assert_eq!(
-        used,
-        values.len(),
-        "{context}: raw SQL has fewer `?` placeholders than bound values"
-    );
-    out
-}
-
-/// Shifts every `$N` placeholder in a pre-compiled SQL fragment by `offset`.
-pub(crate) fn renumber_placeholders(sql: &str, offset: usize) -> String {
-    if offset == 0 {
-        return sql.to_string();
-    }
-    let mut out = String::with_capacity(sql.len());
-    let mut chars = sql.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '$' {
-            out.push(ch);
-            continue;
-        }
-        let mut digits = String::new();
-        while let Some(next) = chars.peek() {
-            if next.is_ascii_digit() {
-                digits.push(*next);
-                chars.next();
-            } else {
-                break;
-            }
-        }
-        match digits.parse::<usize>() {
-            Ok(index) => {
-                out.push('$');
-                out.push_str(&(index + offset).to_string());
-            }
-            Err(_) => {
-                out.push('$');
-                out.push_str(&digits);
-            }
-        }
+    } else {
+        *param_idx += values.len().saturating_sub(used);
+        params.extend(values[used..].iter().cloned());
     }
     out
 }

@@ -33,4 +33,4 @@ pub use state::{QueryState, SelectList};
 pub use window::*;
 
 // crate-internal helpers (used by change_executor / lazy / navigation_loader)
-pub(crate) use compile::{collect_bool_expr_values, compile_bool_expr};
+pub(crate) use compile::{compile_bool_expr, compile_bool_expr_into};

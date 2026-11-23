@@ -7,6 +7,8 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rust_ef::db_context::{DbContext, DbContextOptionsBuilder};
 use rust_ef::linq;
 use rust_ef::prelude::*;
+use rust_ef::provider::DbValue;
+use rust_ef::query::{AggKind, CompareOp, HavingExpr, SelectItem};
 use rust_ef_sqlite::DbContextOptionsBuilderExt as _;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -103,5 +105,47 @@ fn bench_batch_select(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_batch_select);
+/// Measures the single-pass `compile_sql` (2.8) against the pre-2.8 pattern
+/// of compiling SQL and parameters separately (`to_sql` + `all_params`).
+fn bench_compile_pipeline(c: &mut Criterion) {
+    let rt = Runtime::new().expect("tokio runtime");
+    let mut ctx = rt.block_on(seeded_ctx(0));
+    let having = HavingExpr::Compare {
+        agg: AggKind::Sum,
+        col: "value".to_string(),
+        op: CompareOp::Gt,
+        value: DbValue::F64(10.0),
+    };
+    let query = ctx
+        .set::<BenchWidget>()
+        .query()
+        .filter(linq!(|w: BenchWidget| w.tenant_id == 1 && w.value > 1.0))
+        .select_items(&[
+            SelectItem::literal("TENANT", "scope"),
+            SelectItem::column("tenant_id"),
+            SelectItem::sum("value").coalesce(0i64),
+        ])
+        .group_by(&["tenant_id"])
+        .having(having)
+        .order_by("tenant_id")
+        .take(10);
+
+    let mut group = c.benchmark_group("compile_pipeline");
+    group.bench_function("single_pass_compile_sql", |b| {
+        b.iter(|| {
+            let (sql, params) = query.compile_sql().expect("compile");
+            assert!(sql.contains("GROUP BY") && params.len() >= 3);
+        });
+    });
+    group.bench_function("two_pass_to_sql_all_params", |b| {
+        b.iter(|| {
+            let sql = query.to_sql();
+            let params = query.state().all_params();
+            assert!(sql.contains("GROUP BY") && params.len() >= 3);
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(benches, bench_batch_select, bench_compile_pipeline);
 criterion_main!(benches);
