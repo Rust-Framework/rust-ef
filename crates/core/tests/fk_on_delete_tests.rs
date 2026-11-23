@@ -274,7 +274,14 @@ fn test_snapshot_json_roundtrip() {
     );
 
     // Save to temp dir and reload
-    let tmp = std::env::temp_dir().join("fk_on_delete_roundtrip_test");
+    let tmp = std::env::temp_dir().join(format!(
+        "fk_on_delete_roundtrip_test_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
     let store = MigrationStore::new(&tmp);
     store.save_snapshot(&snapshot).unwrap();
 
