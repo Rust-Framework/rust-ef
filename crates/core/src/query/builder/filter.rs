@@ -2,7 +2,7 @@
 
 use crate::entity::IEntityType;
 
-use super::super::ast::{OrderBy, OrderDirection};
+use super::super::ast::{qualify_bool_expr, OrderBy, OrderDirection};
 use super::super::predicate::Predicate;
 use super::core::QueryBuilder;
 
@@ -53,6 +53,36 @@ impl<T: IEntityType> QueryBuilder<T> {
     pub fn filter(self, predicate: impl Into<Predicate<T>>) -> Self {
         match predicate.into().into_where_expr() {
             Some(expr) => self.apply_query_filter(expr),
+            None => self,
+        }
+    }
+
+    /// Appends a predicate written for the joined entity `J`, qualifying every
+    /// plain filter column with `J`'s table name.
+    ///
+    /// A joined table is only reachable through its table qualifier: a
+    /// `linq!(|p: Post| ...)` predicate produces unqualified columns like
+    /// `title`, which either fail as ambiguous or silently filter the root
+    /// table. `filter_joined` rewrites them to `posts.title`:
+    ///
+    /// ```ignore
+    /// // ... JOIN posts ON blogs.id = posts.blog_id WHERE posts.published = ?
+    /// let blogs = ctx
+    ///     .set::<Blog>()
+    ///     .query()
+    ///     .join::<Post>(JoinKind::Inner, &[("id", "blog_id")])
+    ///     .filter_joined(linq!(|p: Post| p.published))
+    ///     .to_list()
+    ///     .await?;
+    /// ```
+    ///
+    /// Only plain filter columns are qualified: `EXISTS` / `IN (SELECT ...)`
+    /// subquery nodes and raw fragments keep their own table scope, and a
+    /// column that already carries a `.` qualifier is left untouched.
+    pub fn filter_joined<J: IEntityType>(self, predicate: impl Into<Predicate<J>>) -> Self {
+        let table = J::entity_meta().table_name.to_string();
+        match predicate.into().into_where_expr() {
+            Some(expr) => self.apply_query_filter(qualify_bool_expr(expr, &table)),
             None => self,
         }
     }

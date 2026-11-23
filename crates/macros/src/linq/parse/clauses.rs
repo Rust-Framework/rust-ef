@@ -24,6 +24,10 @@ impl Parse for LinqClause {
                 let field: Expr = input.parse()?;
                 Ok(LinqClause::Sum(field))
             }
+            "sum_i64" => {
+                let field: Expr = input.parse()?;
+                Ok(LinqClause::SumI64(field))
+            }
             "avg" => {
                 let field: Expr = input.parse()?;
                 Ok(LinqClause::Avg(field))
@@ -39,10 +43,10 @@ impl Parse for LinqClause {
             "count" => Ok(LinqClause::Count),
             "distinct" => Ok(LinqClause::Distinct),
             "set" => parse_set_rest(input),
-            "inner_join" => parse_join_rest(input, JoinKind::Inner),
-            "left_join" => parse_join_rest(input, JoinKind::Left),
-            "right_join" => parse_join_rest(input, JoinKind::Right),
-            "full_join" => parse_join_rest(input, JoinKind::Full),
+            "inner_join" => parse_join_rest(input, LinqJoinKind::Inner),
+            "left_join" => parse_join_rest(input, LinqJoinKind::Left),
+            "right_join" => parse_join_rest(input, LinqJoinKind::Right),
+            "full_join" => parse_join_rest(input, LinqJoinKind::Full),
             "cross_join" => parse_cross_join_rest(input),
             "union" => {
                 let expr: Expr = input.parse()?;
@@ -163,17 +167,14 @@ fn parse_set_rest(input: syn::parse::ParseStream) -> syn::Result<LinqClause> {
     Ok(LinqClause::Set { field, value })
 }
 
-/// Join kind for `parse_join_rest`.
-#[derive(Clone, Copy)]
-enum JoinKind {
-    Inner,
-    Left,
-    Right,
-    Full,
-}
-
-/// `inner_join |a: T1, b: T2| a.col == b.col` (and left/right/full variants)
-fn parse_join_rest(input: syn::parse::ParseStream, kind: JoinKind) -> syn::Result<LinqClause> {
+/// `inner_join |a: T1, b: T2| a.col == b.col` / `&&`-chained composite key
+/// (and left/right/full variants).
+///
+/// The condition splits into one or more `(left, right)` equality pairs. The
+/// left side of each pair must reference the first closure parameter and the
+/// right side the second (`a.x == b.x`); reversed pairs are normalized so the
+/// generated ON clause always goes `left_table.column = joined_table.column`.
+fn parse_join_rest(input: syn::parse::ParseStream, kind: LinqJoinKind) -> syn::Result<LinqClause> {
     let _open: Token![|] = input.parse()?;
     let mut params = Vec::new();
     while !input.peek(Token![|]) {
@@ -188,41 +189,32 @@ fn parse_join_rest(input: syn::parse::ParseStream, kind: JoinKind) -> syn::Resul
     let _close: Token![|] = input.parse()?;
 
     let cond: Expr = input.parse()?;
-    let binary = match &cond {
-        Expr::Binary(b) if matches!(b.op, BinOp::Eq(_)) => b,
-        _ => {
-            return Err(syn::Error::new_spanned(
-                cond,
-                "join condition must be `a.col == b.col`",
-            ));
+    let keys = parse_join_keys(&cond)?;
+
+    Ok(LinqClause::Join { kind, params, keys })
+}
+
+/// Flattens a join condition into `(left, right)` equality pairs.
+///
+/// Accepts `a.col == b.col` and `&&`-combined chains of them, with optional
+/// parentheses: `(a.x == b.x && a.y == b.y) && a.z == b.z`.
+fn parse_join_keys(cond: &Expr) -> syn::Result<Vec<(Expr, Expr)>> {
+    match cond {
+        Expr::Paren(paren) => parse_join_keys(&paren.expr),
+        Expr::Binary(binary) if matches!(binary.op, BinOp::And(_)) => {
+            let mut keys = parse_join_keys(&binary.left)?;
+            keys.extend(parse_join_keys(&binary.right)?);
+            Ok(keys)
         }
-    };
-
-    let left: Expr = (*binary.left).clone();
-    let right: Expr = (*binary.right).clone();
-
-    Ok(match kind {
-        JoinKind::Inner => LinqClause::InnerJoin {
-            params,
-            left,
-            right,
-        },
-        JoinKind::Left => LinqClause::LeftJoin {
-            params,
-            left,
-            right,
-        },
-        JoinKind::Right => LinqClause::RightJoin {
-            params,
-            left,
-            right,
-        },
-        JoinKind::Full => LinqClause::FullJoin {
-            params,
-            left,
-            right,
-        },
-    })
+        Expr::Binary(binary) if matches!(binary.op, BinOp::Eq(_)) => {
+            Ok(vec![((*binary.left).clone(), (*binary.right).clone())])
+        }
+        _ => Err(syn::Error::new_spanned(
+            cond,
+            "join condition must be `a.col == b.col` or an `&&` chain of such equalities \
+             (composite key), e.g. `|a: Order, b: Shipment| a.id == b.order_id && a.region_id == b.region_id`",
+        )),
+    }
 }
 
 /// `cross_join b: T2` — no ON condition

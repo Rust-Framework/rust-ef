@@ -2,33 +2,141 @@
 //!
 //! Produces `UPDATE <table> SET col = ?, ... WHERE <expr>` SQL with
 //! parameters ordered as: SET values first, then WHERE parameters.
+//!
+//! 2.7 adds expression right-hand sides ([`ColumnExpr`]): a `SET` value can be
+//! a column, a bound value, or column arithmetic (`col = col + ?`). That makes
+//! atomic increments/decrements and compare-and-swap version bumps possible
+//! without a read-modify-write round trip.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::entity::IEntityType;
 use crate::error::EFResult;
-use crate::provider::{DbValue, IDatabaseProvider};
+use crate::provider::{DbValue, IDatabaseProvider, ISqlGenerator};
 
 use super::compile::{compile_bool_expr, PortablePlaceholderGenerator};
 use super::state::QueryState;
+
+/// Expression used as the right-hand side of a `SET` assignment.
+///
+/// This mirrors only the `Column` / `Literal` / `Binary` subset of
+/// [`SqlExpr`](crate::query::SqlExpr): a `SET` list accepts column arithmetic
+/// but never aggregates / `COALESCE` / `CASE`, so the public surface stays
+/// minimal instead of exposing the projection AST here.
+///
+/// Build values with the constructors ([`column`](Self::column),
+/// [`value`](Self::value), [`add`](Self::add), [`sub`](Self::sub)); `DbValue`
+/// converts with `From`.
+#[derive(Debug, Clone)]
+pub enum ColumnExpr {
+    /// A bare column reference, e.g. `version` in `version = version + ?`.
+    Column(String),
+    /// A bound parameter value (`?`).
+    Value(DbValue),
+    /// `left + right`.
+    Add(Box<ColumnExpr>, Box<ColumnExpr>),
+    /// `left - right`.
+    Sub(Box<ColumnExpr>, Box<ColumnExpr>),
+}
+
+impl ColumnExpr {
+    /// A column reference (normally an entity `COLUMN_*` constant).
+    pub fn column(column: impl Into<String>) -> Self {
+        ColumnExpr::Column(column.into())
+    }
+
+    /// A bound parameter value.
+    pub fn value(value: impl Into<DbValue>) -> Self {
+        ColumnExpr::Value(value.into())
+    }
+
+    /// `self + other`.
+    ///
+    /// A named builder method (not `std::ops::Add`) because the other operand
+    /// is `impl Into<ColumnExpr>`, and because the expression is compiled to
+    /// SQL rather than evaluated in Rust.
+    #[allow(clippy::should_implement_trait)]
+    pub fn add(self, other: impl Into<ColumnExpr>) -> Self {
+        ColumnExpr::Add(Box::new(self), Box::new(other.into()))
+    }
+
+    /// `self - other`.
+    #[allow(clippy::should_implement_trait)]
+    pub fn sub(self, other: impl Into<ColumnExpr>) -> Self {
+        ColumnExpr::Sub(Box::new(self), Box::new(other.into()))
+    }
+
+    /// Compiles the expression to SQL, advancing `param_idx` for each bound
+    /// value in left-to-right order (the same order as
+    /// [`collect_params`](Self::collect_params)).
+    pub(crate) fn to_sql(&self, gen: &dyn ISqlGenerator, param_idx: &mut usize) -> String {
+        match self {
+            ColumnExpr::Column(column) => column.clone(),
+            ColumnExpr::Value(_) => {
+                let placeholder = gen.parameter_placeholder(*param_idx);
+                *param_idx += 1;
+                placeholder
+            }
+            ColumnExpr::Add(left, right) => format!(
+                "{} + {}",
+                left.to_sql(gen, param_idx),
+                right.to_sql(gen, param_idx)
+            ),
+            ColumnExpr::Sub(left, right) => {
+                // `a - (b + c)` / `a - (b - c)` need parentheses; a column or
+                // value operand is already atomic.
+                let left_sql = left.to_sql(gen, param_idx);
+                let right_sql = right.to_sql(gen, param_idx);
+                if matches!(**right, ColumnExpr::Add(..) | ColumnExpr::Sub(..)) {
+                    format!("{} - ({})", left_sql, right_sql)
+                } else {
+                    format!("{} - {}", left_sql, right_sql)
+                }
+            }
+        }
+    }
+
+    /// Returns the bound parameter values carried by this expression, in the
+    /// same order as their placeholders in [`to_sql`](Self::to_sql).
+    pub(crate) fn collect_params(&self) -> Vec<DbValue> {
+        match self {
+            ColumnExpr::Column(_) => Vec::new(),
+            ColumnExpr::Value(value) => vec![value.clone()],
+            ColumnExpr::Add(left, right) | ColumnExpr::Sub(left, right) => {
+                let mut params = left.collect_params();
+                params.extend(right.collect_params());
+                params
+            }
+        }
+    }
+}
+
+impl From<DbValue> for ColumnExpr {
+    fn from(value: DbValue) -> Self {
+        ColumnExpr::Value(value)
+    }
+}
 
 /// Builder for bulk update operations.
 #[derive(Clone)]
 pub struct ExecuteUpdateBuilder<T: IEntityType> {
     pub(crate) state: QueryState,
-    pub(crate) updates: Vec<(String, DbValue)>,
+    pub(crate) updates: Vec<(String, ColumnExpr)>,
     pub(crate) provider: Option<Arc<dyn IDatabaseProvider>>,
     pub(crate) _phantom: PhantomData<T>,
 }
 
 impl<T: IEntityType> ExecuteUpdateBuilder<T> {
-    /// Sets a named column to a value.
+    /// Sets a named column to a value (`SET col = ?`).
     ///
     /// This is the public, semver-stable entry point for dynamic bulk updates;
     /// `linq!` expands `set b.views, 10; execute_update` to `set_column` calls.
     /// The column name is normally an entity `COLUMN_*` constant, and the
-    /// value is anything convertible into [`DbValue`].
+    /// value is anything convertible into [`DbValue`]. For expression
+    /// assignments (`col = col + ?`, `col = other_col`) use
+    /// [`set_column_expr`](Self::set_column_expr),
+    /// [`increment`](Self::increment) or [`decrement`](Self::decrement).
     ///
     /// # Conditional update (compare-and-swap / optimistic concurrency)
     ///
@@ -45,7 +153,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     ///     .filter(linq!(|o: Order| o.id == order_id && o.version == expected_version))
     ///     .execute_update()
     ///     .set_column(Order::COLUMN_STATUS, "paid")
-    ///     .set_column(Order::COLUMN_VERSION, expected_version + 1)
+    ///     .increment(Order::COLUMN_VERSION, 1)
     ///     .execute()
     ///     .await?;
     ///
@@ -54,7 +162,69 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     /// }
     /// ```
     pub fn set_column(mut self, column: &'static str, value: impl Into<DbValue>) -> Self {
-        self.updates.push((column.to_string(), value.into()));
+        self.updates
+            .push((column.to_string(), ColumnExpr::Value(value.into())));
+        self
+    }
+
+    /// Sets a named column to a [`ColumnExpr`] (`SET col = <expr>`).
+    ///
+    /// Use this for assignments whose right-hand side is a column or column
+    /// arithmetic; `increment`/`decrement` cover the common `col ± value`
+    /// forms. All bound values are emitted in assignment order, before the
+    /// `WHERE` parameters.
+    ///
+    /// ```ignore
+    /// // SET stock = stock + reserved
+    /// let affected = ctx
+    ///     .set::<Product>()
+    ///     .query()
+    ///     .execute_update()
+    ///     .set_column_expr(
+    ///         Product::COLUMN_STOCK,
+    ///         ColumnExpr::column(Product::COLUMN_STOCK)
+    ///             .add(ColumnExpr::column(Product::COLUMN_RESERVED)),
+    ///     )
+    ///     .execute()
+    ///     .await?;
+    /// ```
+    pub fn set_column_expr(mut self, column: &'static str, expr: ColumnExpr) -> Self {
+        self.updates.push((column.to_string(), expr));
+        self
+    }
+
+    /// Atomically increments a column: `SET col = col + ?`.
+    ///
+    /// `by` is bound as a parameter (never inlined), and the increment is part
+    /// of the same statement as the `WHERE` guard — the natural way to bump a
+    /// version column for optimistic concurrency, or to adjust a counter.
+    ///
+    /// ```ignore
+    /// let affected = ctx
+    ///     .set::<Order>()
+    ///     .query()
+    ///     .filter(linq!(|o: Order| o.id == order_id && o.version == expected_version))
+    ///     .execute_update()
+    ///     .increment(Order::COLUMN_VERSION, 1)
+    ///     .execute()
+    ///     .await?;
+    /// ```
+    pub fn increment(mut self, column: &'static str, by: impl Into<DbValue>) -> Self {
+        self.updates.push((
+            column.to_string(),
+            ColumnExpr::column(column).add(ColumnExpr::value(by)),
+        ));
+        self
+    }
+
+    /// Atomically decrements a column: `SET col = col - ?`.
+    ///
+    /// See [`increment`](Self::increment) for the parameter and CAS semantics.
+    pub fn decrement(mut self, column: &'static str, by: impl Into<DbValue>) -> Self {
+        self.updates.push((
+            column.to_string(),
+            ColumnExpr::column(column).sub(ColumnExpr::value(by)),
+        ));
         self
     }
 
@@ -69,6 +239,9 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
     }
 
     /// Returns the generated SQL.
+    ///
+    /// SET expression parameters are emitted in assignment order, then the
+    /// WHERE parameters; the same order [`params`](Self::params) returns.
     pub fn to_sql(&self) -> String {
         let gen: &dyn crate::provider::ISqlGenerator = self
             .provider
@@ -79,11 +252,7 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
         let sets: Vec<String> = self
             .updates
             .iter()
-            .map(|(col, _)| {
-                let ph = gen.parameter_placeholder(param_idx);
-                param_idx += 1;
-                format!("{} = {}", col, ph)
-            })
+            .map(|(column, expr)| format!("{} = {}", column, expr.to_sql(gen, &mut param_idx)))
             .collect();
         let where_clause = match &self.state.where_expr {
             Some(expr) => {
@@ -104,9 +273,13 @@ impl<T: IEntityType> ExecuteUpdateBuilder<T> {
         }
     }
 
-    /// Returns params for this bulk update.
+    /// Returns params for this bulk update: SET expression values first (in
+    /// assignment order), then WHERE parameters.
     pub fn params(&self) -> Vec<DbValue> {
-        let mut params: Vec<DbValue> = self.updates.iter().map(|(_, v)| v.clone()).collect();
+        let mut params = Vec::new();
+        for (_, expr) in &self.updates {
+            params.extend(expr.collect_params());
+        }
         params.extend_from_slice(&self.state.parameters);
         params
     }

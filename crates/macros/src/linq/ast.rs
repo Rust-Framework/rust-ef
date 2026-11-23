@@ -47,6 +47,15 @@ pub(crate) enum ValueInput {
     Key { entity: Type, fields: Vec<Expr> },
 }
 
+/// JOIN type of a `linq!` join clause.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LinqJoinKind {
+    Inner,
+    Left,
+    Right,
+    Full,
+}
+
 /// A single `;`-separated clause in the query form.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum LinqClause {
@@ -56,13 +65,15 @@ pub(crate) enum LinqClause {
     OrderBy { field: Expr, descending: bool },
     /// `group_by (b.cat, b.author)` or `group_by b.cat`
     GroupBy { fields: Vec<Expr> },
-    /// `select (b.id, b.title)` or `select b.id`
+    /// `select (b.id, sum(b.views), count())` or `select b.id`
     Select { fields: Vec<Expr> },
     /// `having <expr>` — supports `agg(col) op value`, `AND`, `OR`, `NOT`,
     /// and `agg(col) op agg(col)`.
     HavingExpr { expr: HavingExprAst },
     /// `sum b.views` (terminal)
     Sum(Expr),
+    /// `sum_i64 b.amount` (terminal — integer-exact SUM)
+    SumI64(Expr),
     /// `avg b.rating` (terminal)
     Avg(Expr),
     /// `min b.rating` (terminal)
@@ -73,31 +84,17 @@ pub(crate) enum LinqClause {
     Count,
     /// `distinct`
     Distinct,
-    /// `set b.views, 10` (only valid before `execute_update`)
+    /// `set b.views, 10` (only valid before `execute_update`).
+    ///
+    /// The right-hand side may be a value (`10`, `q`), a column (`b.other`) or
+    /// column arithmetic (`b.views + 1`, `b.stock - q`).
     Set { field: Expr, value: Expr },
-    /// `inner_join |a: T1, b: T2| a.col == b.col`
-    InnerJoin {
+    /// `inner_join |a: T1, b: T2| a.col == b.col [&& a.col2 == b.col2 ...]`
+    Join {
+        kind: LinqJoinKind,
         params: Vec<(Ident, Type)>,
-        left: Expr,
-        right: Expr,
-    },
-    /// `left_join |a: T1, b: T2| a.col == b.col`
-    LeftJoin {
-        params: Vec<(Ident, Type)>,
-        left: Expr,
-        right: Expr,
-    },
-    /// `right_join |a: T1, b: T2| a.col == b.col`
-    RightJoin {
-        params: Vec<(Ident, Type)>,
-        left: Expr,
-        right: Expr,
-    },
-    /// `full_join |a: T1, b: T2| a.col == b.col`
-    FullJoin {
-        params: Vec<(Ident, Type)>,
-        left: Expr,
-        right: Expr,
+        /// `(left, right)` equality pairs, combined with `AND`.
+        keys: Vec<(Expr, Expr)>,
     },
     /// `cross_join b: T2` — no ON condition
     CrossJoin {

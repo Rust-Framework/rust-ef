@@ -263,6 +263,48 @@ impl BoolExpr {
     }
 }
 
+impl FilterCondition {
+    /// Returns a copy of this condition with its column qualified by `table`.
+    ///
+    /// A column that already carries a qualifier (contains a `.`) is left
+    /// untouched, so qualifying an already-qualified condition is idempotent.
+    /// Used by [`QueryBuilder::filter_joined`](crate::query::QueryBuilder::filter_joined)
+    /// so that a typed predicate written for the joined entity filters the
+    /// joined table instead of an unqualified column.
+    pub(crate) fn qualified(self, table: &str) -> Self {
+        let column = if self.column.contains('.') {
+            self.column
+        } else {
+            format!("{table}.{}", self.column)
+        };
+        let param_count = self.param_count;
+        let mut condition = Self::with_values(column, self.operator, self.values);
+        condition.param_count = param_count;
+        condition
+    }
+}
+
+/// Qualifies every plain filter column in `expr` with `table`.
+///
+/// `EXISTS` / `IN (SELECT ...)` subquery nodes and raw SQL fragments are kept
+/// as-is: their columns belong to the subquery's own table scope, so
+/// re-qualifying them with the joined table would produce wrong SQL.
+pub(crate) fn qualify_bool_expr(expr: BoolExpr, table: &str) -> BoolExpr {
+    match expr {
+        BoolExpr::Filter(condition) => BoolExpr::Filter(condition.qualified(table)),
+        BoolExpr::And(left, right) => BoolExpr::And(
+            Box::new(qualify_bool_expr(*left, table)),
+            Box::new(qualify_bool_expr(*right, table)),
+        ),
+        BoolExpr::Or(left, right) => BoolExpr::Or(
+            Box::new(qualify_bool_expr(*left, table)),
+            Box::new(qualify_bool_expr(*right, table)),
+        ),
+        BoolExpr::Not(inner) => BoolExpr::Not(Box::new(qualify_bool_expr(*inner, table))),
+        other => other,
+    }
+}
+
 /// An ordering specification.
 #[derive(Debug, Clone)]
 pub struct OrderBy {
@@ -336,27 +378,68 @@ pub struct IncludePath {
     pub referenced_key_column: Option<String>,
 }
 
+/// The SQL JOIN type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinKind {
+    /// `INNER JOIN`.
+    Inner,
+    /// `LEFT JOIN`.
+    Left,
+    /// `RIGHT JOIN`.
+    Right,
+    /// `FULL JOIN` (not supported by MySQL).
+    Full,
+    /// `CROSS JOIN` (no ON clause).
+    Cross,
+}
+
+/// One equality key of a JOIN's `ON` clause.
+#[derive(Debug, Clone)]
+pub struct JoinKey {
+    /// Table on the left-hand side of the equality — the FROM table (or the
+    /// previously joined table for chained joins).
+    pub left_table: String,
+    /// Column on `left_table`.
+    pub left_column: String,
+    /// Column on the joined table.
+    pub right_column: String,
+}
+
 /// A JOIN specification for SQL generation.
+///
+/// A composite key is represented as multiple [`JoinKey`]s joined with `AND`;
+/// `CROSS JOIN` carries no keys.
 #[derive(Debug, Clone)]
 pub struct JoinSpec {
-    /// JOIN type: "INNER", "LEFT", "RIGHT", "FULL", "CROSS"
-    pub join_type: String,
+    /// JOIN type.
+    pub kind: JoinKind,
     /// The table to join.
     pub table: String,
-    /// The ON condition. Empty for CROSS JOIN.
-    pub on_clause: String,
+    /// Equality keys of the `ON` clause (empty for `CROSS JOIN`).
+    pub keys: Vec<JoinKey>,
 }
 
 impl JoinSpec {
     pub fn to_sql(&self) -> String {
-        if self.join_type == "CROSS" {
-            format!("CROSS JOIN {}", self.table)
-        } else {
-            format!(
-                "{} JOIN {} ON {}",
-                self.join_type, self.table, self.on_clause
-            )
-        }
+        let join_kw = match self.kind {
+            JoinKind::Inner => "INNER",
+            JoinKind::Left => "LEFT",
+            JoinKind::Right => "RIGHT",
+            JoinKind::Full => "FULL",
+            JoinKind::Cross => return format!("CROSS JOIN {}", self.table),
+        };
+        let on_clause = self
+            .keys
+            .iter()
+            .map(|key| {
+                format!(
+                    "{}.{} = {}.{}",
+                    key.left_table, key.left_column, self.table, key.right_column
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        format!("{} JOIN {} ON {}", join_kw, self.table, on_clause)
     }
 }
 

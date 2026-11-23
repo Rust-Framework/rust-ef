@@ -11,11 +11,13 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, Expr, ExprField, ExprLit, ExprPath, Ident, Lit, Member, Type};
+use syn::{
+    parse_macro_input, Expr, ExprCall, ExprField, ExprLit, ExprPath, Ident, Lit, Member, Type,
+};
 
 use super::ast::*;
 use super::compile::{compile_bool_expr, compile_having_expr, compile_order};
-use super::context::{extract_field, extract_field_nav, extract_value, LinqCtx};
+use super::context::{extract_field, extract_field_nav, extract_value, is_field_expr, LinqCtx};
 
 // ---------------------------------------------------------------------------
 // expand_linq — entry point
@@ -124,7 +126,8 @@ fn expand_clauses(
         if terminal.is_some() {
             return Err(syn::Error::new(
                 proc_macro2::Span::call_site(),
-                "no clauses may follow a terminal clause (sum/avg/min/max/count/execute_update)",
+                "no clauses may follow a terminal clause \
+                 (sum/sum_i64/avg/min/max/count/execute_update)",
             ));
         }
 
@@ -154,8 +157,22 @@ fn expand_clauses(
                 chain = quote! { #chain .group_by_internal(#cols) };
             }
             LinqClause::Select { fields } => {
-                let cols = extract_field_array(&ctx, fields)?;
-                chain = quote! { #chain .select_internal(#cols) };
+                // Plain column lists keep the 2.6 SQL shape (`SELECT a, b`,
+                // byte-identical for existing `to_sql()` assertions); only a
+                // select containing aggregate items goes through the typed
+                // `SelectItem` projection path.
+                let plain_columns = fields.iter().all(|field| match field {
+                    Expr::Field(_) => true,
+                    Expr::Path(path) => path.path.segments.len() == 1,
+                    _ => false,
+                });
+                if plain_columns {
+                    let cols = extract_field_array(&ctx, fields)?;
+                    chain = quote! { #chain .select_internal(#cols) };
+                } else {
+                    let items = expand_select_items(&ctx, fields, ef)?;
+                    chain = quote! { #chain .select_items(&[#(#items),*]) };
+                }
             }
             LinqClause::HavingExpr { expr } => {
                 let having_code = compile_having_expr(expr, &ctx, ef)?;
@@ -260,37 +277,9 @@ fn expand_clauses(
                 let name_str = name.as_str();
                 chain = quote! { #chain .from_cte(#name_str) };
             }
-            LinqClause::InnerJoin {
-                params,
-                left,
-                right,
-            } => {
-                let (table, left_col, right_col) = expand_join(params, left, right)?;
-                chain = quote! { #chain .inner_join_internal(#table, #left_col, #right_col) };
-            }
-            LinqClause::LeftJoin {
-                params,
-                left,
-                right,
-            } => {
-                let (table, left_col, right_col) = expand_join(params, left, right)?;
-                chain = quote! { #chain .left_join_internal(#table, #left_col, #right_col) };
-            }
-            LinqClause::RightJoin {
-                params,
-                left,
-                right,
-            } => {
-                let (table, left_col, right_col) = expand_join(params, left, right)?;
-                chain = quote! { #chain .right_join_internal(#table, #left_col, #right_col) };
-            }
-            LinqClause::FullJoin {
-                params,
-                left,
-                right,
-            } => {
-                let (table, left_col, right_col) = expand_join(params, left, right)?;
-                chain = quote! { #chain .full_join_internal(#table, #left_col, #right_col) };
+            LinqClause::Join { kind, params, keys } => {
+                let joined = expand_join(*kind, params, keys, ef)?;
+                chain = quote! { #chain #joined };
             }
             LinqClause::CrossJoin { entity, .. } => {
                 let table = quote! { <#entity>::TABLE };
@@ -315,8 +304,7 @@ fn expand_clauses(
                     in_update_mode = true;
                 }
                 let col = extract_field(&ctx, field)?;
-                let val = extract_value(value)?;
-                set_clauses.push(quote! { .set_column(#col, #ef::provider::DbValue::from(#val)) });
+                set_clauses.push(expand_set_clause(&ctx, &col, value, ef)?);
             }
             LinqClause::ExecuteUpdate => {
                 if !in_update_mode {
@@ -329,6 +317,10 @@ fn expand_clauses(
             LinqClause::Sum(field) => {
                 let col = extract_field(&ctx, field)?;
                 terminal = Some(quote! { .sum_internal(#col) });
+            }
+            LinqClause::SumI64(field) => {
+                let col = extract_field(&ctx, field)?;
+                terminal = Some(quote! { .sum_i64(#col) });
             }
             LinqClause::Avg(field) => {
                 let col = extract_field(&ctx, field)?;
@@ -355,12 +347,21 @@ fn expand_clauses(
     }
 }
 
-/// Expands a join clause: returns (table, left_col, right_col) constant references.
+/// Expands a join clause into a `.join_internal(...)` chain fragment.
+///
+/// `params` must be exactly two typed parameters; `keys` are the `==` pairs of
+/// the condition, normalized so the left side is always the first parameter's
+/// entity (and therefore the table the join continues from). Emits
+///
+/// ```text
+/// .join_internal(JoinKind::<kind>, <A>::TABLE, <B>::TABLE, &[(a_col, b_col), ...])
+/// ```
 fn expand_join(
+    kind: LinqJoinKind,
     params: &[(Ident, Type)],
-    left: &Expr,
-    right: &Expr,
-) -> syn::Result<(TokenStream2, TokenStream2, TokenStream2)> {
+    keys: &[(Expr, Expr)],
+    ef: &TokenStream2,
+) -> syn::Result<TokenStream2> {
     if params.len() != 2 {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -373,13 +374,229 @@ fn expand_join(
     let left_ctx = LinqCtx::multi(left_entity, left_param, params);
     let right_ctx = LinqCtx::multi(right_entity, right_param, params);
 
-    let left_col = extract_field(&left_ctx, left)?;
-    let right_col = extract_field(&right_ctx, right)?;
+    let mut key_tokens = Vec::with_capacity(keys.len());
+    for (lhs, rhs) in keys {
+        let lhs_param = join_operand_param(lhs)?;
+        let rhs_param = join_operand_param(rhs)?;
+        let (left_expr, right_expr) = if lhs_param == left_param && rhs_param == right_param {
+            (lhs, rhs)
+        } else if lhs_param == right_param && rhs_param == left_param {
+            // `b.col == a.col` — normalize so the ON clause always reads
+            // `<left_table>.<col> = <joined_table>.<col>`.
+            (rhs, lhs)
+        } else {
+            return Err(syn::Error::new_spanned(
+                lhs,
+                "each side of a join `==` must access one of the two closure parameters, \
+                 e.g. `|a: T1, b: T2| a.col == b.col`",
+            ));
+        };
+        let left_col = extract_field(&left_ctx, left_expr)?;
+        let right_col = extract_field(&right_ctx, right_expr)?;
+        key_tokens.push(quote! { (#left_col, #right_col) });
+    }
 
-    // The joined table is the right entity's TABLE constant.
-    let table = quote! { <#right_entity>::TABLE };
+    let kind_tokens = match kind {
+        LinqJoinKind::Inner => quote! { #ef::query::JoinKind::Inner },
+        LinqJoinKind::Left => quote! { #ef::query::JoinKind::Left },
+        LinqJoinKind::Right => quote! { #ef::query::JoinKind::Right },
+        LinqJoinKind::Full => quote! { #ef::query::JoinKind::Full },
+    };
 
-    Ok((table, left_col, right_col))
+    Ok(quote! {
+        .join_internal(
+            #kind_tokens,
+            <#left_entity>::TABLE,
+            <#right_entity>::TABLE,
+            &[#(#key_tokens),*],
+        )
+    })
+}
+
+/// Returns the closure parameter accessed by `a.col` (the `a` in the
+/// expression).
+fn join_operand_param(expr: &Expr) -> syn::Result<&Ident> {
+    if let Expr::Field(ExprField { base, .. }) = expr {
+        if let Expr::Path(ExprPath { path, .. }) = &**base {
+            if path.segments.len() == 1 {
+                return Ok(&path.segments[0].ident);
+            }
+        }
+    }
+    Err(syn::Error::new_spanned(
+        expr,
+        "join condition sides must be field accesses like `a.col`",
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// `select` clause expansion
+// ---------------------------------------------------------------------------
+
+/// Expands select elements into `SelectItem` value expressions, preserving the
+/// written column order.
+fn expand_select_items(
+    ctx: &LinqCtx<'_>,
+    fields: &[Expr],
+    ef: &TokenStream2,
+) -> syn::Result<Vec<TokenStream2>> {
+    fields
+        .iter()
+        .map(|field| expand_select_item(ctx, field, ef))
+        .collect()
+}
+
+/// Expands one select element:
+///
+/// - `b.col` → `SelectItem::column(COLUMN)`
+/// - `sum(b.col)` / `avg` / `min` / `max` → matching `SelectItem` constructor
+/// - `count()` → `SelectItem::count()`
+/// - `count(b.col)` → `SelectItem::count_column(COLUMN)`
+///
+/// Anything else is a compile error (there is no alias syntax; the aggregate
+/// alias is derived from the column name by `SelectItem`).
+fn expand_select_item(
+    ctx: &LinqCtx<'_>,
+    field: &Expr,
+    ef: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    if let Expr::Call(call) = field {
+        if let Expr::Path(ExprPath { path, .. }) = &*call.func {
+            if path.segments.len() == 1 {
+                let keyword = path.segments[0].ident.to_string();
+                if let Some(item) = expand_aggregate_select_item(ctx, &keyword, call, ef)? {
+                    return Ok(item);
+                }
+            }
+        }
+    }
+    let column = extract_field(ctx, field).map_err(|_| {
+        syn::Error::new_spanned(
+            field,
+            "select element must be a column reference (`b.col`) or an aggregate \
+             (`sum(b.col)`, `avg/min/max(b.col)`, `count()`, `count(b.col)`)",
+        )
+    })?;
+    Ok(quote! { #ef::query::SelectItem::column(#column) })
+}
+
+/// Expands an aggregate select element; `Ok(None)` means the call is not an
+/// aggregate and should be treated as a plain column (which then fails with the
+/// generic select-element error).
+fn expand_aggregate_select_item(
+    ctx: &LinqCtx<'_>,
+    keyword: &str,
+    call: &ExprCall,
+    ef: &TokenStream2,
+) -> syn::Result<Option<TokenStream2>> {
+    let single_column = |agg: &str| -> syn::Result<TokenStream2> {
+        if call.args.len() != 1 {
+            return Err(syn::Error::new_spanned(
+                call,
+                format!(
+                    "`{agg}` in a select takes exactly one column argument, \
+                     e.g. `{agg}(b.amount)`"
+                ),
+            ));
+        }
+        extract_field(ctx, &call.args[0])
+    };
+    let item = match keyword {
+        "sum" => {
+            let column = single_column("sum")?;
+            quote! { #ef::query::SelectItem::sum(#column) }
+        }
+        "avg" => {
+            let column = single_column("avg")?;
+            quote! { #ef::query::SelectItem::avg(#column) }
+        }
+        "min" => {
+            let column = single_column("min")?;
+            quote! { #ef::query::SelectItem::min(#column) }
+        }
+        "max" => {
+            let column = single_column("max")?;
+            quote! { #ef::query::SelectItem::max(#column) }
+        }
+        "count" => {
+            if call.args.is_empty() {
+                quote! { #ef::query::SelectItem::count() }
+            } else if call.args.len() == 1 {
+                let column = extract_field(ctx, &call.args[0])?;
+                quote! { #ef::query::SelectItem::count_column(#column) }
+            } else {
+                return Err(syn::Error::new_spanned(
+                    call,
+                    "`count` in a select takes zero or one column argument, \
+                     e.g. `count()` or `count(b.id)`",
+                ));
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(item))
+}
+
+// ---------------------------------------------------------------------------
+// `set` clause expansion
+// ---------------------------------------------------------------------------
+
+/// Expands the right-hand side of a `set` clause into an
+/// `ExecuteUpdateBuilder` chain fragment.
+///
+/// - `b.col ± <value>` → `set_column_expr(target, ColumnExpr::column(col).add/sub(value))`
+/// - another field (`b.other`) → `set_column_expr(target, ColumnExpr::column(other))`
+/// - anything else → `set_column(target, DbValue::from(value))` (the 2.6
+///   behaviour: literal/variable values)
+fn expand_set_clause(
+    ctx: &LinqCtx<'_>,
+    target: &TokenStream2,
+    value: &Expr,
+    ef: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    if let Expr::Binary(binary) = value {
+        if matches!(binary.op, syn::BinOp::Add(_) | syn::BinOp::Sub(_))
+            && is_field_expr(&binary.left)
+        {
+            let column = extract_field(ctx, &binary.left)?;
+            let operand = expand_set_operand(ctx, &binary.right, ef)?;
+            let op = if matches!(binary.op, syn::BinOp::Add(_)) {
+                quote! { .add(#operand) }
+            } else {
+                quote! { .sub(#operand) }
+            };
+            return Ok(quote! {
+                .set_column_expr(
+                    #target,
+                    #ef::query::ColumnExpr::column(#column) #op,
+                )
+            });
+        }
+    }
+    if is_field_expr(value) {
+        let column = extract_field(ctx, value)?;
+        return Ok(quote! {
+            .set_column_expr(#target, #ef::query::ColumnExpr::column(#column))
+        });
+    }
+    let val = extract_value(value)?;
+    Ok(quote! { .set_column(#target, #ef::provider::DbValue::from(#val)) })
+}
+
+/// Expands one operand of a `set` arithmetic expression: a field becomes a
+/// column reference, everything else a bound `DbValue`.
+fn expand_set_operand(
+    ctx: &LinqCtx<'_>,
+    operand: &Expr,
+    ef: &TokenStream2,
+) -> syn::Result<TokenStream2> {
+    if is_field_expr(operand) {
+        let column = extract_field(ctx, operand)?;
+        Ok(quote! { #ef::query::ColumnExpr::column(#column) })
+    } else {
+        let value = extract_value(operand)?;
+        Ok(quote! { #ef::query::ColumnExpr::value(#ef::provider::DbValue::from(#value)) })
+    }
 }
 
 /// Extracts field names as a `&'static [&'static str]` array.
