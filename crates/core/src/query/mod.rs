@@ -25,7 +25,7 @@ pub use builder::QueryBuilder;
 pub use cte::*;
 pub use execute_update::*;
 pub use expr::*;
-pub use field::Field;
+pub use field::{Field, Sortable};
 pub use having_expr::*;
 pub use helpers::*;
 pub use predicate::Predicate;

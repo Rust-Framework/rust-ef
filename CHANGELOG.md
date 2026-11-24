@@ -52,9 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `order_by_field` / `order_by_field_desc` / `then_by_field` / `then_by_field_desc`, so ordering can
   be written without a string:
   `query.order_by_field(Order::created_at).then_by_field_desc(Order::id)`. The constructor is
-  doc-hidden; typos and renamed fields now fail at compile time. The string `order_by(&str)` entry
-  remains for 2.x source compatibility; 3.0 removes it. This release does not yet restrict
-  non-sortable types via `Sortable`, and `column!` keeps returning `&str`.
+  doc-hidden; typos and renamed fields now fail at compile time. `order_by_field*` requires
+  `Sortable`: implemented for integers/floats/bool/char/String, `Option<T: Sortable>`, and the
+  feature-gated `chrono`/`uuid`/`decimal` types; blobs (`Vec<u8>`) and JSON values are rejected at
+  compile time (a `compile_fail` doc test covers it). The string `order_by(&str)` entry remains for
+  2.x source compatibility; 3.0 removes it. `column!` keeps returning `&str`.
 - **`impl From<EFError> for rust_core::AppError`.** The persistence boundary now converts into
   the shared carrier without a Web adapter: business errors (`NotFound`/`ModelValidation`/
   `ConcurrencyConflict`) keep their message; driver-derived payloads (`Query`/`TypeConversion`/
@@ -111,8 +113,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   常量（字段名命名，携带物理列名，`#[column("legacy")]` 改名不影响调用点），`QueryBuilder` 新增
   `order_by_field` / `order_by_field_desc` / `then_by_field` / `then_by_field_desc`：
   `query.order_by_field(Order::created_at).then_by_field_desc(Order::id)`。构造器 doc-hidden；
-  拼错/改名在编译期失败。2.x 保留字符串 `order_by(&str)`，3.0 删除。本版尚未用 `Sortable`
-  限制不可排序列，`column!` 仍返回 `&str`。
+  拼错/改名在编译期失败。`order_by_field*` 要求 `Sortable`：整数/浮点/bool/char/String、
+  `Option<T: Sortable>` 与 feature-gated 的 `chrono`/`uuid`/`decimal` 类型可用；blob（`Vec<u8>`）
+  与 JSON 值在编译期被拒绝（`compile_fail` 文档测试覆盖）。2.x 保留字符串 `order_by(&str)`，
+  3.0 删除；`column!` 仍返回 `&str`。
 - **`impl From<EFError> for rust_core::AppError`**：持久层边界直接转成共享载体，不再需要 Web
   适配层。业务错误（`NotFound`/`ModelValidation`/`ConcurrencyConflict`）保留文案；驱动派生载荷
   （`Query`/`TypeConversion`/`UniqueViolation`）用固定客户端文案，SQL/列/约束名只进 operator

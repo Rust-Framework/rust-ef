@@ -16,6 +16,8 @@ struct FieldItem {
     name: String,
     created_at: i64,
     amount: Option<i64>,
+    status: Option<String>,
+    payload: Vec<u8>,
 }
 
 #[test]
@@ -24,6 +26,8 @@ fn field_constants_carry_the_physical_column_name() {
     assert_eq!(FieldItem::name.column(), "legacy_name");
     assert_eq!(FieldItem::created_at.column(), "created_at");
     assert_eq!(FieldItem::amount.column(), "amount");
+    assert_eq!(FieldItem::status.column(), "status");
+    assert_eq!(FieldItem::payload.column(), "payload");
     assert_eq!(FieldItem::created_at.name(), "created_at");
 }
 
@@ -48,13 +52,15 @@ fn order_by_field_emits_the_same_order_by_as_the_string_entry() {
 fn field_handles_are_copy_and_belong_to_their_entity_type() {
     // The compile-time link is the `Field<Entity, V>` type; this function would
     // not accept another entity's handle.
-    fn asc<V>(
+    fn asc<V: rust_ef::query::Sortable>(
         query: QueryBuilder<FieldItem>,
         field: rust_ef::query::Field<FieldItem, V>,
     ) -> QueryBuilder<FieldItem> {
         query.order_by_field(field)
     }
-    let handle = FieldItem::amount;
+    let handle = FieldItem::status;
     let _ = handle;
     let _ = asc(QueryBuilder::<FieldItem>::new("field_handle_items"), handle);
+    // `FieldItem::payload` is a `Field<_, Vec<u8>>`; `Vec<u8>` is deliberately
+    // not `Sortable`, so `order_by_field(FieldItem::payload)` does not compile.
 }

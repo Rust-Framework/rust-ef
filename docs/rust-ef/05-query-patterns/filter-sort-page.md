@@ -87,6 +87,10 @@ let sorted = ctx
     .await?;
 ```
 
+`order_by_field*` 只接受实现了 `Sortable` 的字段类型：整数/浮点/`bool`/`char`/`String`、
+`Option<T: Sortable>`，以及启用对应 feature 的 `chrono`/`uuid`/`decimal` 类型；`Vec<u8>`、
+JSON 值等不可排序列在编译期报错。
+
 ## 分页
 
 手动分页用 `skip` + `take`：
