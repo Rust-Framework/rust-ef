@@ -11,6 +11,8 @@ use sqlx_core::query::query;
 use sqlx_core::row::Row;
 use sqlx_mysql::MySqlPool;
 
+use crate::error_map::map_sqlx_error;
+
 /// Reads tables and their schema from a MySQL database.
 #[deprecated(note = "use IDatabaseProvider::introspect instead")]
 pub async fn introspect_mysql(connection_string: &str) -> EFResult<Vec<DbTable>> {
@@ -30,7 +32,7 @@ pub(crate) async fn introspect_mysql_pool(pool: &MySqlPool) -> EFResult<Vec<DbTa
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| EFError::query(format!("Table query error: {e}")))?;
+    .map_err(|e| map_sqlx_error(e, "Table query error", ""))?;
 
     let mut tables = Vec::new();
     for table_row in table_rows {
@@ -75,7 +77,7 @@ async fn columns(pool: &MySqlPool, table: &str) -> EFResult<Vec<DbColumn>> {
     .bind(table)
     .fetch_all(pool)
     .await
-    .map_err(|e| EFError::query(format!("Column query error: {e}")))?;
+    .map_err(|e| map_sqlx_error(e, "Column query error", ""))?;
 
     let mut columns = Vec::with_capacity(col_rows.len());
     for col_row in col_rows {
@@ -148,7 +150,7 @@ async fn indexes(pool: &MySqlPool, table: &str) -> EFResult<Vec<DbIndex>> {
             .bind(table)
             .fetch_all(pool)
             .await
-            .map_err(|e| EFError::query(format!("Index query error: {e}")))?;
+            .map_err(|e| map_sqlx_error(e, "Index query error", ""))?;
             rows.into_iter()
                 .map(|row| {
                     Ok(RawIndexRow {
@@ -160,7 +162,7 @@ async fn indexes(pool: &MySqlPool, table: &str) -> EFResult<Vec<DbIndex>> {
                 })
                 .collect::<EFResult<Vec<_>>>()?
         }
-        Err(error) => return Err(EFError::query(format!("Index query error: {error}"))),
+        Err(error) => return Err(map_sqlx_error(error, "Index query error", "")),
     };
 
     let mut indexes: Vec<DbIndex> = Vec::new();
@@ -215,7 +217,7 @@ async fn foreign_keys(pool: &MySqlPool, table: &str) -> EFResult<Vec<DbForeignKe
     .bind(table)
     .fetch_all(pool)
     .await
-    .map_err(|e| EFError::query(format!("Foreign key query error: {e}")))?;
+    .map_err(|e| map_sqlx_error(e, "Foreign key query error", ""))?;
 
     let mut foreign_keys: Vec<DbForeignKey> = Vec::new();
     for row in rows {
@@ -264,7 +266,7 @@ async fn checks(pool: &MySqlPool, table: &str) -> EFResult<Option<Vec<DbCheck>>>
     {
         Ok(rows) => rows,
         Err(error) if is_missing_catalog(&error) => return Ok(None),
-        Err(error) => return Err(EFError::query(format!("Check query error: {error}"))),
+        Err(error) => return Err(map_sqlx_error(error, "Check query error", "")),
     };
 
     let mut checks = Vec::with_capacity(rows.len());
@@ -289,7 +291,7 @@ fn normalize_action(action: &str) -> Option<String> {
     }
 }
 
-/// SQLSTATE `42S02`: unknown table — e.g. `check_constraints` on MySQL < 8.0.16.
+/// SQLSTATE `42S02`: unknown table 鈥?e.g. `check_constraints` on MySQL < 8.0.16.
 fn is_missing_catalog(error: &sqlx_core::Error) -> bool {
     matches!(
         error,
@@ -298,7 +300,7 @@ fn is_missing_catalog(error: &sqlx_core::Error) -> bool {
     )
 }
 
-/// SQLSTATE `42S22`: unknown column — e.g. `statistics.EXPRESSION` on
+/// SQLSTATE `42S22`: unknown column 鈥?e.g. `statistics.EXPRESSION` on
 /// MySQL < 8.0.13.
 fn is_unknown_column(error: &sqlx_core::Error) -> bool {
     matches!(
@@ -309,5 +311,5 @@ fn is_unknown_column(error: &sqlx_core::Error) -> bool {
 }
 
 fn map_row_err(e: sqlx_core::Error) -> EFError {
-    EFError::query(format!("Row read error: {e}"))
+    map_sqlx_error(e, "Row read error", "")
 }

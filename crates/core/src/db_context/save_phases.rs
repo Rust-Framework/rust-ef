@@ -19,6 +19,10 @@ use std::collections::HashMap;
 
 use crate::cascade::{CascadeDeleteDirective, DrainedChild, FixupLink};
 
+/// Upsert rows grouped by the increment switch that decides their SET clause:
+/// `(increment_columns, rows)`.
+type UpsertGroup<'a, E> = (Vec<String>, Vec<(&'a E, &'a EntityTypeMeta)>);
+
 // ---------------------------------------------------------------------------
 // Cascade drain helpers (extracted from save_changes)
 // ---------------------------------------------------------------------------
@@ -214,6 +218,13 @@ where
 }
 
 /// Phase 1b: UPSERT Added entities (is_upsert = true).
+///
+/// Rows are grouped by their `upsert_increment_columns` (recorded by
+/// `DbContext::upsert_increment`): a group with no increment columns takes the
+/// plain `INSERT ... ON CONFLICT DO UPDATE` path, a group with increment columns
+/// takes `SET col = col + EXCLUDED.col` for those columns. In practice one save
+/// has a single group per entity type; grouping keeps the statement shape valid
+/// if a caller mixes plain and incrementing upserts for the same type.
 pub async fn upsert_added_phase<E>(
     conn: &mut dyn IAsyncConnection,
     provider: &dyn IDatabaseProvider,
@@ -224,17 +235,34 @@ pub async fn upsert_added_phase<E>(
 where
     E: IEntityType + IEntitySnapshot + IGetKeyValues,
 {
-    let upserts: Vec<(&E, &EntityTypeMeta)> = db_set
+    let mut groups: Vec<UpsertGroup<'_, E>> = Vec::new();
+    for entry in db_set
         .entries
         .iter()
         .filter(|e| tracker.entry_state(e.entry_id) == Some(EntityState::Added))
         .filter(|e| tracker.entry_is_upsert(e.entry_id))
-        .map(|e| (&e.entity, meta))
-        .collect();
-    if upserts.is_empty() {
-        return Ok(0);
+    {
+        let increments = tracker.entry_upsert_increment(entry.entry_id);
+        match groups
+            .iter_mut()
+            .find(|(columns, _)| columns.as_slice() == increments)
+        {
+            Some((_, rows)) => rows.push((&entry.entity, meta)),
+            None => groups.push((increments.to_vec(), vec![(&entry.entity, meta)])),
+        }
     }
-    ChangeExecutor::execute_upserts(conn, provider, &upserts).await
+
+    let mut total = 0usize;
+    for (increments, rows) in groups {
+        let count = if increments.is_empty() {
+            ChangeExecutor::execute_upserts(conn, provider, &rows).await?
+        } else {
+            let columns: Vec<&str> = increments.iter().map(String::as_str).collect();
+            ChangeExecutor::execute_upserts_increment(conn, provider, &rows, &columns).await?
+        };
+        total += count;
+    }
+    Ok(total)
 }
 
 /// Phase 2: UPDATE Modified entities (partial update via modified_properties).

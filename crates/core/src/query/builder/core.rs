@@ -15,17 +15,29 @@ use super::super::state::QueryState;
 ///
 /// Corresponds to EFCore's `IQueryable<T>`.
 ///
-/// `Clone` is derived so that builders can be forked for compositional reuse
-/// (e.g. applying additional filters on a base query without losing the
-/// original). Note that `single`/`single_or_default` still use the `take(2)`
-/// approach rather than `clone().count()` to avoid a double round-trip.
-#[derive(Clone)]
+/// `Clone` is implemented manually (not derived) so forking a builder does not
+/// require `T: Clone`: the phantom type parameter carries no data. This is what
+/// lets `to_page` clone the query for its count without imposing an extra bound
+/// on the entity. `single`/`single_or_default` still use the `take(2)` approach
+/// rather than `clone().count()` to avoid a double round-trip.
 pub struct QueryBuilder<T: IEntityType> {
     pub(super) state: QueryState,
     pub(super) provider: Option<Arc<dyn IDatabaseProvider>>,
     pub(super) filter_map: Option<Arc<HashMap<String, CompiledFilter>>>,
     pub(super) lazy_loading_enabled: bool,
     pub(super) _phantom: PhantomData<T>,
+}
+
+impl<T: IEntityType> Clone for QueryBuilder<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            provider: self.provider.clone(),
+            filter_map: self.filter_map.clone(),
+            lazy_loading_enabled: self.lazy_loading_enabled,
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<T: IEntityType> QueryBuilder<T> {

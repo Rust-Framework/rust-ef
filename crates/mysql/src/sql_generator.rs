@@ -94,6 +94,44 @@ impl ISqlGenerator for MySqlSqlGenerator {
         )
     }
 
+    fn upsert_batch_increment(
+        &self,
+        table: &str,
+        columns: &[&str],
+        conflict_cols: &[&str],
+        increment_cols: &[&str],
+        row_count: usize,
+    ) -> String {
+        let cols = columns
+            .iter()
+            .map(|c| self.quote_identifier(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let row = format!("({})", vec!["?"; columns.len()].join(", "));
+        let all_rows = vec![row; row_count].join(", ");
+        let sets = columns
+            .iter()
+            .filter(|c| !conflict_cols.contains(c))
+            .map(|c| {
+                let quoted = self.quote_identifier(c);
+                if increment_cols.contains(c) {
+                    // The inserted value is the delta and is bound once.
+                    format!("{quoted} = {quoted} + VALUES({quoted})")
+                } else {
+                    format!("{quoted} = VALUES({quoted})")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "INSERT INTO {} ({}) VALUES {} ON DUPLICATE KEY UPDATE {}",
+            self.quote_identifier(table),
+            cols,
+            all_rows,
+            sets,
+        )
+    }
+
     fn update(&self, table: &str, set_columns: &[&str], where_clause: &str) -> String {
         let sets: Vec<String> = set_columns
             .iter()

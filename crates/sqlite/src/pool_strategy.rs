@@ -200,7 +200,9 @@ impl SqliteProviderInner {
                     crate::introspection::introspect_connection(&conn)
                 })
                 .await
-                .map_err(|e| EFError::query(format!("SQLite introspection task failed: {}", e)))?
+                .map_err(|e| {
+                    EFError::provider(format!("SQLite introspection task failed: {}", e))
+                })?
             }
             SqliteProviderInner::Single(conn) => {
                 let guard = conn.lock().await;

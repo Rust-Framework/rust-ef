@@ -156,6 +156,43 @@ impl ChangeExecutor {
     where
         E: IEntityType + IEntitySnapshot + IGetKeyValues,
     {
+        Self::execute_upserts_impl(conn, provider, entities, None).await
+    }
+
+    /// Executes UPSERT statements where the listed columns are **incremented**
+    /// on conflict instead of overwritten from the inserted row.
+    ///
+    /// On INSERT the counter column takes the inserted value (the delta); on
+    /// conflict it becomes `col = col + EXCLUDED.col`, so the delta is added to
+    /// the stored value atomically — no read-modify-write round trip and no
+    /// lost update. All other non-key columns keep the plain upsert behaviour.
+    /// Every parameter is bound exactly once (the VALUES list).
+    ///
+    /// The conflict target is the entity's primary key, exactly like
+    /// [`execute_upserts`](Self::execute_upserts): model a counter row with a
+    /// composite primary key (e.g. `(tenant_id, metric)`) so conflicts are
+    /// detected on the key columns.
+    pub async fn execute_upserts_increment<E>(
+        conn: &mut dyn IAsyncConnection,
+        provider: &dyn IDatabaseProvider,
+        entities: &[(&E, &EntityTypeMeta)],
+        increment_columns: &[&str],
+    ) -> EFResult<usize>
+    where
+        E: IEntityType + IEntitySnapshot + IGetKeyValues,
+    {
+        Self::execute_upserts_impl(conn, provider, entities, Some(increment_columns)).await
+    }
+
+    async fn execute_upserts_impl<E>(
+        conn: &mut dyn IAsyncConnection,
+        provider: &dyn IDatabaseProvider,
+        entities: &[(&E, &EntityTypeMeta)],
+        increment_columns: Option<&[&str]>,
+    ) -> EFResult<usize>
+    where
+        E: IEntityType + IEntitySnapshot + IGetKeyValues,
+    {
         if entities.is_empty() {
             return Ok(0);
         }
@@ -188,6 +225,21 @@ impl ChangeExecutor {
             ));
         }
 
+        let increments = increment_columns.unwrap_or(&[]);
+        for column in increments {
+            if !insert_cols.contains(column) {
+                return Err(crate::error::EFError::configuration(format!(
+                    "Upsert increment column `{column}` is not an insertable column of `{}`.",
+                    meta.table_name
+                )));
+            }
+            if conflict_cols.contains(column) {
+                return Err(crate::error::EFError::configuration(format!(
+                    "Upsert increment column `{column}` cannot be part of the conflict target."
+                )));
+            }
+        }
+
         const MAX_PARAMS: usize = 900;
         let batch_size = (MAX_PARAMS / insert_cols.len()).max(1);
 
@@ -198,12 +250,29 @@ impl ChangeExecutor {
             let batch = &entities[start..end];
             let row_count = batch.len();
 
-            let sql = gen.upsert_batch(
-                meta.table_name.as_ref(),
-                &insert_cols,
-                &conflict_cols,
-                row_count,
-            );
+            let sql = if increments.is_empty() {
+                gen.upsert_batch(
+                    meta.table_name.as_ref(),
+                    &insert_cols,
+                    &conflict_cols,
+                    row_count,
+                )
+            } else {
+                let sql = gen.upsert_batch_increment(
+                    meta.table_name.as_ref(),
+                    &insert_cols,
+                    &conflict_cols,
+                    increments,
+                    row_count,
+                );
+                if sql.is_empty() {
+                    return Err(crate::error::EFError::configuration(format!(
+                        "The `{}` SQL generator does not support upsert increments.",
+                        provider.name()
+                    )));
+                }
+                sql
+            };
             let mut params: Vec<DbValue> = Vec::with_capacity(row_count * insert_cols.len());
             for (entity, _) in batch {
                 let snap = entity.snapshot();

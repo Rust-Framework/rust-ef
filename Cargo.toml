@@ -14,7 +14,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.9.0"
+version = "2.9.1"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -24,6 +24,10 @@ authors = ["Start"]
 
 [workspace.dependencies]
 inventory = "0.3"
+# Contract types (`PagedRequest`/`PagedResult`) for `QueryBuilder::to_page`.
+# `version` is what gets published; `path` serves the sibling-checkout layout
+# (rust-dix is a separate repository, so CI checks it out next to rust-ef).
+rust-core = { version = "0.1", path = "../rust-dix/crates/core" }
 
 # ---------------------------------------------------------------------------
 # Build profiles tuned for `target/` disk usage.

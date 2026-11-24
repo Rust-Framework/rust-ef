@@ -73,7 +73,7 @@ impl IAsyncConnection for SqliteConnection {
                 let conn = {
                     let mut guard = m.lock().unwrap_or_else(|p| p.into_inner());
                     guard.take().ok_or_else(|| {
-                        EFError::query(
+                        EFError::connection(
                             "SQLite connection unavailable (previous spawn_blocking panicked)",
                         )
                     })?
@@ -84,7 +84,7 @@ impl IAsyncConnection for SqliteConnection {
                     (execute_sync(&conn, &sql_owned, &params_owned), conn)
                 })
                 .await
-                .map_err(|e| EFError::query(format!("spawn_blocking panicked: {}", e)))?;
+                .map_err(|e| EFError::provider(format!("spawn_blocking panicked: {}", e)))?;
                 let mut guard = m.lock().unwrap_or_else(|p| p.into_inner());
                 *guard = Some(conn);
                 result
@@ -103,7 +103,7 @@ impl IAsyncConnection for SqliteConnection {
                 let conn = {
                     let mut guard = m.lock().unwrap_or_else(|p| p.into_inner());
                     guard.take().ok_or_else(|| {
-                        EFError::query(
+                        EFError::connection(
                             "SQLite connection unavailable (previous spawn_blocking panicked)",
                         )
                     })?
@@ -114,7 +114,7 @@ impl IAsyncConnection for SqliteConnection {
                     (query_sync(&conn, &sql_owned, &params_owned), conn)
                 })
                 .await
-                .map_err(|e| EFError::query(format!("spawn_blocking panicked: {}", e)))?;
+                .map_err(|e| EFError::provider(format!("spawn_blocking panicked: {}", e)))?;
                 let mut guard = m.lock().unwrap_or_else(|p| p.into_inner());
                 *guard = Some(conn);
                 result

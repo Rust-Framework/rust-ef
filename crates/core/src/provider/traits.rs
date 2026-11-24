@@ -137,6 +137,30 @@ pub trait ISqlGenerator: Send + Sync {
         let _ = (table, columns, conflict_cols, row_count);
         String::new()
     }
+
+    /// Generates a batch UPSERT where the listed columns are **incremented**
+    /// on conflict instead of being overwritten from the inserted row.
+    ///
+    /// - SQLite/PostgreSQL: `... ON CONFLICT(conflict_cols) DO UPDATE SET
+    ///   inc = inc + EXCLUDED.inc, other = EXCLUDED.other`
+    /// - MySQL: `... ON DUPLICATE KEY UPDATE inc = inc + VALUES(inc), other = VALUES(other)`
+    ///
+    /// `columns` and `conflict_cols` follow [`upsert_batch`](Self::upsert_batch).
+    /// `increment_cols` must be a subset of `columns` and disjoint from
+    /// `conflict_cols`; the executor validates this. Parameters are the
+    /// `row_count * columns.len()` VALUES values — the insertion value of an
+    /// increment column is its delta and is bound exactly once.
+    fn upsert_batch_increment(
+        &self,
+        table: &str,
+        columns: &[&str],
+        conflict_cols: &[&str],
+        increment_cols: &[&str],
+        row_count: usize,
+    ) -> String {
+        let _ = (table, columns, conflict_cols, increment_cols, row_count);
+        String::new()
+    }
 }
 
 /// ANSI SQL transaction isolation levels.

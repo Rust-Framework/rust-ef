@@ -35,10 +35,43 @@
 //! | API | Lifetime of the provider initialization | Use when |
 //! |-----|------------------------------------------|----------|
 //! | [`DbContextServiceCollectionExt::add_dbcontext`] | eager, at registration (panics on failure) | simplest startup path; fail fast |
+//! | [`DbContextServiceCollectionExt::add_dbcontext_with_options`] | eager, at registration | the host already built `Arc<DbContextOptions>` and every consumer must share it |
 //! | [`DbContextServiceCollectionExt::add_dbcontext_async`] | during `build_async().await` (typed error) | async startup; provider failures become `RdiError` |
 //! | [`DbContextServiceCollectionExt::add_dbcontext_keyed`] | eager, at registration | static read/write or module keys |
 //! | [`DbContextServiceCollectionExt::add_dbcontext_keyed_async`] | during `build_async().await` | async startup with keyed contexts |
 //! | [`DbContextServiceCollectionExt::add_dbcontext_anykey`] | lazily, per requested key (cached) | dynamic tenant/sharded contexts |
+//!
+//! ## Sharing the options with other components
+//!
+//! [`DbContextOptions`] carries the process-level provider cache (connection
+//! pool) and metadata cache, so every consumer that creates its own
+//! short-lived `DbContext` must use the *same* `Arc<DbContextOptions>` as the
+//! scoped `DbContext`. The default (unkeyed) registrations publish the built
+//! options as a `DbContextOptions` singleton, so a host registers a durable
+//! idempotency store / outbox dispatcher / background worker without receiving
+//! the options out of band:
+//!
+//! ```rust,ignore
+//! use rust_dix::IServiceResolverExt as _;
+//!
+//! let provider = ServiceCollection::new()
+//!     .add_dbcontext(|options| {
+//!         options.use_sqlite("data source=app.db");
+//!     })
+//!     .singleton(|resolver| {
+//!         // Same pool and metadata cache as the scoped `DbContext`.
+//!         let options = resolver
+//!             .resolve_arc::<DbContextOptions>()
+//!             .expect("DbContextOptions");
+//!         Arc::new(EfIdempotencyStore::new(options))
+//!     })
+//!     .build()?;
+//! ```
+//!
+//! When the host has to build the options itself (for example to keep them in a
+//! custom `AppState`), register them with
+//! [`DbContextServiceCollectionExt::add_dbcontext_with_options`] instead; it is
+//! the low-level escape hatch and publishes the same singleton.
 //!
 //! ## Typed context keys
 //!
@@ -329,6 +362,19 @@ fn build_options(configure: impl FnOnce(&mut DbContextOptionsBuilder)) -> Arc<Db
     Arc::new(builder.build())
 }
 
+/// Publishes the built options as a `DbContextOptions` singleton.
+///
+/// Durable framework components (idempotency store, outbox dispatcher,
+/// background workers) create their own short-lived `DbContext` and must share
+/// the host's provider cache (connection pool) and metadata cache; resolving the
+/// singleton gives them exactly the `Arc` used by the scoped `DbContext`.
+fn publish_options(
+    collection: ::rust_dix::ServiceCollection,
+    options: &Arc<DbContextOptions>,
+) -> ::rust_dix::ServiceCollection {
+    collection.instance::<DbContextOptions>(Arc::clone(options))
+}
+
 /// Default number of requested keys whose `AnyKey` options/provider are cached.
 pub const DEFAULT_ANYKEY_CAPACITY: usize = 256;
 
@@ -417,12 +463,41 @@ pub trait DbContextServiceCollectionExt {
     /// Registers a `DbContext` as **Scoped** with the default key.
     ///
     /// The provider (connection pool) is created eagerly at registration time and
-    /// a failure panics, fail-fast at startup. A later registration for the same
-    /// key replaces this one (MEDI last-registration-wins).
+    /// a failure panics, fail-fast at startup. The built options are published as
+    /// a `DbContextOptions` singleton, so process-level consumers share the same
+    /// pool and metadata cache. A later registration for the same key replaces
+    /// this one (MEDI last-registration-wins).
     fn add_dbcontext(
         self,
         configure: impl FnOnce(&mut DbContextOptionsBuilder) + Send + Sync + 'static,
     ) -> Self;
+
+    /// Registers a `DbContext` as **Scoped** from caller-built options.
+    ///
+    /// Low-level escape hatch for a host that already builds
+    /// `Arc<DbContextOptions>` (to keep them in application state, or to feed
+    /// another component that needs the same provider cache/metadata cache).
+    /// The provider (connection pool) is created eagerly at registration time
+    /// and a failure panics, fail-fast at startup; both this scoped `DbContext`
+    /// and any consumer resolving the published `DbContextOptions` singleton
+    /// share that one pool.
+    ///
+    /// Prefer [`Self::add_dbcontext`] unless the options must be built before
+    /// the call; it publishes the same singleton with no extra plumbing.
+    ///
+    /// The default implementation is `unimplemented!`: only the rust-ef
+    /// implementation for [`ServiceCollection`] can register a scoped context,
+    /// and the default keeps the trait extendable without breaking downstream
+    /// implementations (SemVer).
+    fn add_dbcontext_with_options(self, _options: Arc<DbContextOptions>) -> Self
+    where
+        Self: Sized,
+    {
+        unimplemented!(
+            "add_dbcontext_with_options is only implemented for rust_dix::ServiceCollection; \
+             call add_dbcontext(configure) instead"
+        )
+    }
 
     /// Registers a typed/keyed `DbContext` as **Scoped**.
     ///
@@ -469,9 +544,11 @@ pub trait DbContextServiceCollectionExt {
     /// Provider creation runs during `build_async().await`; failures surface as
     /// `RdiError` instead of a registration-time panic. An
     /// [`DbContextOptionsBuilder::async_preflight`](crate::db_context::DbContextOptionsBuilder::async_preflight)
-    /// hook, when configured, runs after provider creation. The `DbContext`
-    /// remains a synchronous Scoped service, so owned resolution keeps working.
-    /// A sync `build()` returns `RdiError::AsyncServiceRequiresBuildAsync`.
+    /// hook, when configured, runs after provider creation. The built options are
+    /// published as a `DbContextOptions` singleton (same as [`Self::add_dbcontext`]).
+    /// The `DbContext` remains a synchronous Scoped service, so owned resolution
+    /// keeps working. A sync `build()` returns
+    /// `RdiError::AsyncServiceRequiresBuildAsync`.
     fn add_dbcontext_async(
         self,
         configure: impl FnOnce(&mut DbContextOptionsBuilder) + Send + Sync + 'static,
@@ -498,7 +575,17 @@ impl DbContextServiceCollectionExt for ::rust_dix::ServiceCollection {
         options
             .create_provider()
             .expect("DbContext provider initialization failed at startup");
-        self.scoped(move |_| {
+        publish_options(self, &options).scoped(move |_| {
+            let ctx = DbContext::from_options(&options).expect("Failed to create DbContext");
+            Arc::new(ctx) as Arc<DbContext>
+        })
+    }
+
+    fn add_dbcontext_with_options(self, options: Arc<DbContextOptions>) -> Self {
+        options
+            .create_provider()
+            .expect("DbContext provider initialization failed at startup");
+        publish_options(self, &options).scoped(move |_| {
             let ctx = DbContext::from_options(&options).expect("Failed to create DbContext");
             Arc::new(ctx) as Arc<DbContext>
         })
@@ -568,7 +655,8 @@ impl DbContextServiceCollectionExt for ::rust_dix::ServiceCollection {
         configure: impl FnOnce(&mut DbContextOptionsBuilder) + Send + Sync + 'static,
     ) -> Self {
         let options = build_options(configure);
-        self.async_singleton::<AsyncDbContextOptions>(async_options_factory(options))
+        publish_options(self, &options)
+            .async_singleton::<AsyncDbContextOptions>(async_options_factory(options))
             .scoped(move |resolver| {
                 let runtime = resolve_arc::<AsyncDbContextOptions>(resolver).expect(
                     "async DbContext options are not initialized; call ServiceCollection::build_async()",

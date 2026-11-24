@@ -75,6 +75,16 @@ pub(super) fn generate_impls(
                 pub const #const_name: &'static str = #col_name;
             });
 
+            // Typed column handle for compile-time-safe query composition
+            // (`Order::created_at`), with the Rust field type carried in `V`.
+            // The constructor is doc-hidden; only the derive creates handles.
+            let field_const_name = field_name.clone();
+            column_consts.push(quote! {
+                #[allow(non_upper_case_globals)]
+                pub const #field_const_name: #ef::query::Field<Self, #field_ty> =
+                    #ef::query::Field::from_column_unchecked(#col_name);
+            });
+
             // G3.1: Emit `FIELD_TYPE_<NAME>` — the Rust type name as a `&str`
             // for introspection (debugging, typed projection validation).
             let type_const_name = syn::Ident::new(

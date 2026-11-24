@@ -68,6 +68,41 @@ ctx.use_transaction(|ctx| {
 - 业务上需要“回滚但返回成功结果”时，用上面的 `begin_transaction` 手动句柄；
 - 闭包签名需要 `Box::pin`，这是 Rust async 借用检查的折中。
 
+### 下游错误类型：`use_transaction_map_err`（2.x）
+
+`use_transaction_generic` 要求 `E: From<EFError>`。当错误类型来自另一个 crate（例如 Web 层的 `webx::Error`）时，Rust 孤儿规则让应用和适配层都无法为它实现 `From<EFError>`；这时用 `use_transaction_map_err` 显式传入边界映射函数：
+
+```rust
+use webx_ef::map_ef_error; // Web 适配层提供的 EFError -> webx::Error 映射
+
+let result: Result<PlanVersion, webx::Error> = ctx
+    .use_transaction_map_err(map_ef_error, |ctx| {
+        Box::pin(async move {
+            // 共享用例本身返回 Result<_, webx::Error>，可直接组合；
+            // 闭包内直接调 EF API 时用 `.map_err(map_ef_error)?`。
+            billing::queries::record_plan_version(ctx).await
+        })
+    })
+    .await;
+```
+
+- 闭包 `Ok` → 提交；闭包 `Err` → **先回滚，再原样返回闭包错误**（不经过 `map_err`，回滚失败也不会替换它）；
+- 事务开始/提交失败 → 用 `map_err` 转换；
+- 只有事务边界错误走映射；闭包内的 EF 调用仍需 `.map_err(map_ef_error)?`，或直接调用已返回应用错误类型的共享用例。
+
+应用错误边界落地后（应用定义 `enum AppError` 并 `impl From<EFError> for AppError`），改用泛型入口，闭包内即可直接 `?`：
+
+```rust
+let result: Result<PlanVersion, AppError> = ctx
+    .use_transaction_generic(|ctx| {
+        Box::pin(async move {
+            ctx.save_changes().await?; // EFError -> AppError via From
+            Ok(PlanVersion::new())
+        })
+    })
+    .await;
+```
+
 ## 隔离级别
 
 ```rust

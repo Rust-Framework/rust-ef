@@ -431,7 +431,10 @@ impl DbContext {
     ///
     /// For a business rejection that must roll back and still return a value,
     /// use the manual [`DbContext::begin_transaction`] handle and call
-    /// `rollback()` explicitly.
+    /// `rollback()` explicitly. For a closure whose error type is not
+    /// [`EFError`], use [`DbContext::use_transaction_generic`] (when the error
+    /// type implements `From<EFError>`) or
+    /// [`DbContext::use_transaction_map_err`] (when it cannot).
     ///
     /// The closure receives `&mut DbContext` and must return a pinned boxed
     /// future. This signature works around Rust's async borrow checker by
@@ -452,7 +455,7 @@ impl DbContext {
         for<'a> F: FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = EFResult<R>> + Send + 'a>>,
         R: Send + 'static,
     {
-        self.use_transaction_with_opt(None, f).await
+        self.use_transaction_generic(f).await
     }
 
     /// Like [`DbContext::use_transaction`], with an explicit isolation level
@@ -466,24 +469,132 @@ impl DbContext {
         for<'a> F: FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = EFResult<R>> + Send + 'a>>,
         R: Send + 'static,
     {
-        self.use_transaction_with_opt(Some(isolation), f).await
+        self.use_transaction_map_err_with_opt(Some(isolation), std::convert::identity, f)
+            .await
     }
 
-    async fn use_transaction_with_opt<F, R>(
+    /// Like [`DbContext::use_transaction`], but for callers whose error type is
+    /// not [`EFError`].
+    ///
+    /// The closure may return any `Result<R, E>` where `E: From<EFError>`, so a
+    /// Web-agnostic application error boundary can be used directly: implement
+    /// `From<EFError>` once for the application error type and share business
+    /// functions between the transaction entry point and the HTTP layer,
+    /// instead of splitting every use case into an `EFResult` version and a
+    /// domain-error version. rust-ef itself stays Web-agnostic.
+    ///
+    /// Commits on `Ok`, rolls back on `Err`. The closure's error is returned
+    /// **unchanged** (a best-effort rollback failure never replaces it);
+    /// transaction-start and commit errors are converted with `E::from`.
+    ///
+    /// If the downstream error type cannot implement `From<EFError>` — e.g. a
+    /// Web framework error type from another crate, where Rust's orphan rule
+    /// blocks the impl on both sides — use
+    /// [`DbContext::use_transaction_map_err`] with an explicit boundary mapping
+    /// function instead.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// #[derive(Debug)]
+    /// enum AppError {
+    ///     Ef(EFError),
+    ///     Business(&'static str),
+    /// }
+    ///
+    /// impl From<EFError> for AppError {
+    ///     fn from(error: EFError) -> Self {
+    ///         Self::Ef(error)
+    ///     }
+    /// }
+    ///
+    /// let result: Result<u64, AppError> = ctx
+    ///     .use_transaction_generic(|ctx| {
+    ///         Box::pin(async move {
+    ///             ctx.save_changes().await?; // EFError -> AppError via From
+    ///             Ok(42)
+    ///         })
+    ///     })
+    ///     .await;
+    /// ```
+    pub async fn use_transaction_generic<F, R, E>(&mut self, f: F) -> Result<R, E>
+    where
+        E: From<EFError>,
+        for<'a> F: FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = Result<R, E>> + Send + 'a>>,
+        R: Send + 'static,
+    {
+        self.use_transaction_map_err(E::from, f).await
+    }
+
+    /// Executes a closure within a context-scoped transaction, converting every
+    /// framework error through an explicit mapping function.
+    ///
+    /// This is the 2.x-compatible entry point for a downstream error type that
+    /// cannot implement `From<EFError>`: when the error type belongs to another
+    /// crate (e.g. a Web framework's error), Rust's orphan rule lets neither
+    /// the application nor the framework add `impl From<EFError> for webx::Error`,
+    /// so the boundary mapping function is passed in instead.
+    ///
+    /// Semantics are identical to [`DbContext::use_transaction_generic`]:
+    ///
+    /// - `Ok` commits and returns the value;
+    /// - `Err` **first rolls back**, then returns the closure's error
+    ///   **unchanged** — `map_err` is never applied to it, and a best-effort
+    ///   rollback failure never replaces it;
+    /// - transaction-start and commit failures are converted with `map_err`.
+    ///
+    /// Note that only the transaction-boundary errors go through `map_err`;
+    /// framework calls *inside* the closure still need the application's own
+    /// mapping (`.map_err(map_ef_error)?`), or should call shared use cases that
+    /// already return the application error type.
+    ///
+    /// # Example (2.x: explicit boundary mapping)
+    ///
+    /// ```rust,ignore
+    /// use webx_ef::map_ef_error; // adapter provided by the Web layer
+    ///
+    /// let result: Result<PlanVersion, webx::Error> = ctx
+    ///     .use_transaction_map_err(map_ef_error, |ctx| {
+    ///         Box::pin(async move {
+    ///             // Shared use case: already returns Result<_, webx::Error>.
+    ///             billing::queries::record_plan_version(ctx).await
+    ///         })
+    ///     })
+    ///     .await;
+    /// ```
+    ///
+    /// # Example (after the application error type exists)
+    ///
+    /// Once the application defines `enum AppError` and implements
+    /// `From<EFError>` for it, prefer [`DbContext::use_transaction_generic`]:
+    /// the closure can then use `?` on framework calls directly.
+    pub async fn use_transaction_map_err<F, R, E, M>(&mut self, map_err: M, f: F) -> Result<R, E>
+    where
+        M: Fn(EFError) -> E + Send,
+        for<'a> F: FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = Result<R, E>> + Send + 'a>>,
+        R: Send + 'static,
+    {
+        self.use_transaction_map_err_with_opt(None, map_err, f)
+            .await
+    }
+
+    async fn use_transaction_map_err_with_opt<F, R, E, M>(
         &mut self,
         isolation: Option<IsolationLevel>,
+        map_err: M,
         f: F,
-    ) -> EFResult<R>
+    ) -> Result<R, E>
     where
-        for<'a> F: FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = EFResult<R>> + Send + 'a>>,
+        M: Fn(EFError) -> E,
+        for<'a> F: FnOnce(&'a mut Self) -> Pin<Box<dyn Future<Output = Result<R, E>> + Send + 'a>>,
         R: Send + 'static,
     {
         if self.session.is_active().await {
-            return Err(EFError::transaction(
+            return Err(map_err(EFError::transaction(
                 "a transaction is already active on this DbContext",
-            ));
+            )));
         }
-        let shared = self.session.begin_with(isolation).await?;
+        let shared = self.session.begin_with(isolation).await.map_err(&map_err)?;
         let facade = SessionConnection::new(Arc::clone(&shared));
         let txn: Box<dyn ITransaction> = Box::new(DbTransaction::new_shared(
             shared,
@@ -495,10 +606,12 @@ impl DbContext {
         let result = f(self).await;
         match result {
             Ok(r) => {
-                txn.commit().await?;
+                txn.commit().await.map_err(&map_err)?;
                 Ok(r)
             }
             Err(e) => {
+                // Roll back first, then return the closure's error unchanged:
+                // `map_err` only covers transaction-boundary failures.
                 let _ = txn.rollback().await;
                 Err(e)
             }
@@ -619,6 +732,58 @@ impl DbContext {
         let entry_id =
             self.change_tracker
                 .track(type_id, &type_name, EntityState::Added, None, true);
+        self.set::<T>().push_entry(entity, entry_id);
+    }
+
+    /// Marks an entity for upsert, with the listed columns **incremented** on
+    /// conflict instead of overwritten from the inserted row:
+    /// `SET col = col + EXCLUDED.col` (MySQL: `col = col + VALUES(col)`).
+    ///
+    /// This is the counter/UPSERT-increment form of [`DbContext::upsert`]:
+    /// pass the delta as the entity's counter value. On INSERT it becomes the
+    /// initial value; when a row with the same primary key already exists the
+    /// database adds it to the stored value in the same statement — one
+    /// statement covers "exists ? add : insert", no read-modify-write round
+    /// trip and no lost update. Parameters are bound once (the VALUES list).
+    ///
+    /// - The conflict target is the entity's primary key, exactly like
+    ///   [`DbContext::upsert`]. Model a counter row with a composite primary
+    ///   key (e.g. `(tenant_id, metric)`) so the key identifies the counter.
+    /// - All other non-key columns keep the plain upsert behaviour: they are
+    ///   overwritten from the inserted row.
+    /// - `increment_columns` must be insertable, non-key columns; names are
+    ///   validated at `save_changes()`. An empty slice behaves exactly like
+    ///   [`DbContext::upsert`].
+    /// - Like every upsert, this bypasses the read path: there is no
+    ///   pre-check `SELECT`, so concurrent writers cannot lose an increment.
+    ///
+    /// ```rust,ignore
+    /// // quantity holds the delta: 5 -> inserted as 5, next call adds 7 -> 12.
+    /// ctx.upsert_increment::<UsageCounter>(
+    ///     UsageCounter { tenant_id, metric, quantity: 7, ..row },
+    ///     &[UsageCounter::COLUMN_QUANTITY],
+    /// );
+    /// ctx.save_changes().await?;
+    /// ```
+    pub fn upsert_increment<T>(&mut self, entity: T, increment_columns: &[&str])
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+    {
+        let (type_id, type_name) = self.ensure_registered::<T>();
+        let entry_id =
+            self.change_tracker
+                .track(type_id, &type_name, EntityState::Added, None, true);
+        if !increment_columns.is_empty() {
+            self.change_tracker
+                .set_upsert_increment(entry_id, increment_columns);
+        }
         self.set::<T>().push_entry(entity, entry_id);
     }
 

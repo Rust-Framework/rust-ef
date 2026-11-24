@@ -101,6 +101,107 @@ fn never_applied_on_its_own_matches_nothing() {
 }
 
 #[test]
+fn any_of_builds_an_or_group_and_empty_is_never() {
+    let ids = [1, 2];
+    let mut members = Vec::new();
+    for id in ids {
+        members.push(linq!(|p: Product| p.id == id));
+    }
+    let predicate = Predicate::<Product>::any_of(members);
+    let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
+        .filter(predicate)
+        .compile_sql()
+        .expect("compile");
+
+    assert!(
+        sql.contains("(id = ?) OR (id = ?)"),
+        "any_of must be an OR group: {sql}"
+    );
+    assert_eq!(params, vec![DbValue::I32(1), DbValue::I32(2)]);
+
+    // An empty collection means "match nothing": `never()` is the OR identity.
+    let (empty_sql, empty_params) = QueryBuilder::<Product>::new("predicate_products")
+        .filter(Predicate::<Product>::any_of(
+            Vec::<Predicate<Product>>::new(),
+        ))
+        .compile_sql()
+        .expect("compile");
+    assert!(empty_sql.contains("1=0"), "{empty_sql}");
+    assert!(empty_params.is_empty());
+}
+
+#[test]
+fn all_of_builds_an_and_group_and_empty_is_always() {
+    let predicate = Predicate::<Product>::all_of([
+        linq!(|p: Product| p.price > 1.0),
+        linq!(|p: Product| p.price > 2.0),
+    ]);
+    let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
+        .filter(predicate)
+        .compile_sql()
+        .expect("compile");
+
+    assert_eq!(
+        sql,
+        "SELECT * FROM predicate_products WHERE (price > ?) AND (price > ?)"
+    );
+    assert_eq!(params, vec![DbValue::F64(1.0), DbValue::F64(2.0)]);
+
+    // An empty collection means "match everything": `always()` adds no SQL.
+    let (empty_sql, empty_params) = QueryBuilder::<Product>::new("predicate_products")
+        .filter(Predicate::<Product>::all_of(
+            Vec::<Predicate<Product>>::new(),
+        ))
+        .compile_sql()
+        .expect("compile");
+    assert_eq!(empty_sql, "SELECT * FROM predicate_products");
+    assert!(empty_params.is_empty());
+}
+
+/// Regression for the widened-permission bug: `tenant AND (a OR b)` must keep
+/// both the guard and the group. Seeding the OR chain with `always()` instead of
+/// `any_of()` collapses to "match every row"; this test pins the difference.
+#[test]
+fn tenant_guard_is_not_widened_by_an_any_of_group() {
+    let tenant_id = 7;
+    let predicate = Predicate::<Product>::always()
+        .and(linq!(|p: Product| p.id == tenant_id))
+        .and(Predicate::<Product>::any_of([
+            linq!(|p: Product| p.price > 1.0),
+            linq!(|p: Product| p.price > 2.0),
+        ]));
+
+    let (sql, params) = QueryBuilder::<Product>::new("predicate_products")
+        .filter(predicate)
+        .compile_sql()
+        .expect("compile");
+
+    assert!(
+        sql.contains("(id = ?) AND ((price > ?) OR (price > ?))"),
+        "the tenant guard must wrap the OR group: {sql}"
+    );
+    assert_eq!(
+        params,
+        vec![DbValue::I32(7), DbValue::F64(1.0), DbValue::F64(2.0)],
+        "guard value comes first, then the group values"
+    );
+
+    // The absorbing seed (`always().or(..)`) drops the guard entirely, which is
+    // exactly the failure mode `any_of` exists to prevent.
+    let widened = Predicate::<Product>::always()
+        .or(linq!(|p: Product| p.price > 1.0))
+        .or(linq!(|p: Product| p.price > 2.0));
+    let (widened_sql, _) = QueryBuilder::<Product>::new("predicate_products")
+        .filter(widened)
+        .compile_sql()
+        .expect("compile");
+    assert_eq!(
+        widened_sql, "SELECT * FROM predicate_products",
+        "always().or(..) matches every row; use any_of for an OR group"
+    );
+}
+
+#[test]
 fn where_appends_to_conditions_added_earlier() {
     let query = QueryBuilder::<Product>::new("predicate_products")
         .filter(linq!(|p: Product| p.price > 1.0))
@@ -266,6 +367,25 @@ async fn keyword_or_group_matches_either_column() {
 async fn optional_range_condition_narrows_the_same_predicate() {
     let ids = matching_ids(product_filter("rust", Some(10.0))).await;
     assert_eq!(ids, vec![1, 2]);
+}
+
+/// The guard stays in force: rows matching an `any_of` member but failing the
+/// guard must not appear (the failure mode of seeding the OR chain with
+/// `always()`).
+#[tokio::test]
+async fn guard_and_any_of_group_narrow_together() {
+    let predicate = Predicate::<Product>::always()
+        .and(linq!(|p: Product| p.price > 10.0))
+        .and(Predicate::<Product>::any_of([
+            linq!(|p: Product| p.name == "rust book"),
+            linq!(|p: Product| p.name == "rust cheap"),
+        ]));
+
+    let ids = matching_ids(predicate).await;
+
+    // id 3 matches the `any_of` group ("rust cheap") but fails the price guard;
+    // id 2 passes the guard but is not an `any_of` member.
+    assert_eq!(ids, vec![1]);
 }
 
 #[tokio::test]

@@ -446,6 +446,103 @@ impl EFError {
 /// Result type alias for rust-ef operations.
 pub type EFResult<T> = Result<T, EFError>;
 
+/// Client-visible detail for a query/shape failure (`400`).
+pub const DETAIL_INVALID_REQUEST: &str = "the submitted data is invalid";
+
+/// Client-visible detail for a unique-violation race (`409`); constraint/table
+/// names stay server-side.
+pub const DETAIL_UNIQUE_VIOLATION: &str =
+    "a unique constraint was violated by a concurrent request";
+
+/// Client-visible detail for a transient database outage (`503`).
+pub const DETAIL_UNAVAILABLE: &str = "the database is temporarily unavailable; retry later";
+
+/// Whether a structured driver error describes a condition a caller can retry.
+///
+/// This is the **single source** of the transient classification used by the
+/// shared error carrier (`AppError`) and by Web adapters; it moves the predicate
+/// out of `rust-webx-ef` so a non-Web consumer (CLI, worker) reaches the same
+/// conclusion.
+///
+/// * `SQLSTATE` class `08` — connection exception;
+/// * `SQLSTATE` class `40` — serialization failure / deadlock;
+/// * `SQLSTATE` `57P01`/`57P02`/`57P03` — shutdown, crash, cannot connect;
+/// * MySQL vendor codes `1205` (lock wait timeout) / `1213` (deadlock);
+/// * SQLite has no SQLSTATE: its extended result code embeds the primary code
+///   in the low byte (`SQLITE_BUSY = 5`, `SQLITE_LOCKED = 6`), so `5`/`6`
+///   (including `261`/`517`/`262`) qualify.
+pub fn database_error_is_transient(info: &DatabaseErrorInfo) -> bool {
+    if let Some(sqlstate) = info.sqlstate.as_deref() {
+        if sqlstate.starts_with("08")
+            || sqlstate.starts_with("40")
+            || matches!(sqlstate, "57P01" | "57P02" | "57P03")
+        {
+            return true;
+        }
+    }
+    match info.code.as_deref() {
+        Some("1205" | "1213") => true,
+        // SQLite is the supported provider that reports no SQLSTATE; its
+        // extended code embeds the primary code in the low eight bits.
+        Some(code) if info.sqlstate.is_none() => code
+            .parse::<i32>()
+            .map(|code| matches!(code & 0xFF, 5 | 6))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Operator-facing detail for a server error: the EF message plus its source
+/// chain. Never use this as a client-visible detail.
+fn operator_detail(error: &EFError) -> String {
+    let mut detail = error.to_string();
+    let mut cause = std::error::Error::source(error);
+    while let Some(error) = cause {
+        detail.push_str(": ");
+        detail.push_str(&error.to_string());
+        cause = error.source();
+    }
+    detail
+}
+
+/// Convert a persistence failure into the shared application error carrier.
+///
+/// This is the rust-ef ↔ rust-core boundary: callers that return
+/// `rust_core::Result<T>` can use `?` directly, without a Web adapter. Business
+/// conclusions keep their message; driver-derived payloads are replaced by
+/// fixed text (SQL, column, constraint and connection details never reach the
+/// client); transient conditions become a retryable `503`; everything else is a
+/// hidden `500` whose operator detail carries the full EF message/source chain.
+impl From<EFError> for rust_core::AppError {
+    fn from(error: EFError) -> Self {
+        match error {
+            EFError::NotFound(message, _) => rust_core::AppError::not_found(message),
+            EFError::ModelValidation(message, _) => rust_core::AppError::validation(message),
+            EFError::ConcurrencyConflict(message, _) => rust_core::AppError::conflict(message),
+
+            error @ (EFError::Query(..) | EFError::TypeConversion(..)) => {
+                rust_core::AppError::validation(DETAIL_INVALID_REQUEST)
+                    .with_operator(operator_detail(&error))
+            }
+            error @ EFError::UniqueViolation { .. } => {
+                rust_core::AppError::conflict(DETAIL_UNIQUE_VIOLATION)
+                    .with_operator(operator_detail(&error))
+            }
+
+            error @ (EFError::Connection(..) | EFError::Transaction(..)) => {
+                rust_core::AppError::unavailable(DETAIL_UNAVAILABLE)
+                    .with_operator(operator_detail(&error))
+            }
+            ref error @ EFError::Database(ref info, _) if database_error_is_transient(info) => {
+                rust_core::AppError::unavailable(DETAIL_UNAVAILABLE)
+                    .with_operator(operator_detail(error))
+            }
+
+            other => rust_core::AppError::internal(operator_detail(&other)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,5 +649,105 @@ mod tests {
         assert!(sql.ends_with('…'));
         // Empty SQL is not attached at all.
         assert!(DatabaseErrorInfo::new("boom").with_sql("   ").sql.is_none());
+    }
+
+    #[test]
+    fn app_error_conversion_keeps_business_errors_and_hides_infrastructure() {
+        use rust_core::AppError;
+
+        let not_found: AppError = EFError::not_found("order 42 is missing").into();
+        assert_eq!(not_found.status_code(), 404);
+        assert_eq!(not_found.public_detail(), Some("order 42 is missing"));
+
+        let validation: AppError = EFError::model_validation("amount must be positive").into();
+        assert_eq!(validation.status_code(), 400);
+        assert_eq!(validation.public_detail(), Some("amount must be positive"));
+
+        let conflict: AppError =
+            EFError::ConcurrencyConflict("version mismatch".into(), None).into();
+        assert_eq!(conflict.status_code(), 409);
+        assert_eq!(conflict.public_detail(), Some("version mismatch"));
+
+        let unique: AppError = EFError::UniqueViolation {
+            constraint: Some("ux_orders_number".into()),
+            table: Some("orders".into()),
+        }
+        .into();
+        assert_eq!(unique.status_code(), 409);
+        assert_eq!(unique.public_detail(), Some(DETAIL_UNIQUE_VIOLATION));
+        let operator = unique.operator().expect("operator detail");
+        assert!(operator.contains("orders"), "{operator}");
+        assert!(operator.contains("ux_orders_number"), "{operator}");
+
+        for error in [
+            EFError::query("SELECT * FROM secrets WHERE 1=0"),
+            EFError::type_conversion("column `secret` is not an i64"),
+        ] {
+            let mapped: AppError = error.into();
+            assert_eq!(mapped.status_code(), 400);
+            assert_eq!(mapped.public_detail(), Some(DETAIL_INVALID_REQUEST));
+            assert!(
+                mapped
+                    .operator()
+                    .is_some_and(|detail| detail.contains("secret")),
+                "the SQL/column detail must stay in the operator log"
+            );
+        }
+
+        for error in [
+            EFError::connection("pool closed"),
+            EFError::Transaction("commit failed".into(), None),
+            EFError::database(
+                DatabaseErrorInfo::new("server closed the connection").with_sqlstate("08006"),
+            ),
+            EFError::database(DatabaseErrorInfo::new("deadlock detected").with_sqlstate("40P01")),
+            EFError::database(DatabaseErrorInfo::new("busy").with_code("5")),
+        ] {
+            let mapped: AppError = error.into();
+            assert_eq!(mapped.status_code(), 503);
+            assert!(mapped.retryable());
+            assert_eq!(mapped.public_detail(), Some(DETAIL_UNAVAILABLE));
+        }
+
+        for error in [
+            EFError::database(
+                DatabaseErrorInfo::new("relation does not exist").with_sqlstate("42P01"),
+            ),
+            EFError::migration("migration 0012 failed"),
+            EFError::provider("provider not supported"),
+            EFError::Configuration("missing password".into(), None),
+            EFError::Other("boom".into(), None),
+        ] {
+            let mapped: AppError = error.into();
+            assert_eq!(mapped.status_code(), 500);
+            assert_eq!(mapped.public_detail(), None);
+            assert!(mapped.operator().is_some(), "operator detail is required");
+        }
+    }
+
+    #[test]
+    fn transient_database_predicate_matches_documented_conditions() {
+        for info in [
+            DatabaseErrorInfo::new("").with_sqlstate("08006"),
+            DatabaseErrorInfo::new("").with_sqlstate("40001"),
+            DatabaseErrorInfo::new("").with_sqlstate("57P01"),
+            DatabaseErrorInfo::new("").with_code("1205"),
+            DatabaseErrorInfo::new("").with_code("1213"),
+            DatabaseErrorInfo::new("").with_code("5"),
+            DatabaseErrorInfo::new("").with_code("261"),
+            DatabaseErrorInfo::new("").with_code("517"),
+            DatabaseErrorInfo::new("").with_code("6"),
+            DatabaseErrorInfo::new("").with_code("262"),
+        ] {
+            assert!(database_error_is_transient(&info), "{info:?}");
+        }
+        for info in [
+            DatabaseErrorInfo::new("").with_sqlstate("23505"),
+            DatabaseErrorInfo::new("").with_sqlstate("42P01"),
+            DatabaseErrorInfo::new("").with_code("1"),
+            DatabaseErrorInfo::new("").with_code("not-a-code"),
+        ] {
+            assert!(!database_error_is_transient(&info), "{info:?}");
+        }
     }
 }

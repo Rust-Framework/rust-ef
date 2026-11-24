@@ -3,6 +3,7 @@
 use crate::entity::IEntityType;
 
 use super::super::ast::{qualify_bool_expr, OrderBy, OrderDirection};
+use super::super::field::Field;
 use super::super::predicate::Predicate;
 use super::core::QueryBuilder;
 
@@ -29,6 +30,33 @@ impl<T: IEntityType> QueryBuilder<T> {
             .orderings
             .push(OrderBy::new(column, OrderDirection::Descending));
         self
+    }
+
+    /// Adds an ascending ORDER BY from a typed [`Field`] handle.
+    ///
+    /// The handle is emitted by `#[derive(EntityType)]` (`Order::created_at`), so
+    /// a typo or a renamed field is a compile error instead of a runtime SQL
+    /// error. This is additive in 2.x; 3.0 makes it the only ordering entry.
+    pub fn order_by_field<V>(self, field: Field<T, V>) -> Self {
+        self.order_by(field.column())
+    }
+
+    /// Adds a descending ORDER BY from a typed [`Field`] handle.
+    pub fn order_by_field_desc<V>(self, field: Field<T, V>) -> Self {
+        self.order_by_desc(field.column())
+    }
+
+    /// Adds the next ascending ORDER BY column from a typed [`Field`] handle.
+    ///
+    /// Same semantics as [`Self::order_by_field`]; the name expresses "this is a
+    /// tie-breaker after the previous ordering" (SQL has no separate clause).
+    pub fn then_by_field<V>(self, field: Field<T, V>) -> Self {
+        self.order_by_field(field)
+    }
+
+    /// Adds the next descending ORDER BY column from a typed [`Field`] handle.
+    pub fn then_by_field_desc<V>(self, field: Field<T, V>) -> Self {
+        self.order_by_field_desc(field)
     }
 
     /// Marks this query as `SELECT DISTINCT`.

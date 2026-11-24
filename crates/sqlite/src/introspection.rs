@@ -1,4 +1,4 @@
-//! Live-schema introspection for SQLite (EF-5).
+﻿//! Live-schema introspection for SQLite (EF-5).
 //!
 //! SQLite exposes its schema through `sqlite_master` (table/index/trigger DDL)
 //! and the `pragma_table_info` / `pragma_index_list` / `pragma_index_info` /
@@ -28,11 +28,17 @@ pub async fn introspect_sqlite(connection_string: &str) -> EFResult<Vec<DbTable>
         introspect_connection(&conn)
     })
     .await
-    .map_err(|e| EFError::query(format!("SQLite introspection task failed: {}", e)))?
+    .map_err(|e| EFError::provider(format!("SQLite introspection task failed: {}", e)))?
 }
 
-fn introspection_error(context: &str, error: rusqlite::Error) -> EFError {
-    EFError::query(format!("SQLite introspection {context}: {error}"))
+/// Maps an introspection driver failure through the provider classifier.
+///
+/// SQLite reports busy/locked/IO failures and value/shape errors with
+/// structured result codes, so introspection uses the same
+/// [`crate::sync_ops::map_sqlite_error_with_sql`] contract as the execute/query
+/// paths instead of flattening every driver failure to `EFError::Query`.
+fn introspection_error(error: rusqlite::Error) -> EFError {
+    crate::sync_ops::map_sqlite_error_with_sql(error, None)
 }
 
 /// Reads the live schema from an open connection (synchronous).
@@ -67,15 +73,15 @@ fn table_definitions(conn: &Connection) -> EFResult<Vec<(String, Option<String>)
                AND name NOT LIKE '__ef_%' \
              ORDER BY name",
         )
-        .map_err(|e| introspection_error("table query", e))?;
+        .map_err(introspection_error)?;
     let rows = stmt
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })
-        .map_err(|e| introspection_error("table query", e))?;
+        .map_err(introspection_error)?;
     let mut tables = Vec::new();
     for row in rows {
-        tables.push(row.map_err(|e| introspection_error("table read", e))?);
+        tables.push(row.map_err(introspection_error)?);
     }
     Ok(tables)
 }
@@ -86,7 +92,7 @@ fn columns(conn: &Connection, table: &str, create_sql: Option<&str>) -> EFResult
             "SELECT name, type, \"notnull\", pk, dflt_value \
              FROM pragma_table_info(?1) ORDER BY cid",
         )
-        .map_err(|e| introspection_error("column query", e))?;
+        .map_err(introspection_error)?;
     #[allow(clippy::type_complexity)]
     let rows = stmt
         .query_map([table], |row| {
@@ -98,10 +104,10 @@ fn columns(conn: &Connection, table: &str, create_sql: Option<&str>) -> EFResult
                 row.get::<_, Option<String>>(4)?,
             ))
         })
-        .map_err(|e| introspection_error("column query", e))?;
+        .map_err(introspection_error)?;
     let mut raw = Vec::new();
     for row in rows {
-        raw.push(row.map_err(|e| introspection_error("column read", e))?);
+        raw.push(row.map_err(introspection_error)?);
     }
     let primary_key_count = raw.iter().filter(|(_, _, _, pk, _)| *pk > 0).count();
     // `INTEGER PRIMARY KEY` is a rowid alias (and therefore auto-generated)
@@ -162,7 +168,7 @@ fn parse_type_metadata(data_type: &str) -> (Option<usize>, Option<u32>, Option<u
 fn indexes(conn: &Connection, table: &str) -> EFResult<Vec<DbIndex>> {
     let mut stmt = conn
         .prepare("SELECT name, \"unique\", origin FROM pragma_index_list(?1) ORDER BY name")
-        .map_err(|e| introspection_error("index query", e))?;
+        .map_err(introspection_error)?;
     let rows = stmt
         .query_map([table], |row| {
             Ok((
@@ -171,10 +177,10 @@ fn indexes(conn: &Connection, table: &str) -> EFResult<Vec<DbIndex>> {
                 row.get::<_, String>(2)?,
             ))
         })
-        .map_err(|e| introspection_error("index query", e))?;
+        .map_err(introspection_error)?;
     let mut indexes = Vec::new();
     for row in rows {
-        let (name, unique, origin) = row.map_err(|e| introspection_error("index read", e))?;
+        let (name, unique, origin) = row.map_err(introspection_error)?;
         // `origin = "c"` means an explicit `CREATE INDEX`; its name matches the
         // model-level index name. `"u"`/`"pk"` are implicit unique/primary-key
         // indexes whose names SQLite generates (`sqlite_autoindex_*`), so they
@@ -204,12 +210,12 @@ fn index_parts(
             |row| row.get(0),
         )
         .optional()
-        .map_err(|e| introspection_error("index sql query", e))?;
+        .map_err(introspection_error)?;
     let parsed = sql.as_deref().and_then(parse_create_index);
 
     let mut stmt = conn
         .prepare("SELECT seqno, cid, name FROM pragma_index_info(?1) ORDER BY seqno")
-        .map_err(|e| introspection_error("index column query", e))?;
+        .map_err(introspection_error)?;
     let rows = stmt
         .query_map([index_name], |row| {
             Ok((
@@ -218,11 +224,11 @@ fn index_parts(
                 row.get::<_, Option<String>>(2)?,
             ))
         })
-        .map_err(|e| introspection_error("index column query", e))?;
+        .map_err(introspection_error)?;
 
     let mut columns = Vec::new();
     for row in rows {
-        let (seqno, cid, name) = row.map_err(|e| introspection_error("index column read", e))?;
+        let (seqno, cid, name) = row.map_err(introspection_error)?;
         match name {
             Some(name) => columns.push(DbIndexColumn {
                 value: name,
@@ -282,7 +288,7 @@ fn foreign_keys(conn: &Connection, table: &str) -> EFResult<Vec<DbForeignKey>> {
             "SELECT id, \"table\", \"from\", \"to\", on_delete, on_update \
              FROM pragma_foreign_key_list(?1) ORDER BY id, seq",
         )
-        .map_err(|e| introspection_error("foreign key query", e))?;
+        .map_err(introspection_error)?;
     #[allow(clippy::type_complexity)]
     let rows = stmt
         .query_map([table], |row| {
@@ -295,12 +301,12 @@ fn foreign_keys(conn: &Connection, table: &str) -> EFResult<Vec<DbForeignKey>> {
                 row.get::<_, String>(5)?,
             ))
         })
-        .map_err(|e| introspection_error("foreign key query", e))?;
+        .map_err(introspection_error)?;
 
     let mut grouped: Vec<(i64, DbForeignKey)> = Vec::new();
     for row in rows {
         let (id, referenced_table, from, to, on_delete, on_update) =
-            row.map_err(|e| introspection_error("foreign key read", e))?;
+            row.map_err(introspection_error)?;
         if let Some((last_id, foreign_key)) = grouped.last_mut() {
             if *last_id == id {
                 foreign_key.columns.push(from);
@@ -337,13 +343,13 @@ fn foreign_keys(conn: &Connection, table: &str) -> EFResult<Vec<DbForeignKey>> {
 fn primary_key_columns(conn: &Connection, table: &str) -> EFResult<Vec<String>> {
     let mut stmt = conn
         .prepare("SELECT name FROM pragma_table_info(?1) WHERE pk > 0 ORDER BY pk")
-        .map_err(|e| introspection_error("primary key query", e))?;
+        .map_err(introspection_error)?;
     let rows = stmt
         .query_map([table], |row| row.get::<_, String>(0))
-        .map_err(|e| introspection_error("primary key query", e))?;
+        .map_err(introspection_error)?;
     let mut columns = Vec::new();
     for row in rows {
-        columns.push(row.map_err(|e| introspection_error("primary key read", e))?);
+        columns.push(row.map_err(introspection_error)?);
     }
     Ok(columns)
 }
@@ -364,15 +370,15 @@ fn triggers(conn: &Connection, table: &str) -> EFResult<Option<Vec<DbTrigger>>> 
             "SELECT name, sql FROM sqlite_master \
              WHERE type = 'trigger' AND tbl_name = ?1 ORDER BY name",
         )
-        .map_err(|e| introspection_error("trigger query", e))?;
+        .map_err(introspection_error)?;
     let rows = stmt
         .query_map([table], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })
-        .map_err(|e| introspection_error("trigger query", e))?;
+        .map_err(introspection_error)?;
     let mut triggers = Vec::new();
     for row in rows {
-        let (name, sql) = row.map_err(|e| introspection_error("trigger read", e))?;
+        let (name, sql) = row.map_err(introspection_error)?;
         triggers.push(DbTrigger {
             name,
             sql: sql.unwrap_or_default(),
@@ -386,11 +392,11 @@ fn triggers(conn: &Connection, table: &str) -> EFResult<Option<Vec<DbTrigger>>> 
 /// Parses table-level `CHECK (...)` constraints from `CREATE TABLE` SQL.
 ///
 /// Returns:
-/// - `Some(vec![])` — the table has no `CHECK` constraints;
-/// - `Some(checks)` — every `CHECK` was parsed (names are `None`: SQLite does
+/// - `Some(vec![])` 閳?the table has no `CHECK` constraints;
+/// - `Some(checks)` 閳?every `CHECK` was parsed (names are `None`: SQLite does
 ///   not expose constraint names through PRAGMA, and structural matching is
 ///   used by the migration diff);
-/// - `None` — a `CHECK` keyword was found but its expression could not be
+/// - `None` 閳?a `CHECK` keyword was found but its expression could not be
 ///   parsed reliably, so the whole list is unknown.
 fn parse_checks(create_sql: Option<&str>) -> Option<Vec<DbCheck>> {
     let sql = create_sql?;

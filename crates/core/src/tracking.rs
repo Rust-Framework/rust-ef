@@ -12,7 +12,8 @@ use std::collections::HashMap;
 /// Tracks changes to entities within a DbContext.
 ///
 /// The single source of truth for `EntityState`, original `EntitySnapshot`,
-/// `modified_properties`, and `is_upsert` across all tracked entities.
+/// `modified_properties`, `is_upsert` and the per-entry upsert-increment
+/// columns across all tracked entities.
 /// `DbSet<T>` holds the typed entity + `entry_id`; this tracker holds the
 /// tracking state, joined by `entry_id` during `save_changes`.
 #[derive(Debug)]
@@ -51,6 +52,9 @@ struct TrackerEntry {
     original: Option<EntitySnapshot>,
     modified_properties: Vec<String>,
     is_upsert: bool,
+    /// Columns an upsert must increment on conflict instead of overwriting
+    /// (`SET col = col + EXCLUDED.col`). Empty for a plain upsert.
+    upsert_increment_columns: Vec<String>,
 }
 
 impl std::fmt::Debug for TrackerEntry {
@@ -94,6 +98,7 @@ impl ChangeTracker {
                 original,
                 modified_properties: Vec::new(),
                 is_upsert,
+                upsert_increment_columns: Vec::new(),
             },
         );
         id
@@ -159,7 +164,23 @@ impl ChangeTracker {
         self.entries.get(&entry_id).is_some_and(|e| e.is_upsert)
     }
 
+    /// Columns the upsert of this entry must increment on conflict
+    /// (`SET col = col + EXCLUDED.col`); empty for a plain upsert.
+    pub fn entry_upsert_increment(&self, entry_id: u64) -> &[String] {
+        self.entries
+            .get(&entry_id)
+            .map_or(&[], |e| e.upsert_increment_columns.as_slice())
+    }
+
     // ── Mutation methods ──
+
+    /// Records the columns an `upsert` must increment instead of overwrite when
+    /// the row already exists. Only meaningful on `is_upsert` entries.
+    pub fn set_upsert_increment(&mut self, entry_id: u64, columns: &[&str]) {
+        if let Some(entry) = self.entries.get_mut(&entry_id) {
+            entry.upsert_increment_columns = columns.iter().map(|c| (*c).to_string()).collect();
+        }
+    }
 
     pub fn set_state(&mut self, entry_id: u64, state: EntityState) {
         if let Some(entry) = self.entries.get_mut(&entry_id) {

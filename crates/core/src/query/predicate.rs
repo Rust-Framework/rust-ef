@@ -6,6 +6,9 @@
 //! EF Core's expression-tree `PredicateBuilder`:
 //!
 //! - [`Predicate::always`] / [`Predicate::never`] seed an `AND` / `OR` chain,
+//! - [`Predicate::any_of`] / [`Predicate::all_of`] seed an `OR` / `AND` group
+//!   from a collection (the safe way to express `col IN (...)`-style groups;
+//!   `always().or(...)` would match every row),
 //! - [`Predicate::and`] / [`Predicate::or`] / [`Predicate::not`] nest freely,
 //!   with [`Predicate::and_opt`] / [`Predicate::or_opt`] for optional filters,
 //! - [`QueryBuilder::filter`] applies the result, appending it with `AND` and
@@ -84,6 +87,12 @@ impl<T: IEntityType> Predicate<T> {
     /// A predicate that matches every row — the seed of an `AND` chain.
     ///
     /// `Predicate::always().and(p)` is `p`, so seeding with it adds no SQL.
+    ///
+    /// # Warning: `always()` is **absorbing** for `or`
+    ///
+    /// `Predicate::always().or(p)` is `always()` — it matches every row. Do not
+    /// seed an `OR` group with it; use [`Predicate::any_of`] (or
+    /// [`Predicate::never`]) instead.
     pub fn always() -> Self {
         Self::with_kind(PredicateKind::Always)
     }
@@ -91,8 +100,67 @@ impl<T: IEntityType> Predicate<T> {
     /// A predicate that matches no row — the seed of an `OR` chain.
     ///
     /// `Predicate::never().or(p)` is `p`, so seeding with it adds no SQL.
+    ///
+    /// [`Predicate::any_of`] is the collection form of this seed.
     pub fn never() -> Self {
         Self::with_kind(PredicateKind::Never)
+    }
+
+    /// Seeds an `OR` group from a collection of predicates — the safe way to
+    /// express "any of these values matches".
+    ///
+    /// Equivalent to `Predicate::never().or(p1).or(p2)…`: the `never()` seed is
+    /// the identity of `or`, so no seed SQL leaks into the statement. An empty
+    /// iterator yields [`never`](Self::never) (matches no row).
+    ///
+    /// # Warning: `always().or(...)` is absorbing
+    ///
+    /// Do **not** seed an `OR` group with [`Predicate::always`]:
+    /// `always().or(p)` is `always()`, so every row matches and the group is
+    /// silently widened. For example:
+    ///
+    /// ```ignore
+    /// // WRONG: `always().or(p)` is `always()`, so the tenant guard and the
+    /// // role filter are both silently ignored — every row matches.
+    /// Predicate::<RolePermission>::always()
+    ///     .and(linq!(|rp: RolePermission| rp.tenant_id == tenant_id))
+    ///     .or(linq!(|rp: RolePermission| rp.role_id == role_a))
+    ///     .or(linq!(|rp: RolePermission| rp.role_id == role_b));
+    ///
+    /// // RIGHT: `(tenant) AND ((role_a) OR (role_b))`
+    /// Predicate::<RolePermission>::always()
+    ///     .and(linq!(|rp: RolePermission| rp.tenant_id == tenant_id))
+    ///     .and(Predicate::<RolePermission>::any_of([
+    ///         linq!(|rp: RolePermission| rp.role_id == role_a),
+    ///         linq!(|rp: RolePermission| rp.role_id == role_b),
+    ///     ]));
+    /// ```
+    pub fn any_of<I>(predicates: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<Predicate<T>>,
+    {
+        predicates
+            .into_iter()
+            .fold(Self::never(), |acc, predicate| acc.or(predicate))
+    }
+
+    /// Seeds an `AND` group from a collection of predicates.
+    ///
+    /// Equivalent to `Predicate::always().and(p1).and(p2)…`: the `always()`
+    /// seed is the identity of `and`, so no seed SQL leaks into the statement.
+    /// An empty iterator yields [`always`](Self::always) (matches every row).
+    ///
+    /// Prefer this over a hand-written `fold(always(), and)` so an empty
+    /// collection has the documented identity semantics.
+    pub fn all_of<I>(predicates: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<Predicate<T>>,
+    {
+        predicates
+            .into_iter()
+            .fold(Self::always(), |acc, predicate| acc.and(predicate))
     }
 
     /// Wraps an expression tree as a predicate.
@@ -152,6 +220,12 @@ impl<T: IEntityType> Predicate<T> {
     ///
     /// `never()` is the identity (`never().or(p) == p`) and `always()` is
     /// absorbing (`always().or(p) == always()`).
+    ///
+    /// # Warning: `always()` is absorbing
+    ///
+    /// Seeding an `OR` group with `always()` matches every row: for
+    /// `tenant AND (role_a OR role_b)` combine the tenant guard with
+    /// [`Predicate::any_of`] instead of calling `or` on an `always()` chain.
     pub fn or(self, other: impl Into<Predicate<T>>) -> Self {
         let rhs = other.into().kind;
         let kind = match (self.kind, rhs) {

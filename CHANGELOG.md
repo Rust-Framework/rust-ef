@@ -9,6 +9,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.1] — 2026-11-24 — 下游反馈修复：驱动错误分类、事务错误映射、upsert 增量、Predicate 集合种子
+
+> **English** · **简体中文**
+>
+> Additive maintenance release for the rust-xazgo stack (pairs with rust-webx 2.9.1). It closes the
+> rust-ef items reported by RXStudio: provider/transport failures no longer collapse into
+> `EFError::Query` (which a Web boundary maps to `400`), `use_transaction` can now compose with an
+> application error type without making rust-ef depend on rust-webx, counter rows get a single-
+> statement atomic upsert-increment, and the host can share one `Arc<DbContextOptions>` with durable
+> components such as `EfIdempotencyStore`. No public type was removed; `ISqlGenerator` only gains a
+> default method.
+
+#### English
+
+##### Added
+
+- **Driver-error classification in every provider.** PostgreSQL, MySQL and SQLite now map transport/
+  connection failures (closed connection, I/O, TLS, protocol, pool timeout/closed, worker crash,
+  SQLite `busy`/`locked`/`io`/`cannot open`/`disk full`) to `EFError::Connection`, and value
+  encoding/decoding failures (`WrongType`/`WasNull`, `ColumnDecode`/`Decode`/`Encode`/`TypeNotFound`,
+  SQLite conversion/range/UTF-8) to `EFError::TypeConversion`. `Query` is reserved for statement
+  generation and projection-shape failures. Unique violations stay `UniqueViolation`. Before this
+  release a lost connection reached a Web boundary as a non-retryable `400`; it is now a retryable
+  `503`. The remaining `Query` bucket (PostgreSQL's private error `Kind`, SQLite code 1) is
+  documented in the provider modules instead of being guessed.
+- **`use_transaction_generic` / `use_transaction_map_err`.** The transaction closure no longer has
+  to return `EFResult`: a generic entry accepts `Result<T, E>` where `E: From<EFError>`, and the
+  `map_err` variant accepts a mapper for callers whose error type does not implement `From` (the
+  2.x Web adapter: `use_transaction_map_err(webx_ef::map_ef_error, ..)`). Transaction start/commit
+  failures go through the mapper; a closure `Err` is rolled back and returned verbatim. rust-ef
+  still does not depend on rust-webx.
+- **`DbContext::upsert_increment(entity, increment_columns)`.** Extends the existing upsert path
+  with one semantic switch: on conflict, the listed columns are incremented from the inserted row
+  (`c = c + EXCLUDED.c`, MySQL `VALUES(c)`) while the other non-key columns keep plain-upsert
+  overwrite semantics. One statement, one bind per value, no read-modify-write. Model the counter
+  row with a composite primary key (e.g. `(tenant_id, metric)`); the conflict target is the primary
+  key, as for `upsert`.
+- **Typed column handles (`Field<E, V>`)** — `#[derive(EntityType)]` now emits one `Field`
+  constant per persisted scalar field, named after the Rust field and carrying the physical
+  column name (`Order::created_at`, including `#[column("legacy")]` renames). `QueryBuilder` gains
+  `order_by_field` / `order_by_field_desc` / `then_by_field` / `then_by_field_desc`, so ordering can
+  be written without a string:
+  `query.order_by_field(Order::created_at).then_by_field_desc(Order::id)`. The constructor is
+  doc-hidden; typos and renamed fields now fail at compile time. The string `order_by(&str)` entry
+  remains for 2.x source compatibility; 3.0 removes it. This release does not yet restrict
+  non-sortable types via `Sortable`, and `column!` keeps returning `&str`.
+- **`impl From<EFError> for rust_core::AppError`.** The persistence boundary now converts into
+  the shared carrier without a Web adapter: business errors (`NotFound`/`ModelValidation`/
+  `ConcurrencyConflict`) keep their message; driver-derived payloads (`Query`/`TypeConversion`/
+  `UniqueViolation`) get fixed client text and leave SQL/column/constraint details in the operator
+  detail; transient conditions (`Connection`/`Transaction`, and `Database` with SQLSTATE 08/40/
+  57P0x, MySQL 1205/1213 or SQLite busy/locked) become a retryable `503`; everything else is a
+  hidden `500`. `database_error_is_transient` is exported as the single classification source.
+- **`add_dbcontext` publishes its `Arc<DbContextOptions>` as a DI singleton**, and
+  `add_dbcontext_with_options(options)` is the low-level entry for hosts that build the options
+  themselves. Durable components (`rust-webx-ef::idempotency::EfIdempotencyStore`, outbox
+  dispatchers, background workers) can resolve the same options — same provider/pool and metadata
+  cache — instead of building a second options instance.
+- **`QueryBuilder::to_page(&PagedRequest) -> EFResult<PagedResult<T>>`** — the offset-pagination
+  terminal returns the `rust_core::PagedResult` envelope **directly** (there is no tuple variant
+  and no `count: bool` switch). The envelope is flat —
+  `{success,status,message,items,total}` (it composes the shared `OperationResult` outcome and the
+  page rows; Rust has no inheritance), defaulting to `success=true/status=0/message="ok"`, with
+  `with_status`/`with_message` overrides on the endpoint. It runs `COUNT(*)` on a clone with
+  `ORDER BY`/`skip`/`take` removed (same FROM/JOIN/WHERE, so the total matches the page filter) and
+  then fetches `skip(offset).take(page_size)`. `QueryBuilder` now implements `Clone` manually so
+  forking a builder no longer requires `T: Clone`. Requires `rust-core` (publish it first); returned
+  entities are mapped to DTOs with `PagedResult::map_items`. The `count` and page statements are not
+  one snapshot; wrap the call in a transaction when the two must agree under concurrent writes.
+
+##### Changed
+
+- The provider error tables above change the `EFError` variant returned for driver-local failures;
+  the Web mapping is documented in `rust-webx-ef` and the migration is source-compatible (code that
+  matched `EFError::Query` for a connection loss should now handle the retryable `Connection`).
+- `docs/rust-ef/08-bulk-operations/execute-update.md` now documents the DML/`ChangeTracker` state
+  machine (DML bypasses the tracker, uses the active transaction implicitly, and needs
+  `clear_tracking()` before a retry after a unique violation); `manual-transactions.md` documents
+  `use_transaction_map_err` for downstream error types.
+
+#### 简体中文
+
+##### 新增
+
+- **所有 provider 的驱动错误分类**：PostgreSQL/MySQL/SQLite 把传输/连接失败（连接关闭、I/O、
+  TLS、协议、池超时/关闭、worker 崩溃、SQLite `busy`/`locked`/`io`/`cannot open`/`disk full`）
+  归 `EFError::Connection`，把值编码/解码失败归 `EFError::TypeConversion`；`Query` 只留给语句生成
+  与投影形状错误，唯一约束仍提升为 `UniqueViolation`。修复前"查询途中断线"到 Web 边界是不可重试
+  的 `400`，现在是可重试 `503`；剩余 `Query` 桶（PostgreSQL 私有 `Kind`、SQLite code 1）在
+  provider 模块文档里写明，不猜。
+- **`use_transaction_generic` / `use_transaction_map_err`**：事务闭包不再必须返回 `EFResult`；
+  泛型入口接受 `Result<T,E>`（`E: From<EFError>`），`map_err` 版本供不实现 `From` 的下游错误类型
+  使用（2.x Web 适配层写法：`use_transaction_map_err(webx_ef::map_ef_error, ..)`）。事务
+  start/commit 错误经 mapper；闭包 `Err` 先回滚再原样返回。rust-ef 仍不依赖 rust-webx。
+- **`DbContext::upsert_increment(entity, increment_columns)`**：扩展现有 upsert 路径，冲突时把
+  指定列按插入行做增量（`c = c + EXCLUDED.c`，MySQL `VALUES(c)`），其余非键列保持覆盖语义。
+  一条语句、每个值只绑定一次、无读-改-写。计数行请用复合主键（如 `(tenant_id, metric)`）；
+  冲突目标与 `upsert` 一样是主键。
+- **类型化列句柄 `Field<E, V>`**：`#[derive(EntityType)]` 为每个持久化标量字段生成一个 `Field`
+  常量（字段名命名，携带物理列名，`#[column("legacy")]` 改名不影响调用点），`QueryBuilder` 新增
+  `order_by_field` / `order_by_field_desc` / `then_by_field` / `then_by_field_desc`：
+  `query.order_by_field(Order::created_at).then_by_field_desc(Order::id)`。构造器 doc-hidden；
+  拼错/改名在编译期失败。2.x 保留字符串 `order_by(&str)`，3.0 删除。本版尚未用 `Sortable`
+  限制不可排序列，`column!` 仍返回 `&str`。
+- **`impl From<EFError> for rust_core::AppError`**：持久层边界直接转成共享载体，不再需要 Web
+  适配层。业务错误（`NotFound`/`ModelValidation`/`ConcurrencyConflict`）保留文案；驱动派生载荷
+  （`Query`/`TypeConversion`/`UniqueViolation`）用固定客户端文案，SQL/列/约束名只进 operator
+  detail；瞬态条件（`Connection`/`Transaction`，以及 SQLSTATE 08/40/57P0x、MySQL 1205/1213、
+  SQLite busy/locked 的 `Database`）→ 可重试 503；其余 → 隐藏 500。
+  `database_error_is_transient` 作为唯一分类入口导出。
+- **`add_dbcontext` 把构建出的 `Arc<DbContextOptions>` 发布为 DI 单例**，
+  `add_dbcontext_with_options(options)` 是宿主自建 options 的低层入口。durable 组件
+  （`rust-webx-ef::idempotency::EfIdempotencyStore`、outbox dispatcher、后台 worker）可以解析
+  同一份 options（同一 provider/pool 与 metadata cache），不再自建第二份。
+- **`QueryBuilder::to_page(&PagedRequest) -> EFResult<PagedResult<T>>`**：偏移分页终端
+  **直接返回** `rust_core::PagedResult` 信封（没有 tuple 版本、没有 `count: bool` 开关）。信封是
+  扁平的 `{success,status,message,items,total}`（组合共享的 `OperationResult` 结果与页面行；
+  Rust 没有继承），默认 `success=true/status=0/message="ok"`，端点可用 `with_status`/
+  `with_message` 覆盖。它先在克隆上清掉 `ORDER BY`/`skip`/`take` 再 `COUNT(*)`（FROM/JOIN/WHERE
+  不变，total 与列表同过滤），然后取 `skip(offset).take(page_size)`。`QueryBuilder` 改为手写
+  `Clone`，分页不再要求 `T: Clone`。需要先发布 `rust-core`；返回的是实体页，端点用
+  `PagedResult::map_items` 映射 DTO。count 与本页不是同一快照；并发写入下需要一致时请包显式事务。
+
+##### 变更
+
+- 上述 provider 分类会改变驱动本地错误返回的 `EFError` 变体；Web 映射见 `rust-webx-ef` 文档，
+  源码兼容（原来按 `EFError::Query` 处理连接断开的代码应改为处理可重试的 `Connection`）。
+- `docs/rust-ef/08-bulk-operations/execute-update.md` 补「DML 与 ChangeTracker 状态机」（DML
+  绕过 tracker、隐式使用活动事务、唯一冲突后重试前 `clear_tracking()`）；
+  `manual-transactions.md` 补下游错误类型的 `use_transaction_map_err` 配方。
+
 ## [2.9.0] — 2026-11-24 — 报表查询与集合写：类型化分组聚合、表达式更新、复合 JOIN、结果行物化
 
 > **English** · **简体中文**
