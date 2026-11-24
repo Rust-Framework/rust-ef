@@ -428,7 +428,14 @@ fn pg_type(expected: &str, model: &SnapshotColumn) -> String {
 }
 
 fn pg_alias(value: &str) -> String {
-    match value {
+    // Parameterized spellings (`DECIMAL(12, 2)`, `VARCHAR(16)`) must be
+    // canonicalized by base name and their arguments compacted: introspection
+    // reports `numeric(12,2)` without the space after the comma.
+    let (base, args) = match value.find('(') {
+        Some(index) => (&value[..index], Some(&value[index..])),
+        None => (value, None),
+    };
+    let base = match base.trim() {
         "serial" => "integer".to_string(),
         "bigserial" => "bigint".to_string(),
         "smallserial" => "smallint".to_string(),
@@ -444,6 +451,10 @@ fn pg_alias(value: &str) -> String {
         "timestamp without time zone" => "timestamp".to_string(),
         "decimal" => "numeric".to_string(),
         other => other.to_string(),
+    };
+    match args {
+        Some(args) => format!("{base}{}", args.replace(' ', "")),
+        None => base,
     }
 }
 
@@ -1367,6 +1378,33 @@ mod tests {
             MigrationDialect::Postgres,
             &model_numeric,
             &live_numeric
+        ));
+    }
+
+    #[test]
+    fn postgres_explicit_decimal_with_spaces_matches_numeric_introspection() {
+        // `HasColumnType("DECIMAL(12, 2)")` is emitted verbatim, while
+        // `information_schema` reports `numeric` + precision/scale. The
+        // canonical spellings must match or every runtime diff emits a bogus
+        // ALTER COLUMN TYPE (plus nullability/default statements).
+        let model = SnapshotColumn {
+            column_name: "price".into(),
+            type_name: "f64".into(),
+            column_type: Some("DECIMAL(12, 2)".into()),
+            ..SnapshotColumn::default()
+        };
+        let live = DbColumn {
+            name: "price".into(),
+            data_type: "numeric".into(),
+            precision: Some(12),
+            scale: Some(2),
+            is_nullable: true,
+            ..DbColumn::default()
+        };
+        assert!(column_types_match(
+            MigrationDialect::Postgres,
+            &model,
+            &live
         ));
     }
 

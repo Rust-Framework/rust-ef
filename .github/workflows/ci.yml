@@ -263,7 +263,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Provider parity (real MySQL + PostgreSQL)
-        run: cargo test -p rust-ef --test provider_parity_tests -- --ignored --nocapture
+        run: cargo test -p rust-ef --test provider_parity_tests -- --ignored --nocapture --test-threads=1
       - name: PostgreSQL NULL binding (real PostgreSQL)
         run: cargo test -p rust-ef --test postgres_null_binding -- --ignored --nocapture
 
