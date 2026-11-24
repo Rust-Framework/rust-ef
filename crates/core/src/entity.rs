@@ -7,7 +7,7 @@ use crate::provider::DbValue;
 use crate::row::IRow;
 use std::any::TypeId;
 
-/// Compatibility alias for [`IRow`] (the 2.8 row-materialization trait).
+/// Compatibility alias for [`IRow`] (the 2.9 row-materialization trait).
 ///
 /// The historical entity-row trait was merged into [`IRow`], so this path keeps
 /// resolving for existing code:

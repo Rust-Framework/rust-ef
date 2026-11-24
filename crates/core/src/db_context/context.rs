@@ -114,8 +114,8 @@ impl DbContext {
         self.sets.entry(type_id).or_insert_with(|| {
             let table_name = self
                 .model_builder
-                .build()
-                .into_iter()
+                .build_shared()
+                .iter()
                 .find(|m| m.type_id == type_id)
                 .map(|m| m.table_name.to_string())
                 .unwrap_or_else(|| T::entity_meta().table_name.to_string());

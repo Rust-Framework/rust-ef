@@ -94,8 +94,9 @@ pub struct ModelBuilder {
     /// a Fluent API call registers an entity or filter.
     entity_metas: Arc<Vec<EntityTypeMeta>>,
     configs: Arc<HashMap<TypeId, EntityConfig>>,
-    /// Cache of `build()` output. Invalidated by any mutation.
-    build_cache: OnceLock<Vec<EntityTypeMeta>>,
+    /// Cache of `build()` output. Invalidated by any mutation; shared by
+    /// `Arc` so `from_built` contexts reuse the process-level configured model.
+    build_cache: OnceLock<Arc<Vec<EntityTypeMeta>>>,
     /// Cache of `filters_by_table()` output, shared via `Arc` so DbSets can
     /// hold a cheap clone without re-traversing configs on every query.
     filter_cache: OnceLock<Arc<HashMap<String, CompiledFilter>>>,
@@ -115,8 +116,9 @@ impl ModelBuilder {
     ///
     /// Used by `DbContext::from_options()` to skip re-iterating `inventory::iter`
     /// and re-running `IEntityTypeConfiguration::configure()` on every request.
-    /// The `build_cache` and `filter_cache` are left empty (lazy) — they will
-    /// be populated on first access, same as the non-cached path.
+    /// The configured `build_cache` is shared from `BuiltMetadata`; it is only
+    /// dropped when this instance mutates the model through the Fluent API.
+    /// `filter_cache` stays lazy and is populated on first access.
     ///
     /// Per-instance mutations (`has_query_filter`, `entity::<T>()`, etc.) after
     /// construction only affect this `ModelBuilder` instance, not the cache.
@@ -124,7 +126,7 @@ impl ModelBuilder {
         Self {
             entity_metas: Arc::clone(&built.model_metas),
             configs: Arc::clone(&built.configs),
-            build_cache: OnceLock::new(),
+            build_cache: OnceLock::from(Arc::clone(&built.built_metas)),
             filter_cache: OnceLock::new(),
         }
     }
@@ -222,14 +224,22 @@ impl ModelBuilder {
     }
 
     pub fn build(&self) -> Vec<EntityTypeMeta> {
-        self.build_cache
-            .get_or_init(|| {
+        self.build_shared().as_ref().clone()
+    }
+
+    /// Returns the configured model shared with other contexts.
+    ///
+    /// Hot paths (`DbSet` setup, save preparation) use this instead of
+    /// [`Self::build`] so a request context never clones the whole vector.
+    pub(crate) fn build_shared(&self) -> Arc<Vec<EntityTypeMeta>> {
+        Arc::clone(self.build_cache.get_or_init(|| {
+            Arc::new(
                 self.entity_metas
                     .iter()
                     .map(|meta| self.apply_config_to_meta(meta))
-                    .collect()
-            })
-            .clone()
+                    .collect(),
+            )
+        }))
     }
 
     fn apply_config_to_meta(&self, meta: &EntityTypeMeta) -> EntityTypeMeta {

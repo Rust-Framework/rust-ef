@@ -3,7 +3,7 @@
 > 版本：**2.2.0**（2026-11-12） · 基线：rust-webx 1.0 / rust-ef 2.2 / rust-dix 0.10 · MSRV **1.95**
 >
 > 本文记录 2.2.0 的发布就绪结论与证据。1.x 时代的历史规格已归档到
-> [`archive/PRODUCTION_READINESS_SPEC_v1.6.md`](archive/PRODUCTION_READINESS_SPEC_v1.6.md)。
+> [`PRODUCTION_READINESS_SPEC_v1.6.md`](PRODUCTION_READINESS_SPEC_v1.6.md)。
 
 ## 1. 结论
 
@@ -26,7 +26,7 @@
    `linq!(|b: T| ...)` 为唯一条件形式、值↔占位符单一编码器、无值条件 fail-fast、
    空 `IN` 列表语义化。
 
-逐条迁移方式见 [`v2.2-migration-guide.md`](v2.2-migration-guide.md)（第 1 部分约束、
+逐条迁移方式见 [`v2.2-migration-guide.md`](../v2.2-migration-guide.md)（第 1 部分约束、
 第 2 部分实体配置、第 3 部分条件 API）。
 
 ## 3. 质量门禁与证据（2026-11-12）

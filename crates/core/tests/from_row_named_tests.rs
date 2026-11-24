@@ -149,7 +149,7 @@ fn default_named_materialization_works_for_manual_impls() {
     assert_eq!(item.value, 12.5);
 }
 
-/// The pre-2.8 `rust_ef::entity::IFromRow` path is an alias of
+/// The pre-2.9 `rust_ef::entity::IFromRow` path is an alias of
 /// `rust_ef::row::IRow`: both bounds resolve to the merged trait and expose the
 /// same canonical entry points.
 #[test]

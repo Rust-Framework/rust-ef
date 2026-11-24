@@ -18,8 +18,8 @@ let sql = linq!(
 生成的 SQL：
 
 ```sql
-WITH high_earners AS (SELECT * FROM "cte_employees" WHERE "salary" > ?)
-SELECT * FROM high_earners
+WITH "high_earners" AS (SELECT * FROM "cte_employees" WHERE salary > ?)
+SELECT * FROM "high_earners"
 ```
 
 ### 复合 WHERE 条件
@@ -63,7 +63,7 @@ let rows = linq!(
 .await?;
 ```
 
-> **PostgreSQL 注意**：typed 模式自动使用 provider 原生占位符（`$N`），确保 PostgreSQL 占位符连续正确。raw 模式使用 `?` 占位符，在 PostgreSQL 上可能不兼容——推荐使用 typed 模式。
+> **PostgreSQL 注意**：typed 模式与 raw 模式都会按 provider 生成原生占位符（PostgreSQL `$N`）；同一个 raw 片段内不得混用 `?` 与 `$N`，否则返回 typed `EFError::Configuration`。推荐使用 typed 模式。
 
 ## CTE Raw 模式
 
@@ -86,7 +86,7 @@ let rows = ctx
     .await?;
 ```
 
-> **限制**：raw 模式的预编译 SQL 使用 `?` 占位符，在 PostgreSQL 上不会转换为 `$N`。生产环境推荐使用 typed 模式（`linq!(with ...)` 语法糖）。
+> **占位符**：raw 片段的 `?` 会按 provider 转成 `$N`（PostgreSQL）或 `?`（SQLite/MySQL）；同一片段内 `?` 与 `$N` 混用会被拒绝。生产环境仍推荐 typed 模式。
 
 ## Window 函数
 
@@ -213,7 +213,7 @@ let blogs = linq!(
 
 ## 限制
 
-- **raw CTE 占位符**：`with_cte_internal()` 的 SQL 可以继续写 `?`；2.8 起编译时按 provider 转成 `$N`（PostgreSQL）或 `?`（SQLite/MySQL），同时支持直接传入 provider 编译后的 `$N` 片段（会按参数位置重编号）。typed 模式仍是首选
+- **raw CTE 占位符**：`with_cte_internal()` 的 SQL 可以继续写 `?`；2.9 起编译时按 provider 转成 `$N`（PostgreSQL）或 `?`（SQLite/MySQL），同时支持直接传入 provider 编译后的 `$N` 片段（会按参数位置重编号）。typed 模式仍是首选
 - **Window 投影列读取**：`from_row` 忽略窗口函数列，需用 `select` 子句获取原始行
 - **CTE 嵌套**：当前不支持 CTE 内嵌套 CTE，每个 `with` 子句独立编译
 

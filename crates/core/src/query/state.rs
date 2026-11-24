@@ -484,11 +484,19 @@ impl QueryState {
         let mut sql = String::with_capacity(256);
         sql.push_str(&select);
         sql.push_str(" FROM ");
-        sql.push_str(&self.from);
+        // `from` is a CTE reference exactly when it names a CTE declared in
+        // this state. Deriving that from the CTE list (instead of a separate
+        // flag) keeps the quoted `WITH` name and its `FROM` reference in sync
+        // even when a caller assigns `from` directly.
+        if self.ctes.iter().any(|cte| cte.name == self.from) {
+            sql.push_str(&gen.quote_identifier(&self.from));
+        } else {
+            sql.push_str(&self.from);
+        }
 
         for join in &self.joins {
             sql.push(' ');
-            sql.push_str(&join.to_sql());
+            sql.push_str(&join.to_sql_with(gen));
         }
 
         if let Some(expr) = &self.where_expr {

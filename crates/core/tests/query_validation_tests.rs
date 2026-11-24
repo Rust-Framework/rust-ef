@@ -1,4 +1,4 @@
-//! Query validation and portable raw-fragment compilation (rust-ef 2.8).
+//! Query validation and portable raw-fragment compilation (rust-ef 2.9).
 //!
 //! These tests pin the "invalid query is a typed error, not invalid SQL"
 //! contract added by the single-pass compiler/`SelectList` refactor.
@@ -182,12 +182,54 @@ fn raw_cte_question_placeholders_are_ported_to_the_provider() {
     assert_eq!(
         sql,
         "WITH \"big\" AS (SELECT * FROM qv_rows WHERE amount > $1) \
-         SELECT * FROM big WHERE label = $2"
+         SELECT * FROM \"big\" WHERE label = $2"
     );
     assert_eq!(
         params,
         vec![DbValue::I64(10), DbValue::String("a".to_string()),]
     );
+}
+
+#[test]
+fn from_cte_quotes_the_reference_like_the_with_declaration() {
+    // A mixed-case CTE is declared as `WITH "HighEarners"`; the FROM
+    // reference must use the same quoted spelling or PostgreSQL folds it to
+    // `highearners` and the statement fails.
+    let query = QueryBuilder::<QvRow>::new("qv_rows")
+        .with_cte_internal("HighEarners", "SELECT * FROM qv_rows", Vec::new(), &[])
+        .from_cte("HighEarners");
+    let (sql, _) = query
+        .state()
+        .compile_sql_with::<QvRow>(&PgLikeGenerator)
+        .expect("compile");
+    assert!(
+        sql.starts_with("WITH \"HighEarners\" AS (SELECT * FROM qv_rows)"),
+        "{sql}"
+    );
+    assert!(sql.contains(" FROM \"HighEarners\""), "{sql}");
+}
+
+#[test]
+fn raw_fragment_preserves_non_ascii_literals_and_comments() {
+    // The raw-fragment lexer walks byte offsets to recognise ASCII syntax, but
+    // must copy non-ASCII text as whole UTF-8 characters (not Latin-1 bytes).
+    let query = QueryBuilder::<QvRow>::new("qv_rows")
+        .with_cte_internal(
+            "names",
+            "SELECT * FROM qv_rows WHERE label = '张三' /* 用户 */ -- 备注\n AND amount > ?",
+            vec![DbValue::I64(10)],
+            &[],
+        )
+        .from_cte("names");
+    let (sql, params) = query
+        .state()
+        .compile_sql_with::<QvRow>(&PgLikeGenerator)
+        .expect("compile");
+    assert!(sql.contains("label = '张三'"), "{sql}");
+    assert!(sql.contains("/* 用户 */"), "{sql}");
+    assert!(sql.contains("-- 备注"), "{sql}");
+    assert!(sql.contains("amount > $1"), "{sql}");
+    assert_eq!(params, vec![DbValue::I64(10)]);
 }
 
 #[tokio::test]

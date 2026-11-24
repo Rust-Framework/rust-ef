@@ -100,7 +100,7 @@ fn field_order_is_positional() {
 
 #[test]
 fn from_values_remains_a_compatibility_alias_for_from_row() {
-    // 2.8 merged the row-materialization traits; `from_values` survives as a
+    // 2.9 merged the row-materialization traits; `from_values` survives as a
     // delegating alias of the canonical `from_row`.
     let alias = <Pair as rust_ef::row::IRow>::from_values(&[DbValue::I32(1), DbValue::I32(2)])
         .expect("compatibility alias");

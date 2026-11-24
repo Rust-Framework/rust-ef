@@ -1,4 +1,4 @@
-//! Parameter-order regressions for the 2.8 projection / HAVING / update paths.
+//! Parameter-order regressions for the 2.9 projection / HAVING / update paths.
 //!
 //! The SQL-dependent invariants are:
 //!
@@ -107,7 +107,7 @@ async fn cte_plus_projection_parameters_follow_sql_text_order() {
     assert_eq!(
         sql,
         "WITH \"rich\" AS (SELECT * FROM \"po_sales\" WHERE amount > $1) \
-         SELECT $2 AS grant_scope, id AS id FROM rich WHERE amount < $3"
+         SELECT $2 AS grant_scope, id AS id FROM \"rich\" WHERE amount < $3"
     );
     assert_eq!(
         state.all_params(),
@@ -195,7 +195,7 @@ async fn a_projection_compiles_its_params_in_sql_order() {
         "unexpected SQL: {sql}"
     );
     assert!(
-        sql.contains("SELECT ? AS grant_scope, id AS id FROM rich WHERE amount < ?"),
+        sql.contains("SELECT ? AS grant_scope, id AS id FROM \"rich\" WHERE amount < ?"),
         "unexpected SQL: {sql}"
     );
     assert_eq!(

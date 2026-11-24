@@ -303,7 +303,7 @@ pub(crate) fn debug_assert_identifier_columns(columns: &[&str], context: &str) {
 /// and anything else are rejected (a `SET` value cannot aggregate).
 /// Compatibility alias for [`SqlExpr`] used by SET-expression APIs.
 ///
-/// 2.8 removed the separate `ColumnExpr` AST: a SET value is a [`SqlExpr`] that
+/// 2.9 removed the separate `ColumnExpr` AST: a SET value is a [`SqlExpr`] that
 /// is validated to the arithmetic subset (`Column`/`Literal`/`Binary` with
 /// `+`/`-`) at compile time. The alias keeps the historical constructor paths
 /// (`ColumnExpr::column` / `::value` / `.add` / `.sub`) working.

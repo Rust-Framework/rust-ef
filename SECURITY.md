@@ -4,9 +4,9 @@
 
 | Version | Supported |
 |---------|-----------|
-| 2.2.x | ✅ |
-| 2.1.x | ✅ (security fixes only) |
-| < 2.1 | ❌ |
+| 2.9.x | ✅ |
+| 2.6.x | ✅ (security fixes only) |
+| < 2.6 | ❌ |
 
 ## Reporting a vulnerability
 
@@ -43,6 +43,11 @@ confirmed issues. We will credit reporters in the advisory unless asked not to.
   every push. Releases are published by GitHub Actions on `v*` tag pushes using
   the `CARGO_REGISTRY_TOKEN` secret (tag pushes are not signature-verified by the
   workflow; repository write access is required to create the tag).
+- **Known advisory.** `chrono 0.4.x` is flagged *unmaintained* by
+  RUSTSEC-2026-0543. It is an optional feature (`chrono`) and remains the
+  compatible date/time type for the 2.x public API; migrating to an alternative
+  is a 3.0 (breaking) decision. `cargo audit` reports it as a warning, not a
+  vulnerability.
 - **MSRV.** The minimum supported Rust version is declared in `Cargo.toml`
   (`rust-version = "1.95"`) and verified in CI.
 

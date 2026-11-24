@@ -78,10 +78,10 @@ jobs:
       - name: Audit dependencies
         run: cargo audit
 
-  # Public-API SemVer gate. `v2.6.0` is the last published tag (2.7.0 was never
-  # tagged; this release ships as 2.8.0 in pair with rust-webx 2.8.0), so it is
-  # the baseline downstream users actually depend on. The documented struct
-  # shape breaks of 2.8.0 are allowlisted in the workspace manifest under
+  # Public-API SemVer gate. `v2.6.0` is the last published tag, so it is the
+  # baseline downstream users actually depend on; this release ships as 2.9.0 in
+  # pair with rust-webx 2.9.0. The documented struct
+  # shape breaks of 2.9.0 are allowlisted in the workspace manifest under
   # `[workspace.metadata.cargo-semver-checks.lints]`; every other violation
   # must fail here. Bump `--baseline-rev` to the newest released tag on each
   # release.

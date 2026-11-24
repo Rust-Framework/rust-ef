@@ -1,4 +1,4 @@
-//! `linq!` macro coverage for rust-ef 2.8 additions:
+//! `linq!` macro coverage for rust-ef 2.9 additions:
 //!
 //! - composite / chained JOIN clauses (EF-04),
 //! - `set` clauses whose RHS is a column arithmetic / another column (EF-03),

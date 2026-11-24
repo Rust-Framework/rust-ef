@@ -101,4 +101,4 @@
 - [性能优化技巧](11-best-practices/performance-tips.md)
 - [安全最佳实践](11-best-practices/security.md)
 - [代码审查清单](11-best-practices/code-review-checklist.md)
-- [查询管线架构（2.8）](11-best-practices/query-pipeline-architecture.md)
+- [查询管线架构（2.9）](11-best-practices/query-pipeline-architecture.md)

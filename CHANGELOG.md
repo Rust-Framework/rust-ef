@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.8.0] — 2026-11-23 — 报表查询与集合写：类型化分组聚合、表达式更新、复合 JOIN、结果行物化
+## [2.9.0] — 2026-11-24 — 报表查询与集合写：类型化分组聚合、表达式更新、复合 JOIN、结果行物化
 
 > **English** · **简体中文**
 >
-> Minor release, released in pair with **rust-webx 2.8.0** (the two are
+> Minor release, released in pair with **rust-webx 2.9.0** (the two are
 > version-locked for the rust-xazgo service stack; make sure both crates move
 > together). Reporting queries can now be expressed end-to-end in the object
 > API (GROUP BY + aggregates + `COALESCE`/`CASE` + typed rows), bulk updates can
@@ -66,9 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `#[non_exhaustive]` and retains the `Compare { left, op, right }` variant.
 - **CTE names and columns are quoted in generated SQL.** Framework-generated
   identifiers now go through `quote_identifier` uniformly (`WITH "name" (...)
-  AS ...`); caller-supplied FROM/table names stay code constants emitted as
-  provided. SQL-shape assertions that matched `WITH name AS` must expect the
-  quoted form; execution is unchanged.
+  AS ...`), and a `FROM` that names a declared CTE is quoted the same way
+  (`FROM "name"`); caller-supplied non-CTE FROM/table names stay code constants
+  emitted as provided. SQL-shape assertions that matched `WITH name AS` or a
+  CTE `FROM name` must expect the quoted form; execution is unchanged.
 - **`ExecuteUpdateBuilder::set_column_internal` removed.** The alias has been
   `#[deprecated]` since 2.3.0 (“renamed to `set_column`, kept for one release”);
   use `set_column` (or `set_column_expr` for expression right-hand sides).
@@ -98,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the query state and emits SQL + parameters in one pass, so an invalid state
   (e.g. `SELECT *` with `GROUP BY`) surfaces as a typed `EFError::Configuration`
   instead of unchecked SQL. Add `?` at call sites.
-  `SelectQueryBuilder::compile_sql()` (new in 2.8) ships with the same checked
+  `SelectQueryBuilder::compile_sql()` (new in 2.9) ships with the same checked
   signature, and `ExecuteUpdateBuilder::compile_sql()` compiles SET → WHERE
   parameter order in one pass as well.
 - **`ExecuteUpdateBuilder::params()` returns `EFResult<Vec<DbValue>>`.** The 2.6
@@ -114,10 +115,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructors for the HAVING lowering that replace the removed `HavingExpr`
   enum; `linq!(having ...)` uses them directly.
 - **`DbContext` shares process-level metadata** — every context created from the
-  same options now shares `Arc<BuiltMetadata>` (entity metas, model metas and
-  configs) and copies on the first Fluent API mutation, instead of deep-cloning
-  the whole model per context. This removes the per-request metadata clone
-  (notably for short-lived contexts such as the idempotency store). New
+  same options now shares `Arc<BuiltMetadata>` (entity metas, model metas,
+  configs and the configured build output) and copies on the first Fluent API
+  mutation. `set::<T>()` reuses the shared configured model instead of cloning
+  the whole vector, which removes the per-request metadata clone for
+  short-lived contexts such as the idempotency store. New
   `DbContext::shares_metadata_with` (`#[doc(hidden)]`) exposes the invariant for
   the regression test.
 
@@ -249,7 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Migration**
 
 - Additive for the documented builders; see
-  [v2.8 migration guide](docs/v2.8-migration-guide.md) for the documented
+  [v2.9 migration guide](docs/v2.9-migration-guide.md) for the documented
   source-level shape changes and for replacing the last report/`col = col + 1` raw SQL.
 
 #### 简体中文
@@ -259,8 +261,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`BoolExpr::aggregate_compare` / `aggregate_compare_agg`**：HAVING 下推的公开
   构造器，替代已删除的 `HavingExpr` 枚举；`linq!(having ...)` 直接生成。
 - **`DbContext` 共享进程级元数据**：同一 options 创建的上下文共享
-  `Arc<BuiltMetadata>`（实体元数据/模型元数据/configs），首次 Fluent API 变更时才
-  复制；不再每上下文深拷贝整个模型（短生命周期上下文，如幂等 store，收益明显）。
+  `Arc<BuiltMetadata>`（实体元数据/模型元数据/configs 及已配置的 build 输出），首次
+  Fluent API 变更时才复制；`set::<T>()` 复用共享的已配置模型，不再复制整份向量，
+  短生命周期上下文（如幂等 store）的每请求元数据复制因此消除。
   `DbContext::shares_metadata_with`（`#[doc(hidden)]`）供回归测试断言该不变量。
 
 **新增 — 类型化报表投影**
@@ -322,9 +325,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SqlExpr` 兼容别名，`set_column_expr` 编译期只允许列/字面量/`+`/`-`
   （聚合/COALESCE/CASE 返回 typed error）。匹配旧枚举变体的代码改用
   `BoolExpr`/`SqlExpr` 构造器。
-- **CTE 名与列名在生成 SQL 中加引号**（`WITH "name" ("col") AS ...`）；调用方
-  提供的 FROM/表名仍按代码常量原样输出。依赖 `to_sql()` 文本的断言需更新，
-  执行语义不变。
+- **CTE 名与列名在生成 SQL 中加引号**（`WITH "name" ("col") AS ...`）；`FROM`
+  引用已声明的 CTE 时同样加引号（`FROM "name"`），调用方提供的非 CTE FROM/表名
+  仍按代码常量原样输出。依赖 `to_sql()` 文本的断言需同步更新，执行语义不变。
 
 **破坏性变更**
 
@@ -332,14 +335,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2.6 直接返回 `(String, Vec<DbValue>)`，且参数从累积的 `QueryState` 再派生；现在
   校验查询状态并在同一遍编译中产出 SQL 与参数，非法状态（如 `SELECT *` 与
   `GROUP BY` 并存）返回 typed `EFError::Configuration`，不再生成未校验 SQL。
-  调用点补 `?`。`SelectQueryBuilder::compile_sql`（2.8 新增）使用同样的校验后签名；
+  调用点补 `?`。`SelectQueryBuilder::compile_sql`（2.9 新增）使用同样的校验后签名；
   `ExecuteUpdateBuilder::compile_sql()` 同样为单遍校验（SET → WHERE 参数顺序）。
 - **`ExecuteUpdateBuilder::params()` 改为返回 `EFResult<Vec<DbValue>>`**：2.6 的
   `Vec<DbValue>` 版本与 SQL 生成各自独立推导参数，非法 builder（无 SET 列）会静默
   返回空向量；现在内部走 `compile_sql()` 并返回 typed error。规范入口为
   `compile_sql()`（SQL + 参数）或 `execute()`，`params()` 保留给只需要参数值的调用点。
 - **`QueryState::parameters` 字段与 `QueryState::params()` 方法已完全删除**：
-  2.6 的 `pub parameters: Vec<DbValue>` 字段与 `params()` 访问器在 2.8 删除（2.6 的
+  2.6 的 `pub parameters: Vec<DbValue>` 字段与 `params()` 访问器在 2.9 删除（2.6 的
   `params()` 返回「注册子句时累积」的 WHERE+HAVING 混合参数）。参数由生成 SQL
   占位符的同一次单遍编译产出：SQL + 完整参数用 `try_compile_with(gen)` 或
   `compile_sql_with::<T>(gen)`（先解析相关子查询），只取 WHERE 参数用
@@ -361,7 +364,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   下游穷举 `match` 需补 `_` 通配分支；这次一次性破坏换取后续 AST 变体新增
   不再破坏 SemVer。
 - **移除 `ExecuteUpdateBuilder::set_column_internal`**：该别名自 2.3.0 起
-  `#[deprecated]`（“更名 `set_column`，保留一个版本”），2.8 正式删除；
+  `#[deprecated]`（“更名 `set_column`，保留一个版本”），2.9 正式删除；
   改用 `set_column`（表达式右侧用 `set_column_expr`）。
 - **`IRow` / `IFromRow` 合并**：`row::IRow` 成为唯一行物化 trait，不再以
   `IEntityType` 为 supertrait，实体、`#[derive(FromRow)]` 结构体与 1..=12 元组
@@ -392,7 +395,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 文档中的 builder 用法均为加法；已文档化的源码级形状变化与「删掉最后几条报表/
   `col = col + 1` 原生 SQL」的步骤见
-  [v2.8 迁移指南](docs/v2.8-migration-guide.md)。
+  [v2.9 迁移指南](docs/v2.9-migration-guide.md)。
 
 ---
 

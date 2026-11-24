@@ -17,8 +17,8 @@ Full handbook: <https://rust-framework.github.io/rust-ef/>
 
 ```toml
 [dependencies]
-rust-ef = "2.8"
-rust-ef-sqlite = "2.8"          # one provider: sqlite / postgres / mysql
+rust-ef = "2.9"
+rust-ef-sqlite = "2.9"          # one provider: sqlite / postgres / mysql
 rust-dix = "1.0"                # DI container
 tokio = { version = "1", features = ["full"] }
 ```
@@ -97,7 +97,7 @@ let shared: Arc<DbContext> = scope.get().unwrap();
 
 See the handbook DI chapter and `docs/v2.1-migration-guide.md`.
 
-## What's new in 2.8
+## What's new in 2.9
 
 - **Typed report projections**: `SelectItem` / `SqlExpr` (columns, aggregates,
   `COALESCE`, `CASE`, literals), `SelectQueryBuilder::{group_by, select_items,

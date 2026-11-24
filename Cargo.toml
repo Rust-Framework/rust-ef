@@ -14,7 +14,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.8.0"
+version = "2.9.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -66,14 +66,14 @@ debug = false
 incremental = false
 
 # ---------------------------------------------------------------------------
-# cargo-semver-checks allowlist — documented breaking changes of 2.8.0.
+# cargo-semver-checks allowlist — documented breaking changes of 2.9.0.
 #
 # CI (`.github/workflows/ci.yml`, job `semver`) checks the public API against
-# `--baseline-rev v2.6.0`, the last published tag: 2.7.0 was never tagged and
-# this release ships as 2.8.0 in pair with rust-webx 2.8.0.
+# `--baseline-rev v2.6.0`, the last published tag; this release ships as 2.9.0
+# in pair with rust-webx 2.9.0.
 #
 # Every entry below is one of the *documented* breaking changes listed in
-# CHANGELOG.md "Breaking" for 2.8.0 and in docs/v2.8-migration-guide.md §3.
+# CHANGELOG.md "Breaking" for 2.9.0 and in docs/v2.9-migration-guide.md §3.
 # cargo-semver-checks configures lint levels per lint (not per item), so an
 # allow covers the whole lint for this run; the comments pin down which
 # documented changes it exists for. Everything not listed here must still fail
@@ -83,35 +83,35 @@ incremental = false
 # `JoinSpec` was rewritten from `{ join_type, table, on_clause }` to
 # `{ kind, table, keys }`, and `QueryState` replaced its public SELECT-list
 # fields (`projected_columns`, `is_count`, `is_exists`, `aggregate`,
-# `aggregate_column`) with accessor methods. CHANGELOG 2.8.0 "Breaking";
+# `aggregate_column`) with accessor methods. CHANGELOG 2.9.0 "Breaking";
 # migration guide §3 items 1-2.
 struct_pub_field_missing = "allow"
 # `JoinSpec` and `QueryState` are now `#[non_exhaustive]` so future shape
 # additions stay non-breaking. Construct them through `JoinSpec::new(...)` /
 # `QueryState::new(table)`; struct-literal construction was already impossible
-# for `QueryState` because of its private state. CHANGELOG 2.8.0 "Breaking";
+# for `QueryState` because of its private state. CHANGELOG 2.9.0 "Breaking";
 # migration guide §3 items 1-2.
 struct_marked_non_exhaustive = "allow"
 # `BoolExpr` and `HavingExpr` are now `#[non_exhaustive]`; exhaustive downstream
 # `match` needs a wildcard arm. This is the one-time cost of making future AST
-# additions (e.g. `BoolExpr::Compare`) non-breaking. CHANGELOG 2.8.0 "Breaking";
+# additions (e.g. `BoolExpr::Compare`) non-breaking. CHANGELOG 2.9.0 "Breaking";
 # migration guide §3 item 4.
 enum_marked_non_exhaustive = "allow"
 # `ExecuteUpdateBuilder::set_column_internal` — deprecated since 2.3.0 and
-# documented as "kept for one release" — was removed in 2.8.0; `set_column` is
-# the replacement. CHANGELOG 2.8.0 "Breaking"; migration guide §3 item 5.
+# documented as "kept for one release" — was removed in 2.9.0; `set_column` is
+# the replacement. CHANGELOG 2.9.0 "Breaking"; migration guide §3 item 5.
 inherent_method_missing = "allow"
 # `IRow` / `IFromRow` were merged: `IRow` no longer has `IEntityType` as a
 # supertrait (entities, `#[derive(FromRow)]` structs and tuples implement it);
 # `entity::IFromRow` stays as a compatibility alias. Downstream `T: IFromRow`
 # code no longer gets the `IEntityType` / `Send + Sync + 'static` bounds
-# implicitly. CHANGELOG 2.8.0 "Breaking"; migration guide §3 item 6.
+# implicitly. CHANGELOG 2.9.0 "Breaking"; migration guide §3 item 6.
 trait_removed_supertrait = "allow"
 # `HavingExpr` was removed as a dedicated enum: it is now an alias for
 # `BoolExpr`, whose `Compare` variant carries `{ left, op, right }` instead of
 # the old `{ agg, col, op, value }`, and the old `CompareAgg` variant became
 # `BoolExpr::aggregate_compare_agg(...)` (no public enum variant). This is the
-# documented "one expression core" break of 2.8.0 (CHANGELOG "Breaking";
+# documented "one expression core" break of 2.9.0 (CHANGELOG "Breaking";
 # migration guide section 3 items 9-10). `ColumnExpr` likewise became an alias
 # for `SqlExpr`.
 enum_struct_variant_field_added = "allow"

@@ -84,8 +84,8 @@ fn test_typed_cte_sql_generation() {
         "expected ? placeholder in typed CTE body, got: {sql}"
     );
     assert!(
-        sql.contains("FROM high_earners"),
-        "expected main query to reference CTE by name, got: {sql}"
+        sql.contains("FROM \"high_earners\""),
+        "expected main query to reference the quoted CTE name, got: {sql}"
     );
 }
 

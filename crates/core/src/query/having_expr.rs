@@ -1,6 +1,6 @@
 //! Aggregate / comparison operators shared by projections and HAVING.
 //!
-//! 2.8 removes the dedicated `HavingExpr` AST: a HAVING condition is a
+//! 2.9 removes the dedicated `HavingExpr` AST: a HAVING condition is a
 //! [`BoolExpr`](super::ast::BoolExpr) whose `Compare` node holds
 //! [`SqlExpr`](super::expr::SqlExpr) operands. [`AggKind`] and [`CompareOp`]
 //! stay public because the `linq!(having ...)` expansion and the
@@ -80,6 +80,6 @@ impl CompareOp {
 
 /// Compatibility alias: HAVING conditions are [`BoolExpr`](super::ast::BoolExpr)
 /// nodes (specifically `BoolExpr::Compare`). The former dedicated enum was
-/// removed in 2.8; construct conditions with
+/// removed in 2.9; construct conditions with
 /// [`BoolExpr::aggregate_compare`](super::ast::BoolExpr::aggregate_compare).
 pub type HavingExpr = super::ast::BoolExpr;

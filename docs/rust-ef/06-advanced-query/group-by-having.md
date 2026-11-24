@@ -2,7 +2,7 @@
 
 分组有两种写法：
 
-1. **运行时报表 API（2.8.0 起，推荐）**：`group_by(&[&str])` + `select_items(&[SelectItem])` + `to_list_rows::<R>()`，得到「每组一行」的类型化结果，不需要把报表伪装成实体。
+1. **运行时报表 API（2.9.0 起，推荐）**：`group_by(&[&str])` + `select_items(&[SelectItem])` + `to_list_rows::<R>()`，得到「每组一行」的类型化结果，不需要把报表伪装成实体。
 2. **`linq!` 子句（可选语法糖）**：`group_by ...; having ...` 终端返回实体行（`to_list`）；`select` 里带聚合项时返回类型化投影（`to_list_typed_*` / `to_list_rows`）。
 
 ## 运行时报表 API
@@ -66,7 +66,7 @@ let rows: Vec<(String, i64)> = ctx
     .await?;
 ```
 
-HAVING 是 `BoolExpr` 的 `Compare` 节点（`HavingExpr` 在 2.8 仅为兼容别名）：
+HAVING 是 `BoolExpr` 的 `Compare` 节点（`HavingExpr` 在 2.9 仅为兼容别名）：
 
 | 构造器/节点 | SQL |
 |---|---|
@@ -74,7 +74,7 @@ HAVING 是 `BoolExpr` 的 `Compare` 节点（`HavingExpr` 在 2.8 仅为兼容�
 | `BoolExpr::aggregate_compare_agg(l_agg, l_col, op, r_agg, r_col)` | `AGG(c1) op AGG(c2)`（无绑定参数） |
 | `BoolExpr::And` / `Or` / `Not` | 布尔组合，可嵌套 |
 
-多次 `having(...)` 之间自动用 `AND` 连接。绑定参数在生成 SQL 时按 **WHERE → HAVING** 的文本顺序统一收集，所以即使先 `having` 后 `filter` 也不会参数错位（2.8.0 修复）。
+多次 `having(...)` 之间自动用 `AND` 连接。绑定参数在生成 SQL 时按 **WHERE → HAVING** 的文本顺序统一收集，所以即使先 `having` 后 `filter` 也不会参数错位（2.9.0 修复）。
 
 ### linq! 可选写法
 

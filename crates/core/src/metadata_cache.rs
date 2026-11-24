@@ -35,6 +35,10 @@ pub(crate) struct BuiltMetadata {
     /// Base configs from `IEntityTypeConfiguration::configure()`, cloned into
     /// `ModelBuilder.configs`. Per-instance query-filter mutations layer on top.
     pub configs: Arc<HashMap<TypeId, EntityConfig>>,
+    /// Fully configured metadata (`build()` output). Shared with every
+    /// `ModelBuilder::from_built` so a context never re-applies the Fluent
+    /// configuration to the whole model on its first query/save.
+    pub built_metas: Arc<Vec<EntityTypeMeta>>,
 }
 
 /// Process-wide cache of `BuiltMetadata` keyed by `context_key`.
@@ -128,7 +132,10 @@ impl MetadataCache {
             }
         }
 
-        // 3. Snapshot the model_builder state into the cache.
+        // 3. Snapshot the model_builder state into the cache. The configured
+        //    build output is materialized once here so `from_built()` can share
+        //    it instead of re-running configure() per context.
+        let built_metas: Arc<Vec<EntityTypeMeta>> = Arc::new(model_builder.build());
         let model_metas: Vec<EntityTypeMeta> = model_builder.entity_metas_vec().to_vec();
         let configs: HashMap<TypeId, EntityConfig> = model_builder.configs().clone();
 
@@ -136,6 +143,7 @@ impl MetadataCache {
             entity_metas: Arc::new(entity_metas),
             model_metas: Arc::new(model_metas),
             configs: Arc::new(configs),
+            built_metas,
         }
     }
 }

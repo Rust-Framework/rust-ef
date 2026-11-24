@@ -265,7 +265,7 @@ async fn test_not_all_published() {
 
 #[tokio::test]
 async fn typed_cte_with_exists_predicate_is_resolved() {
-    // Regression (2.8 review): typed CTE bodies compile through the same
+    // Regression (2.9 review): typed CTE bodies compile through the same
     // pipeline, so their correlated subqueries must be resolved as well.
     let mut ctx = seed().await;
     let filtered = linq!(|b: SubBlog| b.posts.any(|p: SubPost| p.published)).into_expr();

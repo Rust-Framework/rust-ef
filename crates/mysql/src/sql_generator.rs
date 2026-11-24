@@ -147,7 +147,7 @@ impl ISqlGenerator for MySqlSqlGenerator {
     fn quote_identifier(&self, identifier: &str) -> String {
         identifier
             .split('.')
-            .map(|part| format!("`{part}`"))
+            .map(|part| format!("`{}`", part.replace('`', "``")))
             .collect::<Vec<_>>()
             .join(".")
     }

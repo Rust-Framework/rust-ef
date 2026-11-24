@@ -119,11 +119,10 @@ impl super::DbContext {
             saver.detect_changes(set.as_mut(), &mut self.change_tracker);
         }
 
-        let configured_metas: HashMap<TypeId, EntityTypeMeta> = self
-            .model_builder
-            .build()
-            .into_iter()
-            .map(|m| (m.type_id, m))
+        let configured_source = self.model_builder.build_shared();
+        let configured_metas: HashMap<TypeId, EntityTypeMeta> = configured_source
+            .iter()
+            .map(|m| (m.type_id, m.clone()))
             .collect();
 
         let save_ctx = self.build_save_context();

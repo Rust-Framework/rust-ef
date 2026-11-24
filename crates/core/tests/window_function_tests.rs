@@ -321,8 +321,8 @@ async fn test_cte_sql_generation() {
         "expected CTE body in SQL, got: {sql}"
     );
     assert!(
-        sql.contains("FROM high_earners"),
-        "expected FROM high_earners in main query, got: {sql}"
+        sql.contains("FROM \"high_earners\""),
+        "expected quoted FROM in main query, got: {sql}"
     );
 }
 

@@ -3,14 +3,14 @@
 聚合有两条入口：
 
 - **`linq!` 子句**（`sum` / `avg` / `min` / `max` / `count`）——实体查询的语法糖；`sum`/`avg` 返回 `f64`。
-- **运行时终端**——`ctx.set::<T>().query().sum_as::<V>(col)` / `sum_i64` / `avg_as`；列名与目标类型在运行时决定，整数聚合精确（2.8.0 新增）。
+- **运行时终端**——`ctx.set::<T>().query().sum_as::<V>(col)` / `sum_i64` / `avg_as`；列名与目标类型在运行时决定，整数聚合精确（2.9.0 新增）。
 
 `linq!` 闭包中的 `i.amount` 在编译期解析为实体列常量（如 `OrderItem::COLUMN_AMOUNT`）；运行时 API 直接传列名常量。
 
 ## 基本用法（`linq!`，f64 契约）
 
 ```rust
-// sum / avg 返回 f64（2.x 既有契约，2.8.0 保持不变）
+// sum / avg 返回 f64（2.x 既有契约，2.9.0 保持不变）
 let total_sales: f64 = linq!(ctx.set::<OrderItem>(); sum i.amount).await?;
 let avg_price: f64 = linq!(ctx.set::<OrderItem>(); avg i.price).await?;
 
@@ -22,7 +22,7 @@ let max_price: f64 = linq!(ctx.set::<OrderItem>(); max i.price).await?.unwrap_or
 let max_qty: i64 = linq!(ctx.set::<OrderItem>(); max i.quantity).await?.unwrap_or(0);
 ```
 
-## 类型化标量聚合（2.8.0 新增）
+## 类型化标量聚合（2.9.0 新增）
 
 `sum`/`avg` 固定经过 `f64`；金额、库存、计数这类**整数**聚合在超过 2^53 后会被 `f64` 舍入。类型化聚合把 provider 返回的单元格**直接**按目标类型 `TryFrom<DbValue>` 解码，不经过 `f64`：
 
@@ -79,9 +79,9 @@ assert_ne!(lossy as i64, exact);
 | 需要小数的精确金额 | `rust_decimal::Decimal`（`decimal` feature） | 是否可解码取决于 provider 返回的单元格：Decimal/字符串/整数单元格可解析，REAL 单元格（如 SQLite 的 `AVG`）不可 |
 | 统计 / 比率 / 兼容既有契约 | `f64` | 与 `linq!` 的 `sum`/`avg` 一致 |
 
-> `avg_as` 的精确程度由**目标类型 + provider 返回的单元格**共同决定：SQLite 的 `AVG` 始终返回 REAL，所以 `avg_as::<i64>` 会得到 typed `EFError::TypeConversion`；PostgreSQL/MySQL 的 `SUM`/`AVG` 返回 numeric/DECIMAL——2.8 起整值 NUMERIC 可解码为整数目标（非整值报 `TypeConversion`，不静默截断），任意值可解码为 `Decimal` 或 `f64`。
+> `avg_as` 的精确程度由**目标类型 + provider 返回的单元格**共同决定：SQLite 的 `AVG` 始终返回 REAL，所以 `avg_as::<i64>` 会得到 typed `EFError::TypeConversion`；PostgreSQL/MySQL 的 `SUM`/`AVG` 返回 numeric/DECIMAL——2.9 起整值 NUMERIC 可解码为整数目标（非整值报 `TypeConversion`，不静默截断），任意值可解码为 `Decimal` 或 `f64`。
 
-## 空集语义（EF-17，2.8.0 不变）
+## 空集语义（EF-17，2.9.0 不变）
 
 SQL 对空输入集的聚合仍会返回一行，单元格为 `NULL`。`rust-ef` 把该 `NULL` 归一为**中性值**：
 

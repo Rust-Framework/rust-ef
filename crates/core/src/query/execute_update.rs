@@ -3,7 +3,7 @@
 //! Produces `UPDATE <table> SET col = ?, ... WHERE <expr>` SQL with
 //! parameters ordered as: SET values first, then WHERE parameters.
 //!
-//! 2.8 adds expression right-hand sides ([`ColumnExpr`]): a `SET` value can be
+//! 2.9 adds expression right-hand sides ([`ColumnExpr`]): a `SET` value can be
 //! a column, a bound value, or column arithmetic (`col = col + ?`). That makes
 //! atomic increments/decrements and compare-and-swap version bumps possible
 //! without a read-modify-write round trip.

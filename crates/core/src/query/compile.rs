@@ -63,7 +63,7 @@ impl crate::provider::ISqlGenerator for PortablePlaceholderGenerator {
     fn quote_identifier(&self, identifier: &str) -> String {
         identifier
             .split('.')
-            .map(|part| format!("\"{part}\""))
+            .map(|part| format!("\"{}\"", part.replace('"', "\"\"")))
             .collect::<Vec<_>>()
             .join(".")
     }
@@ -254,6 +254,19 @@ fn lex_raw_fragment(sql: &str) -> EFResult<Vec<RawSegment>> {
         }
     }
 
+    // Copies the UTF-8 character starting at `*i` and advances past it. The
+    // lexer walks byte offsets to recognise ASCII syntax, but raw fragments may
+    // contain non-ASCII text (literals, quoted identifiers, comments); pushing
+    // `bytes[i] as char` would split a multi-byte character into Latin-1 bytes.
+    fn push_char(sql: &str, i: &mut usize, text: &mut String) {
+        let ch = sql[*i..]
+            .chars()
+            .next()
+            .expect("lexer offsets always sit on a character boundary");
+        text.push(ch);
+        *i += ch.len_utf8();
+    }
+
     while i < bytes.len() {
         match bytes[i] {
             b'\'' | b'"' | b'`' => {
@@ -273,8 +286,7 @@ fn lex_raw_fragment(sql: &str) -> EFResult<Vec<RawSegment>> {
                         closed = true;
                         break;
                     }
-                    text.push(bytes[i] as char);
-                    i += 1;
+                    push_char(sql, &mut i, &mut text);
                 }
                 if !closed {
                     return Err(crate::error::EFError::configuration(
@@ -284,8 +296,7 @@ fn lex_raw_fragment(sql: &str) -> EFResult<Vec<RawSegment>> {
             }
             b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
                 while i < bytes.len() && bytes[i] != b'\n' {
-                    text.push(bytes[i] as char);
-                    i += 1;
+                    push_char(sql, &mut i, &mut text);
                 }
             }
             b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
@@ -302,8 +313,7 @@ fn lex_raw_fragment(sql: &str) -> EFResult<Vec<RawSegment>> {
                         text.push_str("*/");
                         i += 2;
                     } else {
-                        text.push(bytes[i] as char);
-                        i += 1;
+                        push_char(sql, &mut i, &mut text);
                     }
                 }
                 if depth != 0 {
@@ -643,6 +653,7 @@ pub(crate) fn resolve_state_subqueries<T: crate::entity::IEntityType>(state: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ISqlGenerator;
 
     #[test]
     fn raw_sql_fragment_compiles_unchanged() {
@@ -652,5 +663,13 @@ mod tests {
         let sql = compile_bool_expr(&expr, &gen, &mut idx);
         assert_eq!(sql, "is_deleted = 0");
         assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn quote_identifier_escapes_embedded_quotes() {
+        let gen = PortablePlaceholderGenerator;
+        assert_eq!(gen.quote_identifier("plain"), "\"plain\"");
+        assert_eq!(gen.quote_identifier("a.b"), "\"a\".\"b\"");
+        assert_eq!(gen.quote_identifier("we\"ird"), "\"we\"\"ird\"");
     }
 }

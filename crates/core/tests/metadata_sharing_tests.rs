@@ -1,6 +1,6 @@
 //! `DbContext` creation shares the process-level `Arc<BuiltMetadata>`.
 //!
-//! 2.8 removed the per-context deep clone of every entity meta/config; this
+//! 2.9 removed the per-context deep clone of every entity meta/config; this
 //! test locks the observable consequence (a metadata-cache hit yields two
 //! contexts with the same `Arc` pointers).
 

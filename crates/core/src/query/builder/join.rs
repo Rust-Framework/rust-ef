@@ -149,6 +149,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         } else {
             left_table.to_string()
         };
+        let left_table_is_cte = self.state.ctes.iter().any(|cte| cte.name == effective_left);
         let keys = keys
             .iter()
             .map(|(left_column, right_column)| JoinKey {
@@ -161,6 +162,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             kind,
             table: table.to_string(),
             keys,
+            left_table_is_cte,
         });
         self
     }
@@ -239,6 +241,7 @@ impl<T: IEntityType> QueryBuilder<T> {
             kind: JoinKind::Cross,
             table: table.to_string(),
             keys: Vec::new(),
+            left_table_is_cte: false,
         });
         self
     }
@@ -251,6 +254,7 @@ impl<T: IEntityType> QueryBuilder<T> {
         left_table: String,
         on: &[(&str, &str)],
     ) {
+        let left_table_is_cte = self.state.ctes.iter().any(|cte| cte.name == left_table);
         let keys = on
             .iter()
             .map(|(left_column, right_column)| JoinKey {
@@ -259,7 +263,12 @@ impl<T: IEntityType> QueryBuilder<T> {
                 right_column: right_column.to_string(),
             })
             .collect();
-        self.state.joins.push(JoinSpec { kind, table, keys });
+        self.state.joins.push(JoinSpec {
+            kind,
+            table,
+            keys,
+            left_table_is_cte,
+        });
     }
 
     /// Pushes a legacy single-key JOIN whose left table is the current FROM
@@ -271,6 +280,11 @@ impl<T: IEntityType> QueryBuilder<T> {
         left_column: &'static str,
         right_column: &'static str,
     ) {
+        let left_table_is_cte = self
+            .state
+            .ctes
+            .iter()
+            .any(|cte| cte.name == self.state.from);
         self.state.joins.push(JoinSpec {
             kind,
             table: table.to_string(),
@@ -279,6 +293,7 @@ impl<T: IEntityType> QueryBuilder<T> {
                 left_column: left_column.to_string(),
                 right_column: right_column.to_string(),
             }],
+            left_table_is_cte,
         });
     }
 }

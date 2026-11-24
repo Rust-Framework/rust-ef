@@ -403,7 +403,10 @@ fn render_reverse(parsed: &ParsedStatement, dialect: MigrationDialect) -> EFResu
 /// whitespace) and returns the remainder only when a word boundary follows.
 fn strip_keyword<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
     let input = input.trim_start();
-    if input.len() < keyword.len() || !input[..keyword.len()].eq_ignore_ascii_case(keyword) {
+    // `get` refuses a slice that would split a multi-byte character; a raw
+    // `input[..keyword.len()]` panics on a non-ASCII prefix.
+    let prefix = input.get(..keyword.len())?;
+    if !prefix.eq_ignore_ascii_case(keyword) {
         return None;
     }
     let rest = &input[keyword.len()..];
@@ -676,6 +679,12 @@ mod tests {
             vec!["DROP TABLE \"items\"".to_string()],
             "comments are metadata-only and disappear with the table"
         );
+    }
+
+    #[test]
+    fn non_ascii_prefix_is_not_a_keyword_match_and_does_not_panic() {
+        assert_eq!(strip_keyword("中文 DROP", "DROP"), None);
+        assert_eq!(strip_keyword("DROP 中文", "DROP"), Some(" 中文"));
     }
 
     #[test]

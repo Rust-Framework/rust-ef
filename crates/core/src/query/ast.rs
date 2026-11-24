@@ -493,6 +493,10 @@ pub struct JoinSpec {
     pub table: String,
     /// Equality keys of the `ON` clause (empty for `CROSS JOIN`).
     pub keys: Vec<JoinKey>,
+    /// `true` when the left table of `keys` is a declared CTE name. The
+    /// dialect-aware renderer then quotes it exactly like the `WITH`
+    /// declaration; plain table constants stay unquoted.
+    pub(crate) left_table_is_cte: bool,
 }
 
 impl JoinSpec {
@@ -506,12 +510,23 @@ impl JoinSpec {
             kind,
             table: table.into(),
             keys,
+            left_table_is_cte: false,
         }
     }
 }
 
 impl JoinSpec {
+    /// Renders the join without quoting (compatibility helper).
     pub fn to_sql(&self) -> String {
+        self.render(None)
+    }
+
+    /// Renders the join, quoting a CTE left table with the provider's rules.
+    pub(crate) fn to_sql_with(&self, gen: &dyn ISqlGenerator) -> String {
+        self.render(Some(gen))
+    }
+
+    fn render(&self, gen: Option<&dyn ISqlGenerator>) -> String {
         let join_kw = match self.kind {
             JoinKind::Inner => "INNER",
             JoinKind::Left => "LEFT",
@@ -523,9 +538,13 @@ impl JoinSpec {
             .keys
             .iter()
             .map(|key| {
+                let left = match (gen, self.left_table_is_cte) {
+                    (Some(gen), true) => gen.quote_identifier(&key.left_table),
+                    _ => key.left_table.clone(),
+                };
                 format!(
                     "{}.{} = {}.{}",
-                    key.left_table, key.left_column, self.table, key.right_column
+                    left, key.left_column, self.table, key.right_column
                 )
             })
             .collect::<Vec<_>>()

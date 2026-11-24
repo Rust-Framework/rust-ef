@@ -46,7 +46,7 @@ docs/
 - [v2.3 迁移指南（运行时升级 + 三方言内省 + ConnectionString + 必填推断）](v2.3-migration-guide.md)
 - [v2.5 迁移指南（PG NULL / MySQL DDL / 网络 diff / 驱动诊断 / ADO.NET 连接串）](v2.5-migration-guide.md)
 - [v2.6 迁移指南（移除 webx feature，错误映射回到应用边界）](v2.6-migration-guide.md)
-- [v2.8 迁移指南（报表查询与集合写对象化，含已文档化的结构体 breaking，与 rust-webx 2.8.0 配对发布）](v2.8-migration-guide.md)
+- [v2.9 迁移指南（报表查询与集合写对象化，含已文档化的结构体 breaking，与 rust-webx 2.9.0 配对发布）](v2.9-migration-guide.md)
 
 - [rust-dix 0.10 能力评估与采纳矩阵](rust-dix-0.10-adoption.md)
 
@@ -54,4 +54,5 @@ docs/
 
 编辑 `docs/rust-ef/` 下的 Markdown 即可；Docbit 启动时会自动确保 `INDEX.json` 存在。
 
-发布流程见 [发布清单](RELEASE.md)；发布就绪结论与证据见 [2.2.0 生产就绪报告](PRODUCTION_READINESS_SPEC.md)。
+发布流程见 [发布清单](RELEASE.md)；当前版本的发布内容以仓库根 `CHANGELOG.md` 为准，
+历史发布就绪报告归档在 [`archive/PRODUCTION_READINESS_SPEC_2.2.0.md`](archive/PRODUCTION_READINESS_SPEC_2.2.0.md)。

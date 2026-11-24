@@ -1,5 +1,5 @@
 //! Composite (multi-column) JOIN, chained JOIN, runtime `join`/`join_from` and
-//! `filter_joined` coverage (rust-ef 2.8 / EF-04).
+//! `filter_joined` coverage (rust-ef 2.9 / EF-04).
 //!
 //! Every JOIN test asserts both the generated SQL shape (`to_sql()`) and the
 //! actual SQLite result, so the SQL text and the runtime semantics cannot drift
@@ -373,7 +373,7 @@ async fn join_after_from_cte_uses_the_cte_as_left_table() {
     assert_eq!(
         query.to_sql(),
         "WITH \"filtered\" AS (SELECT * FROM \"jc_orders\" WHERE id > ?) \
-         SELECT * FROM filtered INNER JOIN jc_shipments ON filtered.id = jc_shipments.order_id",
+         SELECT * FROM \"filtered\" INNER JOIN jc_shipments ON \"filtered\".id = jc_shipments.order_id",
         "the first JOIN after `from <cte>` must continue from the CTE"
     );
 
@@ -381,6 +381,26 @@ async fn join_after_from_cte_uses_the_cte_as_left_table() {
     let mut ids: Vec<i32> = orders.iter().map(|o| o.id).collect();
     ids.sort_unstable();
     assert_eq!(ids, vec![1, 2]);
+}
+
+/// A mixed-case CTE is declared as `WITH "HighEarners"`; the JOIN's left
+/// qualifier must use the same quoted spelling or PostgreSQL folds it.
+#[tokio::test]
+async fn join_after_mixed_case_cte_quotes_the_left_qualifier() {
+    let mut ctx = seed().await;
+    let query = linq!(
+        ctx.set::<JcOrder>();
+        with HighEarners as |o: JcOrder| o.id > 0;
+        from HighEarners;
+        inner_join |a: JcOrder, b: JcShipment| a.id == b.order_id
+    );
+    let sql = query.to_sql();
+    assert!(sql.contains("WITH \"HighEarners\""), "{sql}");
+    assert!(sql.contains("SELECT * FROM \"HighEarners\""), "{sql}");
+    assert!(
+        sql.contains("ON \"HighEarners\".id = jc_shipments.order_id"),
+        "{sql}"
+    );
 }
 
 // ---------------------------------------------------------------------------

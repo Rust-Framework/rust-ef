@@ -10,7 +10,7 @@
     "demoUrl": "",
     "featured": true,
     "sortOrder": 1,
-    "version": "2.8.0",
+    "version": "2.9.0",
     "language": "zh-CN",
     "author": "RF Team",
     "foreword": "FOREWORD.md",
@@ -412,7 +412,7 @@
             },
             {
               "id": "query-pipeline-architecture",
-              "title": "查询管线架构（2.8）",
+              "title": "查询管线架构（2.9）",
               "summary": "查询层分层、编译不变量与扩展点",
               "readingTime": 10,
               "difficulty": "advanced"

@@ -1,6 +1,6 @@
-# 查询管线架构（2.8）
+# 查询管线架构（2.9）
 
-> 面向框架贡献者与高级使用者：说明 rust-ef 2.8 查询层的分层、编译不变量与扩展点，
+> 面向框架贡献者与高级使用者：说明 rust-ef 2.9 查询层的分层、编译不变量与扩展点，
 > 以及为什么这些约束能让"生成 SQL / 绑定参数 / 物化结果"三者不漂移。
 
 ## 1. 分层
@@ -24,12 +24,12 @@
 ```
 
 - **一个布尔代数**：WHERE、HAVING、CTE 谓词、子查询谓词、DML 过滤都编译为
-  `BoolExpr`。2.8 删除了独立的 `HavingExpr` 枚举——HAVING 条件就是
+  `BoolExpr`。2.9 删除了独立的 `HavingExpr` 枚举——HAVING 条件就是
   `BoolExpr::Compare`（`BoolExpr::aggregate_compare` /
   `aggregate_compare_agg` 构造），`HavingExpr` 仅作为 `BoolExpr` 的兼容别名；
   `linq!(having ...)` 直接生成 `BoolExpr`，不存在第二套 HAVING 编译器。
 - **一个标量代数**：SELECT 投影、HAVING 比较、SET 表达式、CASE 分支共用 `SqlExpr` 的
-  编译与取值逻辑。2.8 删除了独立的 `ColumnExpr` 枚举（保留为 `SqlExpr` 别名）；
+  编译与取值逻辑。2.9 删除了独立的 `ColumnExpr` 枚举（保留为 `SqlExpr` 别名）；
   `set_column_expr` 接受 `SqlExpr`，编译时校验只含列/字面量/`+`/`-` 的 SET 子集，
   聚合/COALESCE/CASE 返回 typed error。
 - **一个 SELECT 形状**：`QueryState::select_list() -> &SelectList`，
@@ -77,7 +77,7 @@
 - 事务：`use_transaction` 只 commit 一次；查询构建器不隐式开事务。
 - provider 错误由边界 crate（`rust-webx-ef`）经 `map_ef_error` 统一映射，查询层不感知 HTTP。
 
-## 5. 边界与拒绝策略（2.8）
+## 5. 边界与拒绝策略（2.9）
 
 - **raw 片段**（raw CTE / 集合运算操作数）：使用占位符词法器识别真实占位符——字符串
   字面量、引用标识符、`$$...$$`/`$tag$...$tag$`、`--`/`/* */` 注释中的 `?`/`$N` 不会被
@@ -93,7 +93,7 @@
 - **终端形状切换**：`count()`/`any()`/聚合终端会显式设置 `SelectList` 变体；分页与
   `COUNT` 的组合被拒绝（不会悄悄把 LIMIT 放在聚合行上），窗口投影与单值终端/EXISTS
   的组合同样被拒绝。
-- **标识符（2.8 统一策略）**：框架**生成**的标识符（CTE 名与列名、子查询/窗口别名、
+- **标识符（2.9 统一策略）**：框架**生成**的标识符（CTE 名与列名、子查询/窗口别名、
   相关子查询引用的表/列）一律经 `quote_identifier` 引用；调用方**提供**的 FROM/表名是
   代码常量，按原样输出（运行时入口在 debug 构建有 `debug_assert_identifier`，release
   仍由调用方保证是常量/白名单）。两类边界明确，不再有"同一类标识符时引时不引"的分支。
@@ -107,17 +107,17 @@
 `linq!` 需要把子句编译成方法链，因此 `QueryBuilder`/`SelectQueryBuilder`/`ExecuteUpdateBuilder`
 上有一组 `#[doc(hidden)]` 的 `*_internal` 方法（`include_internal`、`join_internal`、
 `with_cte_*`、`union_internal`、`window_internal` 等）。它们是**宏 codegen ABI**：不承诺
-semver、不出现在 rustdoc 公共契约中，应用代码不应直接调用；2.8 已把其中重复的公开能力
+semver、不出现在 rustdoc 公共契约中，应用代码不应直接调用；2.9 已把其中重复的公开能力
 （`group_by`/`having`/`order_by`/`select_columns`/聚合终端）改为公开方法，宏直接生成公开名。
 
-## 7. 刻意保留的边界（2.8）
+## 7. 刻意保留的边界（2.9）
 
 - 编译期无法表达任意 SQL：聚合窗口、复杂相关子查询、方言特有语法走 raw SQL + `IRow`。
 - 运行时标识符 API（`SelectItem::column`、`order_by`、`ColumnExpr::column`、join keys）
   在 debug 构建做标识符断言，但 release 仍需调用方保证"常量/白名单"。
 - 三方言执行验证在 CI 的 real-database job（PostgreSQL/MySQL service containers）完成；
   本地默认只跑 SQLite。
-- 2.8 已完成：HAVING/SET 表达式收敛到 `BoolExpr`/`SqlExpr` 单核、标识符策略统一、
+- 2.9 已完成：HAVING/SET 表达式收敛到 `BoolExpr`/`SqlExpr` 单核、标识符策略统一、
   `DbContext` 元数据 `Arc<BuiltMetadata>` 共享（创建上下文不再深拷贝实体元数据）。
 - 3.0 候选：raw 片段占位符的完整 AST 化（当前词法器 + `??` 转义已覆盖字面量/注释/
   dollar-quote）；进一步收敛公开配置结构体。

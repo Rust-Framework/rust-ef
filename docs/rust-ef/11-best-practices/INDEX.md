@@ -15,4 +15,4 @@
 
 ## 查询管线架构
 
-- [查询管线架构（2.8）](./query-pipeline-architecture.md)
+- [查询管线架构（2.9）](./query-pipeline-architecture.md)

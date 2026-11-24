@@ -105,7 +105,7 @@ fn bench_batch_select(c: &mut Criterion) {
     group.finish();
 }
 
-/// Measures the single-pass `compile_sql` (2.8) against the pre-2.8 pattern
+/// Measures the single-pass `compile_sql` (2.9) against the pre-2.9 pattern
 /// of compiling SQL and parameters separately (`to_sql` + `all_params`).
 fn bench_compile_pipeline(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
