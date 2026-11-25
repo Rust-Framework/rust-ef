@@ -147,9 +147,9 @@ fn expand_clauses(
             LinqClause::OrderBy { field, descending } => {
                 let col = extract_field(&ctx, field)?;
                 if *descending {
-                    chain = quote! { #chain .order_by_desc(#col) };
+                    chain = quote! { #chain .order_by_desc_raw(#col) };
                 } else {
-                    chain = quote! { #chain .order_by(#col) };
+                    chain = quote! { #chain .order_by_raw(#col) };
                 }
             }
             LinqClause::GroupBy { fields } => {

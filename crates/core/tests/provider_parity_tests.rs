@@ -531,7 +531,7 @@ async fn assert_integer_aggregate_decoding(ctx: &mut DbContext, postgres: bool) 
             CompareOp::Gt,
             DbValue::I64(60),
         ))
-        .order_by("label")
+        .order_by_raw("label")
         .to_list_typed_2()
         .await
         .expect("grouped projection");

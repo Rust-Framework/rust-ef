@@ -252,7 +252,7 @@ async fn to_list_rows_materializes_typed_projections() {
         .query()
         .group_by(&["category"])
         .select_items(&[SelectItem::column("category"), SelectItem::sum("amount")])
-        .order_by("category")
+        .order_by_raw("category")
         .to_list_rows::<CategoryTotal>()
         .await
         .expect("typed projection rows");
@@ -281,7 +281,7 @@ async fn to_list_rows_supports_tuples() {
         .query()
         .group_by(&["category"])
         .select_items(&[SelectItem::column("category"), SelectItem::count()])
-        .order_by("category")
+        .order_by_raw("category")
         .to_list_rows::<(String, i64)>()
         .await
         .expect("tuple projection rows");

@@ -291,7 +291,7 @@ fn normalize_action(action: &str) -> Option<String> {
     }
 }
 
-/// SQLSTATE `42S02`: unknown table 鈥?e.g. `check_constraints` on MySQL < 8.0.16.
+/// SQLSTATE `42S02`: unknown table — e.g. `check_constraints` on MySQL < 8.0.16.
 fn is_missing_catalog(error: &sqlx_core::Error) -> bool {
     matches!(
         error,
@@ -300,7 +300,7 @@ fn is_missing_catalog(error: &sqlx_core::Error) -> bool {
     )
 }
 
-/// SQLSTATE `42S22`: unknown column 鈥?e.g. `statistics.EXPRESSION` on
+/// SQLSTATE `42S22`: unknown column — e.g. `statistics.EXPRESSION` on
 /// MySQL < 8.0.13.
 fn is_unknown_column(error: &sqlx_core::Error) -> bool {
     matches!(

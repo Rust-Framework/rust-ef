@@ -127,7 +127,7 @@ fn bench_compile_pipeline(c: &mut Criterion) {
         ])
         .group_by(&["tenant_id"])
         .having(having)
-        .order_by("tenant_id")
+        .order_by_raw("tenant_id")
         .take(10);
 
     let mut group = c.benchmark_group("compile_pipeline");

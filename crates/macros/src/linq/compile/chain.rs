@@ -18,8 +18,8 @@ pub(crate) fn compile_order(
 ) -> syn::Result<TokenStream2> {
     let column = extract_field(ctx, expr)?;
     if descending {
-        Ok(quote! { .order_by_desc(#column) })
+        Ok(quote! { .order_by_desc_raw(#column) })
     } else {
-        Ok(quote! { .order_by(#column) })
+        Ok(quote! { .order_by_raw(#column) })
     }
 }

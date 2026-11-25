@@ -16,7 +16,7 @@
 - [ ] 分页查询是否先过滤再 `skip`/`take`？
 - [ ] 导航属性使用前是否用 `linq!(...; include b.x)` 预加载？
 - [ ] 查询形式的 source 是否含 turbofish `::<Type>`（不能用裸变量）？
-- [ ] 是否避免了字符串 API（`include_named`/`order_by("col")`/`sum("col")`/`find_by_id` 等）？
+- [ ] 是否避免了旧字符串 API（`include_named`/`sum("col")`/`find_by_id` 等），排序优先用 `order_by_field*`，仅别名/宏展开用 `order_by_raw` / `order_by_desc_raw`？
 - [ ] 动态条件是否用 `Predicate<T>`（`and` / `or` / `and_opt`）组合后一次 `filter` 应用，并让 `count` 与列表共用同一份条件？
 
 ## 变更层

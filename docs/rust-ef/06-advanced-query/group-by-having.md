@@ -18,7 +18,7 @@ let rows: Vec<(String, i64)> = ctx
         SelectItem::column("category"),
         SelectItem::sum("amount"),
     ])
-    .order_by_desc("sum_amount") // 可按投影别名排序
+    .order_by_desc_raw("sum_amount") // 可按投影别名排序（raw：不做类型校验）
     .to_list_rows::<(String, i64)>()
     .await?;
 ```
@@ -37,7 +37,7 @@ ORDER BY sum_amount DESC
 - 组键列要**自己投影**（`SelectItem::column`）；投影顺序就是结果行布局，`to_list_rows` 按位置映射（元组或 `#[derive(FromRow)]`）。
 - 非聚合列必须出现在 GROUP BY —— 这是 SQL 校验，框架不做二次语义检查。
 - `group_bys` 非空 + 聚合项 → 每组一行；`group_bys` 非空 + 只有列项 → 组键行（等价 DISTINCT 组键）；`group_bys` 为空 + 聚合项 → 整集合一行。
-- `group_by` 替换整个 GROUP BY 列表（不是追加）；`take`/`skip`/`distinct`/`order_by`/`order_by_desc` 与 `select_items` 的先后顺序任意。
+- `group_by` 替换整个 GROUP BY 列表（不是追加）；`take`/`skip`/`distinct`/`order_by_raw`/`order_by_desc_raw` 与 `select_items` 的先后顺序任意。
 - 默认聚合别名：`sum_<列名>` / `avg_<列名>` / `min_<列名>` / `max_<列名>` / `count` / `count_<列名>`；别名可被 `ORDER BY` 引用。完整规则见 [类型化投影](typed-projections.md)。
 
 ## HAVING
@@ -93,7 +93,7 @@ let rows: Vec<(String, i64, i64)> = linq!(ctx.set::<Blog>();
 > `linq!` 的 `select` 已支持 `sum/avg/min/max(...)`、`count()`、`count(col)` 聚合项
 > （纯列 `select` 的 SQL 与 2.6 逐字符一致）。`linq!` 的 `order_by` 只能引用列或组键，
 > **不能按聚合别名排序**；需要「按 SUM 降序取 Top N」时用运行时
-> `select_items(...).order_by_desc("sum_amount")`（默认别名规则见
+> `select_items(...).order_by_desc_raw("sum_amount")`（默认别名规则见
 > [类型化投影](typed-projections.md)）。
 
 ## 组内聚合的 NULL 语义

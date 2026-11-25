@@ -535,7 +535,7 @@ async fn bulk_dml_rejects_unsupported_clauses() {
     let error = ctx
         .set::<QvRow>()
         .query()
-        .order_by(QvRow::COLUMN_ID)
+        .order_by_field(QvRow::id)
         .execute_delete()
         .await
         .expect_err("ORDER BY in bulk DELETE must be rejected");

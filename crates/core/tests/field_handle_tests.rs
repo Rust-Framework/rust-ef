@@ -2,7 +2,9 @@
 //!
 //! `Entity::field` is a `Field<Entity, RustType>` carrying the physical column
 //! name; `order_by_field` / `then_by_field` accept it so a typo or a renamed
-//! field fails to compile instead of producing a runtime SQL error.
+//! field fails to compile instead of producing a runtime SQL error. The raw
+//! string entries (`order_by_raw` / `order_by_desc_raw`) are the unchecked
+//! fallback.
 
 use rust_ef::prelude::*;
 use rust_ef::query::QueryBuilder;
@@ -32,16 +34,16 @@ fn field_constants_carry_the_physical_column_name() {
 }
 
 #[test]
-fn order_by_field_emits_the_same_order_by_as_the_string_entry() {
+fn order_by_field_emits_the_same_order_by_as_the_raw_entry() {
     let typed = QueryBuilder::<FieldItem>::new("field_handle_items")
         .order_by_field(FieldItem::created_at)
         .then_by_field_desc(FieldItem::id)
         .to_sql();
-    let strings = QueryBuilder::<FieldItem>::new("field_handle_items")
-        .order_by(FieldItem::COLUMN_CREATED_AT)
-        .order_by_desc(FieldItem::COLUMN_ID)
+    let raw = QueryBuilder::<FieldItem>::new("field_handle_items")
+        .order_by_raw(FieldItem::COLUMN_CREATED_AT)
+        .order_by_desc_raw(FieldItem::COLUMN_ID)
         .to_sql();
-    assert_eq!(typed, strings);
+    assert_eq!(typed, raw);
     assert!(
         typed.contains("ORDER BY created_at ASC, id DESC"),
         "{typed}"

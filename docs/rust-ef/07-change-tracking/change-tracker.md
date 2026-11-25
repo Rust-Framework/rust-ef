@@ -7,8 +7,9 @@
 `save_changes()` 内部会自动调用 `detect_changes()`：
 
 ```rust
-ctx.attach::<Blog>(blog);  // 记录快照
-blog.rating = 99;                 // 修改属性
+// 查询返回脱离跟踪的实体；edit 先拍快照，再在跟踪副本上应用修改
+let blog = ctx.set::<Blog>().query().find(1).await?.expect("blog");
+ctx.edit(blog, |blog| blog.rating = 99);
 
 // save_changes 内部自动 detect_changes，发现差异后生成 UPDATE
 ctx.save_changes().await?;
@@ -49,7 +50,7 @@ rust-ef 当前的 `ChangeTracker` 为**手动快照式**跟踪，与 EFCore 的�
 | Identity Map | 是 | 否 |
 | 导航 Fixup | 自动 | 无 |
 
-**当前推荐工作流**：查询后显式 `attach()` → 修改属性 → 调用 `update()` 标记 → `save_changes()`。或直接 `update(entity)` 跳过快照比对。
+**当前推荐工作流**：查询后用 `edit()` 在跟踪副本上应用修改 → `detect_changes()` → `save_changes()`（详见 [execute-update.md](../08-bulk-operations/execute-update.md) 的「编辑已加载实体：edit + detect_changes」）；或直接 `update(entity)` 整行标记。
 
 当前采用快照式变更检测：`detect_changes()` 对比加载态快照；不提供代理式自动跟踪。
 

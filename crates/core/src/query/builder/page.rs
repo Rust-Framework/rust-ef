@@ -39,8 +39,8 @@ where
     /// [`PagedResult`] envelope directly (there is no tuple variant and no "skip
     /// the count" switch).
     ///
-    /// The envelope composes the operation outcome and the page rows:
-    /// `{success,status,message,items,total}`; `PagedResult::new` uses
+    /// The result fields are inlined on the page structure (there is no nested
+    /// `operation`): `{success,status,message,items,total}`; `PagedResult::new` uses
     /// `success=true/status=0/message="ok"`, and the endpoint can override the
     /// outcome with `with_status`/`with_message`. The page part still has no
     /// `page`/`page_size`/`total_pages` echo.
@@ -67,9 +67,9 @@ where
     /// - **Entity page**: the returned items are entities (`T` need not be
     ///   `Serialize`). Map them to the response DTO with
     ///   [`PagedResult::map_items`] before serializing.
-    /// - **Stable order**: the caller supplies `order_by`/`order_by_desc` before
-    ///   calling; the last ordering column must be unique (e.g. the primary
-    ///   key) so rows cannot shift between pages.
+    /// - **Stable order**: the caller supplies `order_by_field` /
+    ///   `order_by_field_desc` before calling; the last ordering column must be
+    ///   unique (e.g. the primary key) so rows cannot shift between pages.
     ///
     /// The supported query shapes are the ones of [`to_list`](Self::to_list) and
     /// [`count`](Self::count): grouped queries, `DISTINCT`, aggregate/window

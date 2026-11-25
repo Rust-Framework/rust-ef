@@ -86,7 +86,7 @@ fn grouped_projection_sql_shape_has_group_by_alias_order_and_limit() {
             SelectItem::sum("amount"),
             SelectItem::count(),
         ])
-        .order_by_desc("sum_amount")
+        .order_by_desc_raw("sum_amount")
         .take(10)
         .to_sql();
 
@@ -107,7 +107,7 @@ fn grouped_projection_sql_shape_supports_multiple_keys_and_pagination() {
             SelectItem::column("region"),
             SelectItem::avg("amount"),
         ])
-        .order_by("category")
+        .order_by_raw("category")
         .skip(2)
         .take(5)
         .to_sql();
@@ -289,7 +289,7 @@ async fn grouped_rows_alias_order_and_having() {
             CompareOp::Gt,
             DbValue::I64(250),
         ))
-        .order_by_desc("sum_amount")
+        .order_by_desc_raw("sum_amount")
         .to_list_rows::<(String, i64)>()
         .await
         .expect("grouped rows");
@@ -314,7 +314,7 @@ async fn grouped_rows_with_avg_and_count_in_one_projection() {
             SelectItem::avg("amount"),
             SelectItem::count(),
         ])
-        .order_by("category")
+        .order_by_raw("category")
         .to_list_rows::<(String, f64, i64)>()
         .await
         .expect("grouped rows with AVG and COUNT");
@@ -343,8 +343,8 @@ async fn multi_key_grouping_returns_one_row_per_key_pair() {
             SelectItem::column("region"),
             SelectItem::sum("amount"),
         ])
-        .order_by("category")
-        .order_by("region")
+        .order_by_raw("category")
+        .order_by_raw("region")
         .to_list_rows::<(String, String, i64)>()
         .await
         .expect("multi-key grouped rows");
@@ -398,7 +398,7 @@ async fn coalesce_turns_an_all_null_group_into_the_neutral_value() {
             SelectItem::column("category"),
             SelectItem::sum("amount").coalesce(0i64),
         ])
-        .order_by("category")
+        .order_by_raw("category")
         .to_list_rows::<(String, i64)>()
         .await
         .expect("COALESCE(SUM(amount), 0) handles the NULL group");
@@ -442,7 +442,7 @@ async fn literal_and_case_projections_execute() {
             ),
             SelectItem::literal("TENANT", "grant_scope"),
         ])
-        .order_by("category")
+        .order_by_raw("category")
         .to_list_rows::<(String, String, String)>()
         .await
         .expect("literal/CASE projections");
@@ -512,7 +512,7 @@ async fn projection_where_and_having_params_align_in_sqlite() {
             CompareOp::Gt,
             DbValue::I64(250),
         ))
-        .order_by("category")
+        .order_by_raw("category")
         .to_list_rows::<(String, i64, String)>()
         .await
         .expect("projection literal + WHERE + HAVING must bind params in SQL order");

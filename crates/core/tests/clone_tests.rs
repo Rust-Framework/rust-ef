@@ -60,7 +60,11 @@ async fn test_query_builder_clone_compiles_and_runs() {
 async fn test_clone_preserves_state() {
     // A clone inherits filters, ordering, and pagination from the original.
     let mut ctx = seed().await;
-    let base = ctx.set::<CloneItem>().query().order_by("value").take(3);
+    let base = ctx
+        .set::<CloneItem>()
+        .query()
+        .order_by_field(CloneItem::value)
+        .take(3);
     let copy = base.clone();
     // Both should return the same 3 rows (first three by value ascending).
     let original_rows = base.to_list().await.unwrap();

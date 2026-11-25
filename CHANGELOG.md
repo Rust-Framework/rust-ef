@@ -13,13 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **English** · **简体中文**
 >
-> Additive maintenance release for the rust-xazgo stack (pairs with rust-webx 2.9.1). It closes the
+> Maintenance release for the rust-xazgo stack (pairs with rust-webx 2.9.1). It closes the
 > rust-ef items reported by RXStudio: provider/transport failures no longer collapse into
 > `EFError::Query` (which a Web boundary maps to `400`), `use_transaction` can now compose with an
 > application error type without making rust-ef depend on rust-webx, counter rows get a single-
 > statement atomic upsert-increment, and the host can share one `Arc<DbContextOptions>` with durable
-> components such as `EfIdempotencyStore`. No public type was removed; `ISqlGenerator` only gains a
-> default method.
+> components such as `EfIdempotencyStore`. One small breaking rename is included: the unchecked
+> string ordering entries `order_by`/`order_by_desc` are now `order_by_raw`/`order_by_desc_raw`, and
+> the typed `order_by_field*` methods are the primary ordering API. No public type was removed;
+> `ISqlGenerator` only gains a default method.
 
 #### English
 
@@ -55,8 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   doc-hidden; typos and renamed fields now fail at compile time. `order_by_field*` requires
   `Sortable`: implemented for integers/floats/bool/char/String, `Option<T: Sortable>`, and the
   feature-gated `chrono`/`uuid`/`decimal` types; blobs (`Vec<u8>`) and JSON values are rejected at
-  compile time (a `compile_fail` doc test covers it). The string `order_by(&str)` entry remains for
-  2.x source compatibility; 3.0 removes it. `column!` keeps returning `&str`.
+  compile time (a `compile_fail` doc test covers it). 2.9.1 removes the ambiguous string entry: the
+  string ordering methods are now explicitly `order_by_raw` / `order_by_desc_raw` (the unchecked
+  entry used by `linq!` expansion and projection-alias ordering), while `order_by_field*` is the
+  primary ordering API. `column!` keeps returning `&str`.
 - **`impl From<EFError> for rust_core::AppError`.** The persistence boundary now converts into
   the shared carrier without a Web adapter: business errors (`NotFound`/`ModelValidation`/
   `ConcurrencyConflict`) keep their message; driver-derived payloads (`Query`/`TypeConversion`/
@@ -71,15 +75,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cache — instead of building a second options instance.
 - **`QueryBuilder::to_page(&PagedRequest) -> EFResult<PagedResult<T>>`** — the offset-pagination
   terminal returns the `rust_core::PagedResult` envelope **directly** (there is no tuple variant
-  and no `count: bool` switch). The envelope is flat —
-  `{success,status,message,items,total}` (it composes the shared `OperationResult` outcome and the
-  page rows; Rust has no inheritance), defaulting to `success=true/status=0/message="ok"`, with
-  `with_status`/`with_message` overrides on the endpoint. It runs `COUNT(*)` on a clone with
+  and no `count: bool` switch). The result fields are inlined on the page structure (there is no
+  nested `operation`): `{success,status,message,items,total}`, defaulting to
+  `success=true/status=0/message="ok"`, with `with_status`/`with_message` overrides on the
+  endpoint. It runs `COUNT(*)` on a clone with
   `ORDER BY`/`skip`/`take` removed (same FROM/JOIN/WHERE, so the total matches the page filter) and
   then fetches `skip(offset).take(page_size)`. `QueryBuilder` now implements `Clone` manually so
   forking a builder no longer requires `T: Clone`. Requires `rust-core` (publish it first); returned
   entities are mapped to DTOs with `PagedResult::map_items`. The `count` and page statements are not
   one snapshot; wrap the call in a transaction when the two must agree under concurrent writes.
+- **`DbContext::edit(entity, f)`** — the "load detached → modify → save" path without the
+  attach-ordering footgun. `edit` attaches the entity (capturing the original snapshot), then
+  applies `f` to the **tracked** copy, so a following `detect_changes()` marks only the columns
+  `f` changed and `save_changes()` UPDATEd only those columns. It neither saves nor detects on its
+  own, keeping the caller's transaction boundary. If a row with the same key is already tracked,
+  the closure runs on the tracked instance and no second tracker entry is created.
 
 ##### Changed
 
@@ -90,6 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machine (DML bypasses the tracker, uses the active transaction implicitly, and needs
   `clear_tracking()` before a retry after a unique violation); `manual-transactions.md` documents
   `use_transaction_map_err` for downstream error types.
+- `PagedResult` follows rust-core 0.1's flattened contract: the outcome fields
+  (`success`/`status`/`message`) are inlined on the page structure, with no nested `operation`.
 
 #### 简体中文
 
@@ -115,8 +127,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `query.order_by_field(Order::created_at).then_by_field_desc(Order::id)`。构造器 doc-hidden；
   拼错/改名在编译期失败。`order_by_field*` 要求 `Sortable`：整数/浮点/bool/char/String、
   `Option<T: Sortable>` 与 feature-gated 的 `chrono`/`uuid`/`decimal` 类型可用；blob（`Vec<u8>`）
-  与 JSON 值在编译期被拒绝（`compile_fail` 文档测试覆盖）。2.x 保留字符串 `order_by(&str)`，
-  3.0 删除；`column!` 仍返回 `&str`。
+  与 JSON 值在编译期被拒绝（`compile_fail` 文档测试覆盖）。2.9.1 已移除歧义入口：字符串排序方法
+  改为显式 `order_by_raw` / `order_by_desc_raw`（不做类型校验，供 `linq!` 展开与投影别名排序使
+  用），主入口是 `order_by_field*`；`column!` 仍返回 `&str`。
 - **`impl From<EFError> for rust_core::AppError`**：持久层边界直接转成共享载体，不再需要 Web
   适配层。业务错误（`NotFound`/`ModelValidation`/`ConcurrencyConflict`）保留文案；驱动派生载荷
   （`Query`/`TypeConversion`/`UniqueViolation`）用固定客户端文案，SQL/列/约束名只进 operator
@@ -128,13 +141,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   （`rust-webx-ef::idempotency::EfIdempotencyStore`、outbox dispatcher、后台 worker）可以解析
   同一份 options（同一 provider/pool 与 metadata cache），不再自建第二份。
 - **`QueryBuilder::to_page(&PagedRequest) -> EFResult<PagedResult<T>>`**：偏移分页终端
-  **直接返回** `rust_core::PagedResult` 信封（没有 tuple 版本、没有 `count: bool` 开关）。信封是
-  扁平的 `{success,status,message,items,total}`（组合共享的 `OperationResult` 结果与页面行；
-  Rust 没有继承），默认 `success=true/status=0/message="ok"`，端点可用 `with_status`/
-  `with_message` 覆盖。它先在克隆上清掉 `ORDER BY`/`skip`/`take` 再 `COUNT(*)`（FROM/JOIN/WHERE
-  不变，total 与列表同过滤），然后取 `skip(offset).take(page_size)`。`QueryBuilder` 改为手写
-  `Clone`，分页不再要求 `T: Clone`。需要先发布 `rust-core`；返回的是实体页，端点用
-  `PagedResult::map_items` 映射 DTO。count 与本页不是同一快照；并发写入下需要一致时请包显式事务。
+  **直接返回** `rust_core::PagedResult` 信封（没有 tuple 版本、没有 `count: bool` 开关）。结果
+  字段直接内联在页结构上（无嵌套 `operation`）：`{success,status,message,items,total}`，默认
+  `success=true/status=0/message="ok"`，端点可用 `with_status`/`with_message` 覆盖。它先在
+  克隆上清掉 `ORDER BY`/`skip`/`take` 再 `COUNT(*)`（FROM/JOIN/WHERE 不变，total 与列表同
+  过滤），然后取 `skip(offset).take(page_size)`。`QueryBuilder` 改为手写 `Clone`，分页不再
+  要求 `T: Clone`。需要先发布 `rust-core`；返回的是实体页，端点用 `PagedResult::map_items`
+  映射 DTO。count 与本页不是同一快照；并发写入下需要一致时请包显式事务。
+- **`DbContext::edit(entity, f)`**：消除「先改、后 attach 导致 `detect_changes()` 失效」的
+  脚手架。`edit` 先 attach（拍下原始快照），再把**跟踪副本**交给 `f` 修改；之后
+  `detect_changes()` 只把 `f` 改过的列标脏，`save_changes()` 也只 UPDATE 这些列。它不自动
+  detect、不自动 save，事务边界仍由调用方控制。主键相同的行已在跟踪时，`f` 作用于已跟踪
+  实例，不会产生第二条跟踪条目。
 
 ##### 变更
 
@@ -143,6 +161,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/rust-ef/08-bulk-operations/execute-update.md` 补「DML 与 ChangeTracker 状态机」（DML
   绕过 tracker、隐式使用活动事务、唯一冲突后重试前 `clear_tracking()`）；
   `manual-transactions.md` 补下游错误类型的 `use_transaction_map_err` 配方。
+- `PagedResult` 随 rust-core 0.1 扁平化契约：结果字段（`success`/`status`/`message`）内联在页
+  结构上，无嵌套 `operation`。
 
 ## [2.9.0] — 2026-11-24 — 报表查询与集合写：类型化分组聚合、表达式更新、复合 JOIN、结果行物化
 

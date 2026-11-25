@@ -19,7 +19,7 @@ let rows: Vec<(String, i64)> = ctx
         SelectItem::column("category"),
         SelectItem::sum("amount"),
     ])
-    .order_by_desc("sum_amount")
+    .order_by_desc_raw("sum_amount")
     .to_list_rows::<(String, i64)>()
     .await?;
 ```
@@ -153,7 +153,7 @@ let rows: Vec<CategoryTotal> = ctx
         SelectItem::column("category"),
         SelectItem::sum("amount"),
     ])
-    .order_by("category")
+    .order_by_raw("category")
     .to_list_rows::<CategoryTotal>()
     .await?;
 ```
@@ -191,8 +191,9 @@ let rows: Vec<SalesRow> = ctx
 
 ## 安全边界：标识符来自代码常量，值走参数
 
-`SelectItem::column/sum/...` 的列名、`SelectItem::alias`、`SelectQueryBuilder::order_by(_desc)`
-都会作为 SQL **标识符原样输出**（与既有 `order_by` / `order_by_desc` / `group_by` 运行时 API 一致）。
+`SelectItem::column/sum/...` 的列名、`SelectItem::alias`、`SelectQueryBuilder::order_by` /
+`order_by_desc`（以及显式 raw 拼写 `order_by_raw` / `order_by_desc_raw`）
+都会作为 SQL **标识符原样输出**（与实体查询的 `order_by_raw` / `order_by_desc_raw` 运行时 API 一致）。
 因此：
 
 - 列名/别名只能来自实体 `COLUMN_*` 常量或硬编码白名单；**绝不能**直接拼接请求参数

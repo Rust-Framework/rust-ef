@@ -159,6 +159,41 @@ UPDATE products SET stock = stock + ? WHERE (id = ?) AND (version = ?)
 `.add(expr)`、`.sub(expr)`。编译期会拒绝聚合/COALESCE/CASE 等非 SET 子集表达式
 （typed `EFError::Configuration`）。
 
+## 编辑已加载实体：`edit` + `detect_changes`
+
+查询终结符（`find` / `to_list` 等）返回的是**脱离跟踪**的实体。要保存对它的修改，必须先让 context 拿到一份「修改前」的快照：`ctx.attach(entity)` 以**当时**的值拍快照，所以“先改、后 attach”不会产生差异，`detect_changes()` 什么都检测不到。
+
+`ctx.edit(entity, f)` 把 attach 与修改合成一步：先 `attach`（拍未修改快照），再把**跟踪副本**交给 `f` 修改。之后显式 `detect_changes()`，只有 `f` 改过的列会变为脏列，`save_changes()` 生成的 UPDATE 也只包含这些列：
+
+```rust
+let order = ctx
+    .set::<Order>()
+    .query()
+    .find(order_id)
+    .await?
+    .ok_or_else(|| EFError::not_found("order not found".into()))?;
+
+// attach（拍快照）→ 在跟踪副本上应用修改
+ctx.edit(order, |o| o.apply_patch(req.patch));
+
+ctx.detect_changes();      // 只标记 f 改过的列
+ctx.save_changes().await?; // 只 UPDATE 这些列
+```
+
+与其它写入口的区别：
+
+| 入口 | 快照 | UPDATE 的列 | 适用场景 |
+|------|------|-------------|----------|
+| `ctx.edit(e, f)` | attach 时（`f` 执行前）的值 | 只有 `f` 改过的列 | 加载脱离实体 → PATCH → 保存（推荐） |
+| `ctx.attach(e)` + 改跟踪副本 | attach 时的值 | 之后被改过的列 | 实体已在跟踪中、需要多次修改 |
+| `ctx.update(e)` | 无 | 所有非主键列 | 整行 PUT，或确定整行都要写 |
+| `execute_update()` | 无 | `SET` 指定的列 | 未加载实体、按条件批量改 |
+
+- **不改变事务语义**：`edit` 既不自动 `detect_changes()`，也不自动 `save_changes()`；需要审计/拦截器/级联时照常 `detect_changes()` + `save_changes()`（在 `use_transaction` 内则随事务提交/回滚）。
+- **快照在 `f` 之前**：调用 `edit` **之前**对脱离实体的修改属于快照的一部分，不会写库；要落库的修改必须放进 `f`。
+- **同一主键的已落库行已在跟踪**：`f` 作用在已跟踪的实例上，传入的实体被丢弃，tracker 不会出现同一主键的两条条目；已有条目保留自己的状态与原始快照。待插入的 `Added` 实体不参与匹配（它们可能共享默认主键 `0`，必须保持独立）。
+- 只改一列且不需要保持 `DbSet` 跟踪状态时，`execute_update().increment/set_column(..)` 仍是更省往返的选择；需要审计/拦截器/级联时用 `edit` 路径。
+
 ## DML 与 ChangeTracker 的交互
 
 `execute_update`（以及 `execute_delete`）是**直接发给数据库的 DML**，和 `save_changes()` 的跟踪管线是两条独立通道，混用时要明确各自的边界：

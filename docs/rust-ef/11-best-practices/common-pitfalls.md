@@ -113,10 +113,11 @@ linq!(set; order_by b.rating desc)  // 编译错误
 linq!(ctx.set::<Blog>(); order_by b.rating desc)
 ```
 
-## 9. 使用字符串 API
+## 9. 使用已移除的字符串 API
 
 ```rust
-// ❌ 这些方法已全部移除：include_named / order_by("col") / sum("col") / find_by_id 等
+// ❌ 这些方法已移除：include_named / sum("col") / find_by_id 等；
+//    排序的字符串入口必须显式写 order_by_raw("col") / order_by_desc_raw("col")（不做类型校验）
 let blogs = ctx.set::<Blog>().query().include_named("posts").to_list().await?;
 let blog = ctx.set::<Blog>().query().find_by_id(1).first().await?;
 let total = ctx.set::<Blog>().query().sum("views").await?;

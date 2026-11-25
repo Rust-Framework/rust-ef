@@ -119,5 +119,5 @@ semver、不出现在 rustdoc 公共契约中，应用代码不应直接调用�
   本地默认只跑 SQLite。
 - 2.9 已完成：HAVING/SET 表达式收敛到 `BoolExpr`/`SqlExpr` 单核、标识符策略统一、
   `DbContext` 元数据 `Arc<BuiltMetadata>` 共享（创建上下文不再深拷贝实体元数据）。
-- 3.0 候选：raw 片段占位符的完整 AST 化（当前词法器 + `??` 转义已覆盖字面量/注释/
+- 下一破坏性版本候选：raw 片段占位符的完整 AST 化（当前词法器 + `??` 转义已覆盖字面量/注释/
   dollar-quote）；进一步收敛公开配置结构体。

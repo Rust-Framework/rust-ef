@@ -696,6 +696,80 @@ impl DbContext {
         self.set::<T>().push_entry(entity, entry_id);
     }
 
+    /// Attaches `entity` in `Unchanged` state (snapshot = current values), then
+    /// applies `f` to the **tracked** copy, so a following `detect_changes()`
+    /// writes only the columns `f` changed.
+    ///
+    /// Use it for the "load detached → modify → save" path:
+    ///
+    /// ```rust,ignore
+    /// let order = ctx.set::<Order>().query().find(id).await?.ok_or(...)?;
+    /// ctx.edit(order, |o| o.patch(req.patch));
+    /// ctx.detect_changes();
+    /// ctx.save_changes().await?;
+    /// ```
+    ///
+    /// [`attach`](Self::attach) snapshots the values it is given, so changing
+    /// the detached entity *before* attaching it is invisible to
+    /// `detect_changes()` — the original snapshot already contains the new
+    /// values. `edit` snapshots first and hands the tracked instance to `f`, so
+    /// the snapshot stays the pre-edit row and only `f`'s columns are dirty.
+    ///
+    /// Unlike [`update`](Self::update), which marks every column `Modified`,
+    /// `edit` relies on snapshot comparison: unchanged columns are not UPDATEd.
+    /// It neither saves nor calls `detect_changes()`; the caller keeps control
+    /// of both, which preserves the transaction boundary.
+    ///
+    /// If a database row with the same key is already tracked, `f` runs on that
+    /// tracked instance and the passed-in `entity` is dropped, so the tracker
+    /// never holds two entries for one key. The existing entry keeps its state
+    /// and its original snapshot (an `Unchanged`/`Modified` entry is compared
+    /// against the snapshot captured when it was first tracked; a `Deleted`
+    /// entry stays deleted). Pending `Added` entries are not matched: two
+    /// unsaved entities can share the default key and must stay distinct.
+    pub fn edit<T, F>(&mut self, entity: T, f: F)
+    where
+        T: IEntityType
+            + IEntitySnapshot
+            + IGetKeyValues
+            + IRow
+            + INavigationSetter
+            + Send
+            + Sync
+            + 'static,
+        F: FnOnce(&mut T),
+    {
+        let key = entity.key_values();
+        let candidate = self
+            .set::<T>()
+            .entries
+            .iter()
+            .find(|e| e.entity.key_values() == key)
+            .map(|e| e.entry_id);
+        // Reuse only entries that already have a database identity: two
+        // not-yet-saved entities share the default key and must stay distinct.
+        let existing = candidate.filter(|entry_id| {
+            self.change_tracker.entry_state(*entry_id) != Some(EntityState::Added)
+        });
+        if let Some(entry_id) = existing {
+            let set = self.set::<T>();
+            if let Some(entry) = set.entries.iter_mut().find(|e| e.entry_id == entry_id) {
+                f(&mut entry.entity);
+                return;
+            }
+        }
+
+        self.attach(entity);
+        // `attach` moved `entity` into the set after snapshotting it, so the
+        // last entry is the tracked copy whose original predates `f`.
+        let tracked = self
+            .set::<T>()
+            .tracked_entries_mut()
+            .last()
+            .expect("attach always pushes exactly one entry");
+        f(tracked);
+    }
+
     /// Marks an entity as `Modified` — all fields will be UPDATEd during
     /// `save_changes()`.
     pub fn update<T>(&mut self, entity: T)

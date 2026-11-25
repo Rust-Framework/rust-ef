@@ -1,4 +1,4 @@
-//! `QueryBuilder::to_page(PagedRequest) -> PagedResult<T>` 鈥?offset pagination
+//! `QueryBuilder::to_page(PagedRequest) -> PagedResult<T>` — offset pagination
 //! terminal.
 //!
 //! Covers the SQLite end-to-end contract (count shares the filter chain; page
@@ -73,8 +73,8 @@ fn ordered_query(ctx: &mut DbContext, tenant_id: i32) -> rust_ef::query::QueryBu
     ctx.set::<PageOrder>()
         .query()
         .filter(linq!(|o: PageOrder| o.tenant_id == tenant_id))
-        .order_by(PageOrder::COLUMN_CREATED_AT)
-        .order_by(PageOrder::COLUMN_ID) // unique tie-breaker for a stable page
+        .order_by_field(PageOrder::created_at)
+        .then_by_field(PageOrder::id) // unique tie-breaker for a stable page
 }
 
 fn created_ats(page: &PagedResult<PageOrder>) -> Vec<i32> {
@@ -137,7 +137,7 @@ async fn count_ignores_order_by_and_caller_paging() {
         .set::<PageOrder>()
         .query()
         .filter(linq!(|o: PageOrder| o.tenant_id == 1))
-        .order_by_desc(PageOrder::COLUMN_CREATED_AT)
+        .order_by_field_desc(PageOrder::created_at)
         // A caller-paging chain that a COUNT(*) terminal rejects; `to_page`
         // replaces it with the requested page.
         .skip(999)

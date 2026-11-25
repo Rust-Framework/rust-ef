@@ -8,11 +8,14 @@ use super::super::predicate::Predicate;
 use super::core::QueryBuilder;
 
 impl<T: IEntityType> QueryBuilder<T> {
-    /// Adds an ascending ORDER BY column.
+    /// Adds an ascending ORDER BY column from a raw SQL identifier.
     ///
-    /// `column` is an SQL identifier / entity `COLUMN_*` constant and is emitted
-    /// verbatim; never pass request data.
-    pub fn order_by(mut self, column: &str) -> Self {
+    /// This is the **unchecked** entry: `column` is emitted verbatim and is not
+    /// checked against the entity's fields, so a typo becomes a runtime SQL
+    /// error. Never pass request data. Prefer [`Self::order_by_field`]; use raw
+    /// only for something a typed handle cannot express (a projection alias, an
+    /// expression, or a macro expansion such as `linq!`).
+    pub fn order_by_raw(mut self, column: &str) -> Self {
         super::super::expr::debug_assert_identifier(column, "ORDER BY column");
         self.state
             .orderings
@@ -20,11 +23,14 @@ impl<T: IEntityType> QueryBuilder<T> {
         self
     }
 
-    /// Adds a descending ORDER BY column.
+    /// Adds a descending ORDER BY column from a raw SQL identifier.
     ///
-    /// `column` is an SQL identifier / entity `COLUMN_*` constant and is emitted
-    /// verbatim; never pass request data.
-    pub fn order_by_desc(mut self, column: &str) -> Self {
+    /// This is the **unchecked** entry: `column` is emitted verbatim and is not
+    /// checked against the entity's fields, so a typo becomes a runtime SQL
+    /// error. Never pass request data. Prefer [`Self::order_by_field_desc`];
+    /// use raw only for something a typed handle cannot express (a projection
+    /// alias, an expression, or a macro expansion such as `linq!`).
+    pub fn order_by_desc_raw(mut self, column: &str) -> Self {
         super::super::expr::debug_assert_identifier(column, "ORDER BY column");
         self.state
             .orderings
@@ -36,14 +42,15 @@ impl<T: IEntityType> QueryBuilder<T> {
     ///
     /// The handle is emitted by `#[derive(EntityType)]` (`Order::created_at`), so
     /// a typo or a renamed field is a compile error instead of a runtime SQL
-    /// error. This is additive in 2.x; 3.0 makes it the only ordering entry.
+    /// error. This is the primary ordering entry; [`Self::order_by_raw`] exists
+    /// only for aliases/expressions a typed handle cannot represent.
     pub fn order_by_field<V: Sortable>(self, field: Field<T, V>) -> Self {
-        self.order_by(field.column())
+        self.order_by_raw(field.column())
     }
 
     /// Adds a descending ORDER BY from a typed [`Field`] handle.
     pub fn order_by_field_desc<V: Sortable>(self, field: Field<T, V>) -> Self {
-        self.order_by_desc(field.column())
+        self.order_by_desc_raw(field.column())
     }
 
     /// Adds the next ascending ORDER BY column from a typed [`Field`] handle.

@@ -66,10 +66,12 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
     // -------------------------------------------------------------------
     // Clause methods (runtime report API)
     //
-    // `group_by`/`select_item(s)`/`having`/`order_by(_desc)`/`take`/`skip`/
+    // `group_by`/`select_item(s)`/`having`/`order_by(_raw)`/`take`/`skip`/
     // `distinct` also exist on `QueryBuilder`, so a clause chain may put
     // `group_by`/`having`/`order_by`/`take`/`skip`/`distinct` before *or*
-    // after the `select` step.
+    // after the `select` step. `linq!` emits the raw spelling on this builder
+    // too, because the macro cannot know whether the chain is still a
+    // `QueryBuilder`.
     // -------------------------------------------------------------------
 
     /// Replaces the GROUP BY columns.
@@ -131,10 +133,15 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         self
     }
 
-    /// Adds an ascending ORDER BY column (may reference a projection alias).
+    /// Adds an ascending ORDER BY on a SELECT-list output alias.
     ///
-    /// `column` is an SQL identifier / output alias and is emitted verbatim:
-    /// use code constants or a hard-coded whitelist, never request data.
+    /// This is **alias ordering**, not entity-column ordering: `column` must be
+    /// a projection alias (`"sum_amount"`) or a projected column, and it is
+    /// emitted verbatim without any field-type check. For entity columns use
+    /// `QueryBuilder::order_by_field` on the entity query before projecting.
+    /// [`Self::order_by_raw`] is the explicit raw spelling of the same
+    /// operation (used by `linq!` expansion, which cannot know whether the chain
+    /// is still a `QueryBuilder`).
     pub fn order_by(mut self, column: &str) -> Self {
         super::expr::debug_assert_identifier(column, "ORDER BY column");
         self.state
@@ -143,16 +150,34 @@ impl<T: IEntityType> SelectQueryBuilder<T> {
         self
     }
 
-    /// Adds a descending ORDER BY column (may reference a projection alias).
+    /// Adds an ascending ORDER BY on a raw SQL output alias.
     ///
-    /// `column` is an SQL identifier / output alias and is emitted verbatim:
-    /// use code constants or a hard-coded whitelist, never request data.
+    /// Explicit raw spelling of [`Self::order_by`]: the column is a projection
+    /// alias (or a projected column) emitted verbatim and never checked. Never
+    /// pass request data; map request values to code constants first.
+    pub fn order_by_raw(self, column: &str) -> Self {
+        self.order_by(column)
+    }
+
+    /// Adds a descending ORDER BY on a SELECT-list output alias.
+    ///
+    /// This is **alias ordering**, not entity-column ordering; see
+    /// [`Self::order_by`]. Use [`Self::order_by_desc_raw`] for the explicit raw
+    /// spelling.
     pub fn order_by_desc(mut self, column: &str) -> Self {
         super::expr::debug_assert_identifier(column, "ORDER BY column");
         self.state
             .orderings
             .push(OrderBy::new(column, OrderDirection::Descending));
         self
+    }
+
+    /// Adds a descending ORDER BY on a raw SQL output alias.
+    ///
+    /// Explicit raw spelling of [`Self::order_by_desc`]; the column is a
+    /// projection alias emitted verbatim and never checked.
+    pub fn order_by_desc_raw(self, column: &str) -> Self {
+        self.order_by_desc(column)
     }
 
     /// Takes the specified number of rows.

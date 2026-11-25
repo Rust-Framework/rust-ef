@@ -1,8 +1,9 @@
 # 过滤、排序与分页
 
-所有过滤、排序、分页操作通过 `linq!` 宏表达；不要使用字符串列名 API（`order_by("col")` 等）。
-排序列优先用实体 derive 生成的类型化句柄 `Entity::field`（拼错/改名编译期失败）；需要列名字符串
-的命名空间 API（`set_column`/`select_item` 等）仍用 `column!`。
+所有过滤、排序、分页操作通过 `linq!` 宏表达。排序列用实体 derive 生成的类型化句柄
+`Entity::field`（拼错/改名编译期失败）；只有 `linq!` 展开、聚合别名或确实只有列名的场景才用
+显式 raw 入口 `order_by_raw` / `order_by_desc_raw`（不做类型校验，绝不能传请求数据）。
+需要列名字符串的命名空间 API（`set_column`/`select_item` 等）仍用 `column!`。
 
 ## 过滤
 
@@ -39,7 +40,7 @@ predicate = predicate.and_opt(
 let query = ctx.set::<Product>().query().filter(predicate);
 let total = query.clone().count().await?;                 // 与列表共用同一份条件
 let rows = query
-    .order_by_desc(column!(Product::created_at))
+    .order_by_field_desc(Product::created_at)
     .take(20)
     .to_list()
     .await?;
@@ -91,6 +92,19 @@ let sorted = ctx
 `Option<T: Sortable>`，以及启用对应 feature 的 `chrono`/`uuid`/`decimal` 类型；`Vec<u8>`、
 JSON 值等不可排序列在编译期报错。
 
+### 显式 raw 字符串入口
+
+`order_by_raw` / `order_by_desc_raw` 是**不做类型校验**的列名入口，只用于类型化句柄表达不了的场景：
+
+- `linq!` 宏自身展开（调用点仍写 `order_by b.rating desc`，宏内部展开为 raw）；
+- 聚合/投影别名（如 `"sum_amount"`，`SelectQueryBuilder` 的别名排序同样可用 raw 拼写）；
+- 确实只有列名字符串的运行时报表，且列名来自代码常量/白名单。
+
+**绝不能把请求参数直接传给 raw 入口**：需要「用户可选排序字段」时，把请求值映射到
+`Entity::field` 或白名单常量后再调用。`column!` 仍返回 `&str`，可直接喂给 raw 入口。
+`SelectQueryBuilder::order_by` / `order_by_desc` 是按 SELECT 别名排序的另一个 builder 入口，
+不是实体列排序；实体列排序请用 `order_by_field*`。
+
 ## 分页
 
 手动分页用 `skip` + `take`：
@@ -108,7 +122,7 @@ let page = linq!(ctx.set::<Blog>();
 
 ### 列表端点：`to_page` 直接返回 `PagedResult`
 
-列表端点同时需要「总数 + 当前页」。`QueryBuilder::to_page(&PagedRequest)` 一次调用完成两件事并直接返回 `PagedResult<T>` 信封（`PagedRequest` / `PagedResult` 是 `rust-core` 的契约类型，rust-webx 3.0 直接重导出，Handler 可原样返回）：
+列表端点同时需要「总数 + 当前页」。`QueryBuilder::to_page(&PagedRequest)` 一次调用完成两件事并直接返回 `PagedResult<T>` 信封（`PagedRequest` / `PagedResult` 是 `rust-core` 的契约类型，rust-webx 2.9.1 直接重导出，Handler 可原样返回）：
 
 ```rust
 use rust_core::PagedResult;   // 实体本身不需要 Serialize，只有映射后的 DTO 页需要
@@ -128,7 +142,7 @@ Ok(page)
 ```
 
 - **两条 SQL，同一过滤**：先 `COUNT(*)`（克隆后去掉 ORDER BY/skip/take，保留 FROM/JOIN/WHERE），再按 `LIMIT/OFFSET` 取本页；`total` 与列表天然同源。两条语句不是快照——并发写入时 `total` 与 `items` 可能来自不同瞬间，需要一致响应时把调用包进显式事务。
-- **直接返回信封**：`PagedResult<T>` 是扁平业务信封 `{success,status,message,items,total}`（组合 `OperationResult<()>`，Rust 没有继承）；默认 `success=true/status=0/message="ok"`，端点可用 `.with_status(..)` / `.with_message(..)` 覆盖。没有 page/page_size/total_pages 回声；`total_pages` 由客户端 `ceil(total / page_size)` 计算。
+- **直接返回信封**：`PagedResult<T>` 是扁平业务信封 `{success,status,message,items,total}`（结果字段直接内联在页结构上，无嵌套 `operation`）；默认 `success=true/status=0/message="ok"`，端点可用 `.with_status(..)` / `.with_message(..)` 覆盖。没有 page/page_size/total_pages 回声；`total_pages` 由客户端 `ceil(total / page_size)` 计算。
 - **越界页**：`items` 为空、`total` 照实，不报错；`page`/`page_size` 的合法范围由**绑定层**校验（越界请求在绑定层 400），`to_page` 不做夹紧。
 - **只有一个入口**：没有 `(Vec<T>, total)` tuple 版本，也没有 `count: bool` 开关；不需要计数时直接用 `to_list()`。
 - **排序仍由调用方给**：`to_page` 只负责分页，ORDER BY 要链在调用之前；末位列用唯一列（如主键），否则并发写入时相邻页可能重复或漏行。

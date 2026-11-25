@@ -233,7 +233,7 @@ let blogs = ctx.set::<Blog>().filter(expr).to_list().await?;
 ```
 
 ```rust
-// ❌ 字符串 API 不可用（include_named/order_by("col")/sum("col") 等）
+// ❌ 旧字符串 API 已移除（include_named / sum("col") 等）
 let blogs = ctx.set::<Blog>().query().include_named("posts").to_list().await?;
 
 // ✅ 用 linq! 多子句形式
@@ -250,6 +250,6 @@ let blogs = linq!(ctx.set::<Blog>(); include b.posts).to_list().await?;
 | 谓词可复用 | 同一份 `linq!(|b: T| …)` 可用于多个查询，也可 `and` / `or` 组合 |
 | 注意类型标注 | 省略会导致编译错误 |
 | 查询形式的 source 须含 turbofish | 裸变量不支持，宏需 `::<Type>` 识别实体 |
-| 字符串 API 已全部移除 | `include_named`/`order_by("col")`/`sum("col")` 等均不存在，统一用 `linq!` |
+| 排序主入口是类型化句柄 | 实体列用 `order_by_field*`；只有别名/宏展开用显式 `order_by_raw` / `order_by_desc_raw`；`include_named`/`sum("col")` 等用 `linq!` |
 
 下一节：[过滤、排序与分页](filter-sort-page.md)
