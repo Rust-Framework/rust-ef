@@ -12,6 +12,26 @@
 
 ---
 
+## 什么是 rust-ef
+
+> **如果你来自 EF Core，希望在 Rust 里让 `DbContext`、变更跟踪和类 LINQ 的查询宏保持同样的手感，那么 rust-ef 就是为你准备的。**
+
+**rust-ef** 把 EF Core 的应用模型带到 Rust：`DbContext` 作为工作单元（unit of work），`ctx.set::<T>()` 返回 `DbSet<T>`，`#[derive(EntityType)]` 描述实体模型，`linq!` 宏编写查询，被跟踪实体自动变更跟踪，配合迁移（migrations），一套 API 覆盖 SQLite、PostgreSQL 与 MySQL。
+
+它**不是**只做查询构造器的 crate，也**不是**薄薄一层 SQL 包装：关系映射、变更跟踪、迁移与 rust-dix 集成本身就是产品。
+
+### 适合谁
+
+- **从 EF Core 迁到 Rust 的团队。** `DbContext` 与 `SaveChanges` → `save_changes()`，导航属性 → `HasMany`/`BelongsTo`，`dotnet ef migrations` → `rust-ef` 迁移 CLI 加 `ctx.migrate(..)`，`options.UseSqlite(..)` → `use_sqlite(..)`。
+- **按请求解析上下文的业务服务。** 通过 rust-dix 注册后，上下文经 `get_owned()` 获得：Handler 独占自己的工作单元，不需要 `Arc<Mutex<DbContext>>`，作用域化的值也不会被悄悄跨请求共享。
+- **需要同时跑多种数据库的应用。** SQLite、PostgreSQL、MySQL 共用一套实体模型——索引、CHECK、键、列类型等 DDL 声明在实体与其 `XxxConfiguration` 上，由官方迁移引擎生成，而不是手写 SQL。
+
+### 和谁比
+
+- **`sqlx`** —— SQL 优先、编译期校验查询。如果你的真相来源就是 SQL，用它；rust-ef 用它换取的是一个可跟踪的对象模型。
+- **`diesel`** —— 编译期查询 DSL 与强类型的类型级 schema。rust-ef 的查询在运行期组合（`linq!`），因此映射可以在启动时配置（`#[entity(T)]` 配置、键控的多数据库上下文）。
+- **`sea-orm`** —— 最接近的邻居：异步 ORM、实体模型、迁移。rust-ef 的差别在词汇与组合方式：`DbContext` / `DbSet` / 导航属性 / 变更跟踪、rust-dix 依赖注入，以及可以对既有数据库做 diff 的迁移引擎。
+
 ## 快速上手 / Quick Start
 
 ```toml
